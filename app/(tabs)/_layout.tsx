@@ -3,45 +3,102 @@
 
   Chức năng:
   - Điều hướng Tab Navigation
-  - Quản lý các tab chính của app
+  - Quản lý tab chính
 */
 
 import { Tabs } from "expo-router";
 
+import { Ionicons } from "@expo/vector-icons";
 export default function TabLayout() {
   return (
-    <Tabs
-      screenOptions={{
-        headerShown: false,
+<Tabs
+  screenOptions={{
+    headerShown: false,
 
-        tabBarStyle: {
-          backgroundColor: "#081B3C",
+    tabBarStyle: {
+      backgroundColor: "#081B3C",
 
-          borderTopWidth: 0,
+      borderTopWidth: 0,
 
-          height: 70,
-        },
+      height: 72,
 
-        tabBarActiveTintColor: "#4DA6FF",
+      paddingTop: 8,
 
-        tabBarInactiveTintColor: "#B8C7E0",
-      }}
-    >
-      {/* Home Tab */}
-      <Tabs.Screen
-        name="index"
-        options={{
-          title: "Home",
-        }}
-      />
+      paddingBottom: 8,
+    },
 
-      {/* Explore Tab */}
-      <Tabs.Screen
-        name="explore"
-        options={{
-          title: "Explore",
-        }}
-      />
-    </Tabs>
-  );
+    tabBarActiveTintColor: "#4DA6FF",
+
+    tabBarInactiveTintColor: "#B8C7E0",
+
+    tabBarLabelStyle: {
+      fontSize: 11,
+    },
+  }}
+>
+  {/* HOME */}
+  <Tabs.Screen
+    name="index"
+    options={{
+      title: "Home",
+
+      tabBarIcon: ({ color, size }) => (
+        <Ionicons
+          name="home"
+          size={size}
+          color={color}
+        />
+      ),
+    }}
+  />
+
+  {/* EXPLORE */}
+  <Tabs.Screen
+    name="explore"
+    options={{
+      title: "Explore",
+
+      tabBarIcon: ({ color, size }) => (
+        <Ionicons
+          name="compass"
+          size={size}
+          color={color}
+        />
+      ),
+    }}
+  />
+
+  {/* NOTIFICATIONS */}
+  <Tabs.Screen
+    name="notifications"
+    options={{
+      title: "Alerts",
+
+      tabBarIcon: ({ color, size }) => (
+        <Ionicons
+          name="notifications"
+          size={size}
+          color={color}
+        />
+      ),
+    }}
+  />
+
+  {/* SETTINGS */}
+  <Tabs.Screen
+    name="settings"
+    options={{
+      title: "Settings",
+
+      tabBarIcon: ({ color, size }) => (
+        <Ionicons
+          name="settings"
+          size={size}
+          color={color}
+        />
+      ),
+    }}
+  />
+</Tabs>
+ );
 }
