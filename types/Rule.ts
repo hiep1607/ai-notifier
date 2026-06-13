@@ -1,28 +1,13 @@
-/*
-  File: Rule.ts
-
-  Chức năng:
-  - Định nghĩa kiểu dữ liệu Rule
-*/
-
 export interface Rule {
-  /*
-    ID của Rule
-  */
   id: string;
-
-  /*
-    Tiêu đề Rule
-  */
+  user_id: string;
   title: string;
-
-  /*
-    Mô tả Rule
-  */
   description: string;
-
-  /*
-    Trạng thái hoạt động
-  */
-  active: boolean;
+  keyword: string;
+  category?: string;   // Danh mục: Tài chính, Tin tức, Công nghệ...
+  sources?: string;    // Nguồn theo dõi, phân tách bằng dấu phẩy
+  frequency?: string;  // Tần suất: realtime | hourly | daily | weekly
+  condition?: string;  // Điều kiện kích hoạt thông báo
+  is_active: boolean;
+  created_at?: string;
 }

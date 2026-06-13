@@ -1,12 +1,7 @@
-/*
-  File: index.tsx
-
-  Chức năng:
-  - Home Screen chính
-  - AI Neon Dashboard
-*/
+import React, { useState } from "react";
 
 import {
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -14,40 +9,109 @@ import {
   View,
 } from "react-native";
 
-/*
-  Import Design System
-*/
-
-import { COLORS } from "@/constants/colors";
-
-import { SPACING } from "@/constants/spacing";
-
-import { THEME } from "@/constants/theme";
-
-/*
-  Import Mock Data
-*/
-
-import { mockRules } from "@/data/mockRules";
-
-/*
-  Import Icons
-*/
-
 import { Ionicons } from "@expo/vector-icons";
+
 import { LinearGradient } from "expo-linear-gradient";
+
 import { router } from "expo-router";
+
+import { useFocusEffect } from "@react-navigation/native";
+
+import { supabase } from "../../lib/supabase";
+import { useAuth } from "../../contexts/AuthContext";
+import { Rule } from "../../types/Rule";
+import { Notification } from "../../types/Notification";
+
+const COLORS = {
+  background: "#081120",
+  card: "#101B35",
+  primary: "#4DA6FF",
+  text: "#FFFFFF",
+  subText: "#8A9BB5",
+  success: "#39D98A",
+  danger: "#FF5B7F",
+};
+
 export default function HomeScreen() {
+  const { user } = useAuth();
+
+  const [rules, setRules] =
+    useState<Rule[]>([]);
+
+  const [notificationsCount, setNotificationsCount] =
+    useState(0);
+
+  const [importantCount, setImportantCount] =
+    useState(0);
+
+  const [refreshing, setRefreshing] = useState(false);
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await fetchData();
+    setRefreshing(false);
+  };
+
+  useFocusEffect(
+    React.useCallback(() => {
+      if (user) fetchData();
+    }, [user])
+  );
+
+  const fetchData = async () => {
+    if (!user) return;
+
+    const { data: rulesData } = await supabase
+      .from("rules")
+      .select("*")
+      .eq("user_id", user.id);
+
+    if (rulesData) {
+      setRules(rulesData as Rule[]);
+    }
+
+    const { data: userRules } = await supabase
+      .from("rules")
+      .select("id")
+      .eq("user_id", user.id);
+
+    const ruleIds =
+      userRules?.map((r) => r.id) ?? [];
+
+    if (ruleIds.length > 0) {
+      const { data: notificationsData } =
+        await supabase
+          .from("notifications")
+          .select("*")
+          .in("rule_id", ruleIds);
+
+      if (notificationsData) {
+        const typed =
+          notificationsData as Notification[];
+
+        setNotificationsCount(typed.length);
+
+        setImportantCount(
+          typed.filter((n) => n.is_important).length
+        );
+      }
+    } else {
+      setNotificationsCount(0);
+      setImportantCount(0);
+    }
+  };
+
   return (
     <View style={styles.container}>
       <ScrollView
         showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor="#4DA6FF" />}
       >
         {/* HEADER */}
         <View style={styles.header}>
           <View>
             <Text style={styles.greeting}>
-              Chào Hiệp 👋
+              Chào bạn 👋
             </Text>
 
             <Text style={styles.subtitle}>
@@ -59,44 +123,40 @@ export default function HomeScreen() {
             <Ionicons
               name="person"
               size={24}
-              color={COLORS.white}
+              color={COLORS.text}
             />
           </View>
         </View>
 
         {/* AI INSIGHT */}
-        <LinearGradient
-  colors={["#0F172A", "#111827", "#172554"]}
-  start={{ x: 0, y: 0 }}
-  end={{ x: 1, y: 1 }}
-  style={styles.insightCard}
->
-  <Text style={styles.insightTitle}>
-    🤖 AI INSIGHT
-  </Text>
+        <TouchableOpacity
+          activeOpacity={0.8}
+          onPress={() => router.push("/(tabs)/notifications")}
+        >
+          <LinearGradient
+            colors={["#1E3A8A", "#172554"]}
+            style={styles.aiCard}
+          >
+            <View style={styles.aiHeader}>
+              <Text style={styles.aiEmoji}>🤖</Text>
 
-  <Text style={styles.insightText}>
-    Phát hiện 3 xu hướng AI mới
-    có thể bạn quan tâm hôm nay.
-  </Text>
+              <Text style={styles.aiTitle}>
+                AI Insight
+              </Text>
+            </View>
 
-  <TouchableOpacity
-    style={styles.insightButton}
-  >
-    <Text style={styles.insightButtonText}>
-      Xem ngay
-    </Text>
-  </TouchableOpacity>
-
-  {/* Glow Circle */}
-  <View style={styles.glowCircle} />
-</LinearGradient>
+            <Text style={styles.aiText}>
+              Có {importantCount} thông báo quan trọng
+              cần bạn xem hôm nay.
+            </Text>
+          </LinearGradient>
+        </TouchableOpacity>
 
         {/* STATS */}
-        <View style={styles.statsContainer}>
-          <View style={styles.statsCard}>
+        <View style={styles.stats}>
+          <View style={styles.statCard}>
             <Text style={styles.statsNumber}>
-              12
+              {rules.filter((r) => r.is_active).length}
             </Text>
 
             <Text style={styles.statsLabel}>
@@ -104,360 +164,231 @@ export default function HomeScreen() {
             </Text>
           </View>
 
-          <View style={styles.statsCard}>
+          <View style={styles.statCard}>
             <Text style={styles.statsNumber}>
-              5
+              {notificationsCount}
             </Text>
 
             <Text style={styles.statsLabel}>
-              Thông báo hôm nay
+              Thông báo
             </Text>
           </View>
         </View>
 
-        {/* SECTION */}
+        {/* RULE HEADER */}
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>
             Rules đang hoạt động
           </Text>
 
-          <Text style={styles.viewAll}>
-            Xem tất cả
-          </Text>
+          <TouchableOpacity
+            onPress={() =>
+              router.push("/(tabs)/rules" as any)
+            }
+          >
+            <Text style={styles.viewAll}>
+              Xem tất cả
+            </Text>
+          </TouchableOpacity>
         </View>
 
         {/* RULE LIST */}
-        {mockRules.map((rule) => (
-          <View
-            key={rule.id}
-            style={styles.ruleCard}
-          >
-            <View>
-              <Text style={styles.ruleTitle}>
-                {rule.title}
-              </Text>
+        {rules
+          .filter((r) => r.is_active)
+          .map((rule) => (
+            <TouchableOpacity
+              key={rule.id}
+              style={styles.ruleCard}
+              activeOpacity={0.8}
+              onPress={() =>
+                router.push({
+                  pathname: "/rule-detail",
+                  params: { id: rule.id },
+                })
+              }
+            >
+              <View>
+                <Text style={styles.ruleTitle}>
+                  {rule.title}
+                </Text>
 
-              <Text
-                style={styles.ruleDescription}
-              >
-                {rule.description}
-              </Text>
-            </View>
+                <Text style={styles.ruleDescription}>
+                  {rule.description}
+                </Text>
+              </View>
 
-            <View
-              style={[
-                styles.statusDot,
-
-                {
-                  backgroundColor:
-                    rule.active
-                      ? COLORS.success
-                      : COLORS.danger,
-                },
-              ]}
-            />
-          </View>
-        ))}
+              <View
+                style={[
+                  styles.statusDot,
+                  { backgroundColor: COLORS.success },
+                ]}
+              />
+            </TouchableOpacity>
+          ))}
 
         <View style={{ height: 120 }} />
       </ScrollView>
 
-      {/* FLOATING BUTTON */}
+      {/* FLOAT BUTTON */}
       <TouchableOpacity
-        style={styles.floatingButton}
+        style={styles.floatButton}
         onPress={() => router.push("/create-rule")}
       >
-        <Ionicons
-          name="add"
-          size={34}
-          color={COLORS.white}
-        />
+        <Ionicons name="add" size={34} color="white" />
       </TouchableOpacity>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  /*
-    Container
-  */
   container: {
     flex: 1,
-
     backgroundColor: COLORS.background,
-
-    paddingHorizontal: SPACING.lg,
-  },
-
-  /*
-    Header
-  */
-  header: {
-    marginTop: 70,
-
-    flexDirection: "row",
-
-    justifyContent: "space-between",
-
-    alignItems: "center",
-
-    marginBottom: SPACING.xl,
-  },
-
-  /*
-    Greeting
-  */
-  greeting: {
-    color: COLORS.white,
-
-    fontSize: 32,
-
-    fontWeight: "bold",
-  },
-
-  /*
-    Subtitle
-  */
-  subtitle: {
-    color: COLORS.gray,
-
-    marginTop: 6,
-
-    fontSize: 15,
-  },
-
-  /*
-    Avatar
-  */
-  avatar: {
-    width: 52,
-
-    height: 52,
-
-    borderRadius: 26,
-
-    backgroundColor: COLORS.card,
-
-    justifyContent: "center",
-
-    alignItems: "center",
-
-    borderWidth: 1,
-
-    borderColor: COLORS.primary,
-  },
-
-  /*
-    Insight Card
-  */
-  insightCard: {
-    backgroundColor: COLORS.card,
-
-    borderRadius: THEME.radius,
-
-    padding: SPACING.lg,
-
-    marginBottom: SPACING.xl,
-
-    borderWidth: 1,
-
-    borderColor: COLORS.primary,
-
-    ...THEME.shadow,
-  },
-
-  insightTitle: {
-    color: COLORS.primary,
-
-    fontSize: 14,
-
-    fontWeight: "bold",
-
-    marginBottom: 14,
-  },
-
-  insightText: {
-    color: COLORS.white,
-
-    fontSize: 20,
-
-    lineHeight: 30,
-
-    marginBottom: 24,
-  },
-
-  insightButton: {
-    backgroundColor: COLORS.primary,
-
-    alignSelf: "flex-start",
-
+    paddingTop: 70,
     paddingHorizontal: 20,
-
-    paddingVertical: 10,
-
-    borderRadius: 999,
   },
 
-  insightButtonText: {
-    color: COLORS.white,
-
-    fontWeight: "600",
-  },
-
-  /*
-    Stats
-  */
-  statsContainer: {
+  header: {
     flexDirection: "row",
-
     justifyContent: "space-between",
-
-    marginBottom: SPACING.xl,
+    alignItems: "center",
+    marginBottom: 30,
   },
 
-  statsCard: {
+  greeting: {
+    color: COLORS.text,
+    fontSize: 28,
+    fontWeight: "bold",
+  },
+
+  subtitle: {
+    color: COLORS.subText,
+    marginTop: 6,
+    fontSize: 16,
+  },
+
+  avatar: {
+    width: 58,
+    height: 58,
+    borderRadius: 29,
+    backgroundColor: COLORS.primary,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+
+  aiCard: {
+    borderRadius: 28,
+    padding: 24,
+    marginBottom: 28,
+  },
+
+  aiHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 16,
+  },
+
+  aiEmoji: {
+    fontSize: 22,
+    marginRight: 10,
+  },
+
+  aiTitle: {
+    color: COLORS.primary,
+    fontSize: 26,
+    fontWeight: "bold",
+  },
+
+  aiText: {
+    color: COLORS.text,
+    fontSize: 16,
+    lineHeight: 24,
+  },
+
+  stats: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 30,
+  },
+
+  statCard: {
     width: "48%",
-
     backgroundColor: COLORS.card,
-
-    borderRadius: THEME.radius,
-
-    padding: SPACING.lg,
-
-    borderWidth: 1,
-
-    borderColor: COLORS.border,
+    borderRadius: 22,
+    padding: 22,
   },
 
   statsNumber: {
-    color: COLORS.white,
-
-    fontSize: 36,
-
+    color: COLORS.text,
+    fontSize: 28,
     fontWeight: "bold",
-
-    marginBottom: 10,
+    marginBottom: 8,
   },
 
   statsLabel: {
-    color: COLORS.gray,
-
+    color: COLORS.subText,
     fontSize: 14,
   },
 
-  /*
-    Section Header
-  */
   sectionHeader: {
     flexDirection: "row",
-
     justifyContent: "space-between",
-
     alignItems: "center",
-
-    marginBottom: SPACING.lg,
+    marginBottom: 18,
   },
 
   sectionTitle: {
-    color: COLORS.white,
-
-    fontSize: 24,
-
+    color: COLORS.text,
+    fontSize: 18,
     fontWeight: "bold",
   },
 
   viewAll: {
     color: COLORS.primary,
+    fontWeight: "600",
   },
 
-  /*
-    Rule Card
-  */
   ruleCard: {
     backgroundColor: COLORS.card,
-
-    borderRadius: THEME.radius,
-
-    padding: SPACING.lg,
-
-    marginBottom: SPACING.md,
-
+    borderRadius: 24,
+    padding: 22,
+    marginBottom: 18,
     flexDirection: "row",
-
     justifyContent: "space-between",
-
     alignItems: "center",
-
-    borderWidth: 1,
-
-    borderColor: COLORS.border,
   },
 
   ruleTitle: {
-    color: COLORS.white,
-
-    fontSize: 18,
-
-    fontWeight: "600",
-
+    color: COLORS.text,
+    fontSize: 22,
+    fontWeight: "bold",
     marginBottom: 8,
   },
 
   ruleDescription: {
-    color: COLORS.gray,
+    color: COLORS.subText,
+    fontSize: 16,
   },
 
-  /*
-    Status Dot
-  */
   statusDot: {
-    width: 14,
-
-    height: 14,
-
-    borderRadius: 7,
+    width: 18,
+    height: 18,
+    borderRadius: 999,
   },
 
-  /*
-    Floating Button
-  */
-  floatingButton: {
+  floatButton: {
     position: "absolute",
-
-    bottom: 30,
-
+    bottom: 100,
     right: 24,
-
-    width: 70,
-
-    height: 70,
-
-    borderRadius: 35,
-
+    width: 68,
+    height: 68,
+    borderRadius: 34,
     backgroundColor: COLORS.primary,
-
     justifyContent: "center",
-
     alignItems: "center",
-
-    ...THEME.shadow,
+    shadowColor: COLORS.primary,
+    shadowOpacity: 0.6,
+    shadowRadius: 10,
+    elevation: 10,
   },
-  /*
-  Glow Circle
-*/
-glowCircle: {
-  position: "absolute",
-
-  width: 140,
-
-  height: 140,
-
-  borderRadius: 70,
-
-  backgroundColor: "rgba(77,166,255,0.15)",
-
-  top: -20,
-
-  right: -20,
-},
 });

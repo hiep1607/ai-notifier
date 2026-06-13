@@ -1,31 +1,14 @@
-/*
-  File: Notification.ts
-
-  Chức năng:
-  - Định nghĩa kiểu dữ liệu Notification
-  - Dùng cho:
-    + NotificationCard
-    + Notifications Screen
-*/
-
 export interface Notification {
-  /*
-    ID notification
-  */
   id: string;
-
-  /*
-    Tiêu đề notification
-  */
+  rule_id: string;
   title: string;
-
-  /*
-    AI summary
-  */
-  summary: string;
-
-  /*
-    Thời gian notification
-  */
-  time: string;
+  content: string;
+  ai_summary?: string;
+  details?: string;    // Phân tích chi tiết của AI (dài hơn content)
+  source?: string;     // Nguồn tin: VnExpress, CafeF...
+  category?: string;   // Danh mục tin (cùng hệ với rule)
+  sentiment?: string;  // positive | neutral | negative
+  is_read: boolean;
+  is_important: boolean;
+  created_at?: string;
 }

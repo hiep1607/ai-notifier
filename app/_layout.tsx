@@ -1,76 +1,130 @@
-import { useColorScheme } from '@/hooks/use-color-scheme';
-import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
+import { useEffect } from "react";
+
+import { useColorScheme } from "@/hooks/use-color-scheme";
+
+import {
+  DarkTheme,
+  DefaultTheme,
+  ThemeProvider,
+} from "@react-navigation/native";
+
 import * as NavigationBar from "expo-navigation-bar";
-import { Stack } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
-import 'react-native-reanimated';
+
+import { router, Stack } from "expo-router";
+
+import { StatusBar } from "expo-status-bar";
+
+import "react-native-reanimated";
+
+import {
+  AuthProvider,
+  useAuth,
+} from "../contexts/AuthContext";
+
 export const unstable_settings = {
-  anchor: '(tabs)',
+  anchor: "(tabs)",
 };
 
 export default function RootLayout() {
-  NavigationBar.setBehaviorAsync(
-  "overlay-swipe"
-);
+  return (
+    <AuthProvider>
+      <RootNavigator />
+    </AuthProvider>
+  );
+}
 
-NavigationBar.setVisibilityAsync(
-  "hidden"
-);
+function RootNavigator() {
+  const { session, loading } = useAuth();
   const colorScheme = useColorScheme();
 
+  useEffect(() => {
+    NavigationBar.setBehaviorAsync("overlay-swipe");
+    NavigationBar.setVisibilityAsync("hidden");
+  }, []);
+
+  useEffect(() => {
+    if (loading) return;
+    if (!session) {
+      router.replace("/login");
+    }
+  }, [session, loading]);
+
+  if (loading) return null;
+
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+    <ThemeProvider
+      value={
+        colorScheme === "dark"
+          ? DarkTheme
+          : DefaultTheme
+      }
+    >
       <Stack>
-        <Stack>
-  <Stack.Screen
-    name="(tabs)"
-    options={{ headerShown: false }}
-  />
+        <Stack.Screen
+          name="(tabs)"
+          options={{ headerShown: false }}
+        />
 
-  <Stack.Screen
-    name="rules"
-    options={{ headerShown: false }}
-  />
+        <Stack.Screen
+          name="login"
+          options={{ headerShown: false }}
+        />
 
-  <Stack.Screen
-    name="create-rule"
-    options={{ headerShown: false }}
-  />
+        <Stack.Screen
+          name="register"
+          options={{ headerShown: false }}
+        />
 
-  <Stack.Screen
-    name="ai-chat"
-    options={{ headerShown: false }}
-  />
+        <Stack.Screen
+          name="rule-detail"
+          options={{ headerShown: false }}
+        />
 
-  <Stack.Screen
-    name="manual-rule"
-    options={{ headerShown: false }}
-  />
+        <Stack.Screen
+          name="notification-detail"
+          options={{ headerShown: false }}
+        />
 
-  <Stack.Screen
-    name="ai-summary"
-    options={{ headerShown: false }}
-  />
+        <Stack.Screen
+          name="rules"
+          options={{ headerShown: false }}
+        />
 
-  <Stack.Screen
-    name="notification-detail"
-    options={{ headerShown: false }}
-  />
+        <Stack.Screen
+          name="create-rule"
+          options={{ headerShown: false }}
+        />
 
-  <Stack.Screen
-    name="modal"
-    options={{
-      presentation: "modal",
-      title: "Modal",
-    }}
-  />
-</Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
+        <Stack.Screen
+          name="profile"
+          options={{ headerShown: false }}
+        />
+
+        <Stack.Screen
+          name="ai-chat"
+          options={{ headerShown: false }}
+        />
+
+        <Stack.Screen
+          name="manual-rule"
+          options={{ headerShown: false }}
+        />
+
+        <Stack.Screen
+          name="ai-summary"
+          options={{ headerShown: false }}
+        />
+
+        <Stack.Screen
+          name="modal"
+          options={{
+            presentation: "modal",
+            title: "Modal",
+          }}
+        />
       </Stack>
-      <StatusBar style="auto" />
+
+      <StatusBar style="light" />
     </ThemeProvider>
   );
-  
-
 }

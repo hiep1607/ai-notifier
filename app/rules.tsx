@@ -1,24 +1,5 @@
-import { Text, View } from "react-native";
+import { Redirect } from "expo-router";
 
-export default function RulesScreen() {
-  return (
-    <View
-      style={{
-        flex: 1,
-        justifyContent: "center",
-        alignItems: "center",
-        backgroundColor: "#081120",
-      }}
-    >
-      <Text
-        style={{
-          color: "white",
-          fontSize: 28,
-          fontWeight: "bold",
-        }}
-      >
-        Rules Screen
-      </Text>
-    </View>
-  );
+export default function RulesRedirect() {
+  return <Redirect href="/(tabs)/rules" />;
 }
