@@ -14,6 +14,7 @@ import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
+import ReanimatedSwipeable from "react-native-gesture-handler/ReanimatedSwipeable";
 
 import { supabase } from "../../lib/supabase";
 import { useAuth } from "../../contexts/AuthContext";
@@ -124,6 +125,18 @@ export default function NotificationsScreen() {
     setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
   };
 
+  const handleDelete = async (id: string) => {
+    await supabase.from("notifications").delete().eq("id", id);
+    setNotifications((prev) => prev.filter((n) => n.id !== id));
+  };
+
+  const renderRightActions = (id: string) => (
+    <TouchableOpacity style={styles.deleteAction} onPress={() => handleDelete(id)}>
+      <Ionicons name="trash-outline" size={22} color="white" />
+      <Text style={styles.deleteText}>Xóa</Text>
+    </TouchableOpacity>
+  );
+
   const timeAgo = (iso?: string) => {
     if (!iso) return "";
     const diff = Date.now() - new Date(iso).getTime();
@@ -192,8 +205,8 @@ export default function NotificationsScreen() {
         )}
 
         {displayedNotifications.map((item) => (
+          <ReanimatedSwipeable key={item.id} renderRightActions={() => renderRightActions(item.id)}>
           <TouchableOpacity
-            key={item.id}
             style={[styles.card, !item.is_read && styles.cardUnread]}
             activeOpacity={0.85}
             onPress={() =>
@@ -224,6 +237,7 @@ export default function NotificationsScreen() {
               </View>
             </View>
           </TouchableOpacity>
+          </ReanimatedSwipeable>
         ))}
       </ScrollView>
     </View>
@@ -369,6 +383,20 @@ function createStyles(C: AppColors) {
       color: C.muted,
       fontSize: 12,
       marginLeft: "auto",
+    },
+    deleteAction: {
+      backgroundColor: C.danger,
+      justifyContent: "center",
+      alignItems: "center",
+      width: 80,
+      borderRadius: RADIUS.lg,
+      marginBottom: 14,
+    },
+    deleteText: {
+      color: "white",
+      fontSize: 12,
+      fontWeight: "700",
+      marginTop: 2,
     },
   });
 }

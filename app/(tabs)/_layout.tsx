@@ -12,11 +12,23 @@ export default function TabLayout() {
   const { user } = useAuth();
   const pathname = usePathname();
   const [unreadCount, setUnreadCount] = useState(0);
+  const [activeRulesCount, setActiveRulesCount] = useState(0);
 
-  // Re-fetch mỗi khi user điều hướng (pathname đổi) — bắt được cả lúc đọc notification xong quay lại
   useEffect(() => {
-    if (user) fetchUnread();
+    if (user) {
+      fetchUnread();
+      fetchActiveRules();
+    }
   }, [user, pathname]);
+
+  const fetchActiveRules = async () => {
+    const { count } = await supabase
+      .from("rules")
+      .select("*", { count: "exact", head: true })
+      .eq("user_id", user!.id)
+      .eq("is_active", true);
+    setActiveRulesCount(count ?? 0);
+  };
 
   const fetchUnread = async () => {
     const { data: ruleRows } = await supabase
@@ -72,6 +84,14 @@ export default function TabLayout() {
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="list" size={size} color={color} />
           ),
+          tabBarBadge: activeRulesCount > 0 ? activeRulesCount : undefined,
+          tabBarBadgeStyle: {
+            backgroundColor: colors.primary,
+            fontSize: 11,
+            minWidth: 18,
+            height: 18,
+            lineHeight: 18,
+          },
         }}
       />
 
