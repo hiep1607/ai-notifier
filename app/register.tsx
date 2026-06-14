@@ -72,6 +72,7 @@ export default function RegisterScreen() {
       }
 
       if (data.session) {
+        alertMessage("Chào mừng!", `Đăng ký thành công. Chào mừng bạn đến với AI Notifier, ${fullName.trim()}!`);
         router.replace("/(tabs)");
         return;
       }

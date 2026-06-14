@@ -113,6 +113,17 @@ export default function NotificationsScreen() {
     setSearchText("");
   };
 
+  const unreadNotifications = notifications.filter((n) => !n.is_read);
+
+  const handleMarkAllRead = async () => {
+    if (!unreadNotifications.length) return;
+    await supabase
+      .from("notifications")
+      .update({ is_read: true })
+      .in("id", unreadNotifications.map((n) => n.id));
+    setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
+  };
+
   const timeAgo = (iso?: string) => {
     if (!iso) return "";
     const diff = Date.now() - new Date(iso).getTime();
@@ -145,9 +156,17 @@ export default function NotificationsScreen() {
         ) : (
           <>
             <Text style={styles.title}>Thông báo</Text>
-            <TouchableOpacity onPress={() => setSearchMode(true)} style={styles.searchBtn}>
-              <Ionicons name="search" size={22} color={colors.text} />
-            </TouchableOpacity>
+            <View style={styles.headerActions}>
+              {unreadNotifications.length > 0 && (
+                <TouchableOpacity onPress={handleMarkAllRead} style={styles.markAllBtn}>
+                  <Ionicons name="checkmark-done-outline" size={18} color={colors.primary} />
+                  <Text style={styles.markAllText}>Đọc hết</Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity onPress={() => setSearchMode(true)} style={styles.searchBtn}>
+                <Ionicons name="search" size={22} color={colors.text} />
+              </TouchableOpacity>
+            </View>
           </>
         )}
       </View>
@@ -229,6 +248,25 @@ function createStyles(C: AppColors) {
       color: C.text,
       fontSize: 32,
       fontWeight: "bold",
+    },
+    headerActions: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+    },
+    markAllBtn: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 4,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      borderRadius: 20,
+      backgroundColor: C.card,
+    },
+    markAllText: {
+      color: C.primary,
+      fontSize: 13,
+      fontWeight: "600",
     },
     searchBtn: {
       width: 46,
