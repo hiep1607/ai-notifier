@@ -13,8 +13,10 @@ import {
 
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
+import ReanimatedSwipeable from "react-native-gesture-handler/ReanimatedSwipeable";
 
 import { supabase } from "../../lib/supabase";
+import { confirmAsync } from "../../lib/dialog";
 import { useAuth } from "../../contexts/AuthContext";
 import { useTheme } from "../../contexts/ThemeContext";
 import { Rule } from "../../types/Rule";
@@ -36,6 +38,7 @@ export default function RulesScreen() {
 
   const [activeTab, setActiveTab] = useState("all");
   const [rules, setRules] = useState<Rule[]>([]);
+  const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
   const [refreshing, setRefreshing] = useState(false);
   const [createMenuVisible, setCreateMenuVisible] = useState(false);
 
@@ -66,8 +69,38 @@ export default function RulesScreen() {
 
     if (data) {
       setRules(data as Rule[]);
+
+      const ids = data.map((r) => r.id);
+      if (ids.length > 0) {
+        const { data: notifs } = await supabase
+          .from("notifications")
+          .select("rule_id")
+          .in("rule_id", ids)
+          .eq("is_read", false);
+
+        const counts: Record<string, number> = {};
+        notifs?.forEach((n) => {
+          counts[n.rule_id] = (counts[n.rule_id] ?? 0) + 1;
+        });
+        setUnreadCounts(counts);
+      }
     }
   };
+
+  const handleDeleteRule = async (id: string) => {
+    const ok = await confirmAsync("Xóa rule", "Rule và tất cả thông báo liên quan sẽ bị xóa vĩnh viễn?");
+    if (!ok) return;
+    await supabase.from("notifications").delete().eq("rule_id", id);
+    await supabase.from("rules").delete().eq("id", id);
+    setRules((prev) => prev.filter((r) => r.id !== id));
+  };
+
+  const renderRightActions = (id: string) => (
+    <TouchableOpacity style={styles.deleteAction} onPress={() => handleDeleteRule(id)}>
+      <Ionicons name="trash-outline" size={22} color="white" />
+      <Text style={styles.deleteText}>Xóa</Text>
+    </TouchableOpacity>
+  );
 
   const filteredRules =
     activeTab === "all"
@@ -116,7 +149,11 @@ export default function RulesScreen() {
         {filteredRules.map((item) => {
           const cat = findCategory(item.category);
           return (
-            <View key={item.id} style={styles.ruleCard}>
+            <ReanimatedSwipeable
+              key={item.id}
+              renderRightActions={() => renderRightActions(item.id)}
+            >
+            <View style={styles.ruleCard}>
               <TouchableOpacity
                 style={styles.ruleLeft}
                 activeOpacity={0.8}
@@ -124,7 +161,11 @@ export default function RulesScreen() {
                   router.push({ pathname: "/rule-detail", params: { id: item.id } })
                 }
               >
-                <IconBadge category={item.category} size={50} />
+                <IconBadge
+                  category={item.category}
+                  size={50}
+                  unreadCount={unreadCounts[item.id] ?? 0}
+                />
                 <View style={styles.ruleText}>
                   <Text style={styles.ruleTitle} numberOfLines={1}>{item.title}</Text>
                   <Text style={styles.ruleDesc} numberOfLines={1}>{item.description}</Text>
@@ -141,6 +182,7 @@ export default function RulesScreen() {
                 trackColor={{ true: colors.primary + "66", false: colors.border }}
               />
             </View>
+            </ReanimatedSwipeable>
           );
         })}
       </ScrollView>
@@ -367,6 +409,20 @@ function createStyles(C: AppColors) {
       color: C.muted,
       fontSize: 16,
       fontWeight: "600",
+    },
+    deleteAction: {
+      backgroundColor: C.danger,
+      justifyContent: "center",
+      alignItems: "center",
+      width: 80,
+      borderRadius: RADIUS.lg,
+      marginBottom: 14,
+    },
+    deleteText: {
+      color: "white",
+      fontSize: 12,
+      fontWeight: "700",
+      marginTop: 2,
     },
   });
 }
