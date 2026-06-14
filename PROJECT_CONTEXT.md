@@ -182,21 +182,41 @@ ai-notifier-new/
 
 ### Phase 2A — AI hoạt động end-to-end (ưu tiên cao nhất)
 
-Mục tiêu: AI tạo rule + sinh notification chạy được trên **cả web lẫn điện thoại** thông qua Edge Functions.
+Mục tiêu: AI tạo rule + sinh notification chạy được trên **cả web lẫn điện thoại**.
 
-**Bước chuẩn bị (manual — không code):**
-1. Tạo tài khoản Anthropic → lấy API Key (`console.anthropic.com`)
-2. Cài Supabase CLI: `npm install -g supabase`
-3. Link project: `supabase link --project-ref idtibfiyfywcugdvlqal`
-4. Set secret: `supabase secrets set ANTHROPIC_API_KEY=sk-ant-...`
+#### Kiến trúc đã chốt (self-hosted, không dùng Claude API)
 
-**Task 2A.1 — Deploy Edge Function `generate-rule`:**
-- Cập nhật `supabase/functions/generate-rule/index.ts` — nâng lên multi-turn chat (hiện chỉ single-turn)
-- Deploy: `supabase functions deploy generate-rule`
-- Cập nhật `app/create-rule.tsx` — thay `chatRule()` (Ollama) bằng `supabase.functions.invoke("generate-rule")`
+```
+App (web/mobile)
+    ↓
+Supabase Edge Function  ← app chỉ biết đến đây, URL Ollama được giấu
+    ↓
+Cloudflare Tunnel (URL công khai cố định)
+    ↓
+Ollama chạy trên máy tính cá nhân (localhost:11434, GPU RTX 3050)
+```
 
-**Task 2A.2 — Deploy Edge Function `run-monitor`:**
-- Fix `supabase/functions/run-monitor/index.ts` — insert đủ 8 fields (hiện chỉ insert 4)
+**Lý do chọn hướng này:**
+- Không trả tiền per-token, tận dụng GPU RTX 3050 sẵn có
+- Scale sau: chỉ đổi `OLLAMA_URL` secret → trỏ sang VPS, app không cần sửa
+- Mục tiêu: < 10 người dùng, dùng lẻ tẻ (Ollama xử lý tuần tự, đủ dùng)
+- Giới hạn: máy tính phải bật khi có người dùng AI
+
+**Bước chuẩn bị (manual — chưa làm):**
+1. Tạo tài khoản Cloudflare miễn phí
+2. Cài `cloudflared` → tạo tunnel trỏ vào `localhost:11434`
+3. Cài Supabase CLI: `npm install -g supabase`
+4. Link project: `supabase link --project-ref idtibfiyfywcugdvlqal`
+5. Lưu URL tunnel: `supabase secrets set OLLAMA_URL=https://your-tunnel.trycloudflare.com`
+
+**Task 2A.1 — Edge Function proxy cho Ollama:**
+- Viết `supabase/functions/ollama-proxy/index.ts` — đọc `OLLAMA_URL` từ secrets, forward request sang Ollama
+- Nâng logic lên multi-turn chat (hiện `generate-rule` chỉ single-turn)
+- Deploy: `supabase functions deploy ollama-proxy`
+- Cập nhật `lib/claude.ts` — gọi `supabase.functions.invoke("ollama-proxy")` thay vì `localhost:11434`
+
+**Task 2A.2 — Fix Edge Function `run-monitor`:**
+- Fix insert đủ 8 fields (hiện chỉ insert 4)
 - Deploy: `supabase functions deploy run-monitor`
 - Cập nhật `app/rule-detail.tsx` — thay `generateMockNotification()` bằng `supabase.functions.invoke("run-monitor")`
 
