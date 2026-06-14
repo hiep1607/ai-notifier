@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 
 import {
   ActivityIndicator,
+  Linking,
   ScrollView,
   StyleSheet,
   Text,
@@ -165,6 +166,18 @@ export default function NotificationDetailScreen() {
         </View>
       ) : null}
 
+      {/* ĐỌC BÀI GỐC */}
+      {notification.source_url ? (
+        <TouchableOpacity
+          style={styles.sourceButton}
+          onPress={() => Linking.openURL(notification.source_url!)}
+          activeOpacity={0.85}
+        >
+          <Ionicons name="open-outline" size={20} color="white" />
+          <Text style={styles.sourceButtonText}>Đọc bài gốc</Text>
+        </TouchableOpacity>
+      ) : null}
+
       <View style={{ height: 40 }} />
     </ScrollView>
   );
@@ -279,6 +292,20 @@ function createStyles(C: AppColors) {
     boxText: {
       color: C.subText,
       lineHeight: 24,
+    },
+    sourceButton: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 8,
+      backgroundColor: C.primary,
+      borderRadius: RADIUS.md,
+      paddingVertical: 16,
+    },
+    sourceButtonText: {
+      color: "white",
+      fontSize: 16,
+      fontWeight: "bold",
     },
   });
 }

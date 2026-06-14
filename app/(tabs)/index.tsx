@@ -14,8 +14,10 @@ import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import { supabase } from "../../lib/supabase";
+import { runMonitorForActiveRules } from "../../lib/monitor";
 import { useAuth } from "../../contexts/AuthContext";
 import { useTheme } from "../../contexts/ThemeContext";
 import { Rule } from "../../types/Rule";
@@ -34,19 +36,45 @@ export default function HomeScreen() {
   const [notificationsCount, setNotificationsCount] = useState(0);
   const [importantCount, setImportantCount] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
+  const [scanning, setScanning] = useState(false);
   const [createMenuVisible, setCreateMenuVisible] = useState(false);
 
+  // Pull-to-refresh: ép quét tin mới ngay (bỏ qua throttle).
   const onRefresh = async () => {
     setRefreshing(true);
     await fetchData();
+    await runMonitor(true);
     setRefreshing(false);
   };
 
   useFocusEffect(
     React.useCallback(() => {
-      if (user) fetchData();
+      if (user) {
+        fetchData();
+        runMonitor(false); // tự quét nền khi mở Home (có throttle)
+      }
     }, [user])
   );
+
+  // Quét tin thật cho các rule active. force=true bỏ qua throttle 30 phút.
+  const runMonitor = async (force: boolean) => {
+    if (!user) return;
+    try {
+      const raw = await AsyncStorage.getItem("@last_monitor");
+      const last = raw ? parseInt(raw, 10) : 0;
+      if (!force && Date.now() - last < 30 * 60 * 1000) return;
+
+      setScanning(true);
+      await AsyncStorage.setItem("@last_monitor", String(Date.now()));
+      const res = await runMonitorForActiveRules(user.id);
+      if (res.inserted > 0) await fetchData();
+    } catch (err) {
+      // Ollama tắt / mất mạng → im lặng, không làm phiền người dùng.
+      console.log("Quét tin nền bỏ qua:", err);
+    } finally {
+      setScanning(false);
+    }
+  };
 
   const fetchData = async () => {
     if (!user) return;
@@ -97,7 +125,9 @@ export default function HomeScreen() {
               <Text style={styles.brand}>AI Notifier</Text>
               <Text style={styles.brandEmoji}>⚡</Text>
             </View>
-            <Text style={styles.subtitle}>Theo dõi thông tin thông minh bằng AI</Text>
+            <Text style={styles.subtitle}>
+              {scanning ? "Đang quét tin mới..." : "Theo dõi thông tin thông minh bằng AI"}
+            </Text>
           </View>
 
           <View style={styles.headerActions}>

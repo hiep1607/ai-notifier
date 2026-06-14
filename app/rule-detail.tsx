@@ -17,7 +17,7 @@ import { router, useLocalSearchParams } from "expo-router";
 
 import { supabase } from "../lib/supabase";
 import { confirmAsync, alertMessage } from "../lib/dialog";
-import { generateMockNotification } from "../lib/claude";
+import { runMonitorForRule } from "../lib/monitor";
 import { CATEGORIES, FREQUENCIES, findCategory, findFrequency } from "../lib/ruleOptions";
 import { useTheme } from "../contexts/ThemeContext";
 import { Rule } from "../types/Rule";
@@ -137,36 +137,20 @@ export default function RuleDetailScreen() {
     setMonitoring(true);
 
     try {
-      const notifData = await generateMockNotification({
-        keyword: rule.keyword,
-        description: rule.description,
-        category: rule.category,
-        sources: rule.sources,
-        condition: rule.condition,
-      });
+      const { inserted, checked } = await runMonitorForRule(rule);
 
-      const { error } = await supabase.from("notifications").insert([{
-        rule_id: id,
-        title: notifData.title,
-        content: notifData.content,
-        ai_summary: notifData.ai_summary,
-        details: notifData.details,
-        source: notifData.source,
-        category: notifData.category,
-        sentiment: notifData.sentiment,
-        is_important: notifData.is_important ?? false,
-        is_read: false,
-      }]);
-
-      if (error) {
-        alertMessage("Lỗi", error.message);
-        return;
+      if (checked === 0) {
+        alertMessage("Không có tin", "Chưa tìm thấy bài viết nào cho từ khóa này.");
+      } else if (inserted === 0) {
+        alertMessage("Đã cập nhật", "Không có tin mới — tất cả bài tìm được đã có trong thông báo.");
+      } else {
+        alertMessage("Thành công", `Đã tạo ${inserted} thông báo mới từ tin thật!`);
+        fetchData();
       }
-
-      alertMessage("Thành công", "Đã tạo thông báo mới! Kiểm tra tab Thông báo.");
-      fetchData();
     } catch (err: any) {
-      alertMessage("Lỗi", err.message);
+      alertMessage("Lỗi", err.message?.includes("fetch") || err.message?.includes("Network")
+        ? "Không kết nối được. Kiểm tra Ollama đang chạy (localhost:11434) và mạng."
+        : err.message);
     } finally {
       setMonitoring(false);
     }
@@ -461,12 +445,12 @@ export default function RuleDetailScreen() {
               disabled={monitoring}
             >
               <Ionicons
-                name={monitoring ? "sync-outline" : "play-circle-outline"}
+                name={monitoring ? "sync-outline" : "search-outline"}
                 size={20}
                 color={colors.primary}
               />
               <Text style={styles.monitorText}>
-                {monitoring ? "Đang chạy AI..." : "Chạy thử giám sát"}
+                {monitoring ? "Đang quét tin..." : "Kiểm tra tin ngay"}
               </Text>
             </TouchableOpacity>
           )}

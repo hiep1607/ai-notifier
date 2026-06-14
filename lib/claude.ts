@@ -122,66 +122,56 @@ export async function chatRule(history: ChatTurn[]): Promise<RuleAIResult> {
   };
 }
 
-// ===== SINH THÔNG BÁO GIẢ LẬP (mock) =====
+// ===== TÓM TẮT BÀI VIẾT THẬT =====
+// AI đọc 1 bài THẬT (tiêu đề + mô tả ngắn từ RSS) rồi tóm tắt — KHÔNG bịa thông tin.
 
-export interface MockNotification {
-  title: string;
-  content: string;
-  ai_summary: string;
-  details: string;
-  source: string;
-  category: string;
-  sentiment: string; // positive | neutral | negative
+export interface ArticleSummary {
+  content: string;     // 2-3 câu tóm tắt dễ đọc, dựa trên bài thật
+  ai_summary: string;  // 1 câu ngắn (~15 từ)
+  sentiment: string;   // positive | neutral | negative
   is_important: boolean;
 }
 
-export async function generateMockNotification(rule: {
-  keyword: string;
-  description?: string;
-  category?: string;
-  sources?: string;
-  condition?: string;
-}): Promise<MockNotification> {
+export async function summarizeArticle(
+  article: { title: string; snippet: string; source: string },
+  rule: { keyword: string; condition?: string }
+): Promise<ArticleSummary> {
   const raw = await callOllama([
     {
       role: "system",
-      content: `Bạn là AI giám sát tin tức tự động. Sinh 1 thông báo tin tức thực tế,
-như thể bạn vừa tìm thấy một bài báo/sự kiện mới liên quan đến keyword được cung cấp.
-Viết tự nhiên như báo chí Việt Nam, hợp lý với bối cảnh hiện tại.
+      content: `Bạn là AI giám sát tin tức. Bạn nhận được 1 bài báo THẬT (tiêu đề + mô tả ngắn).
+Nhiệm vụ: tóm tắt lại bằng tiếng Việt tự nhiên, dễ đọc.
 
-Trả về JSON thuần đúng 7 trường:
+QUAN TRỌNG: CHỈ dựa vào thông tin được cung cấp, TUYỆT ĐỐI KHÔNG bịa thêm số liệu, sự kiện hay chi tiết không có trong bài.
+
+Trả về JSON thuần đúng 4 trường:
 {
-  "title": "tiêu đề tin tức ngắn (~8-12 từ), như tiêu đề báo",
-  "content": "đoạn tin chính 3-4 câu, như mở đầu bài báo",
-  "details": "phân tích chi tiết hơn 4-6 câu: bối cảnh, số liệu, tác động, dự báo",
-  "ai_summary": "tóm tắt 1 câu ngắn (~15 từ)",
-  "source": "tên nguồn tin hợp lý (vd: VnExpress, CafeF, Tuổi Trẻ)",
-  "category": "1 trong: finance, news, tech, sports, weather, health, other",
+  "content": "tóm tắt 2-3 câu nội dung chính của bài",
+  "ai_summary": "tóm tắt 1 câu thật ngắn (~15 từ)",
   "sentiment": "1 trong: positive, neutral, negative",
-  "is_important": true/false (true nếu biến động lớn/bất thường/khẩn cấp)
+  "is_important": true/false
 }
+- is_important = true nếu bài có biến động lớn/bất thường/khẩn cấp, hoặc khớp điều kiện người dùng quan tâm.
 Chỉ trả về JSON thuần, không markdown, không giải thích.`,
     },
     {
       role: "user",
-      content: `Keyword theo dõi: "${rule.keyword}"
-Mô tả rule: "${rule.description ?? ""}"
-Danh mục: "${rule.category ?? ""}"
-Nguồn ưu tiên: "${rule.sources ?? ""}"
+      content: `Từ khóa người dùng theo dõi: "${rule.keyword}"
 Điều kiện đáng chú ý: "${rule.condition ?? ""}"
 
-Sinh 1 thông báo tin tức mới nhất liên quan keyword này.`,
+BÀI BÁO THẬT:
+Nguồn: ${article.source}
+Tiêu đề: ${article.title}
+Mô tả: ${article.snippet}
+
+Hãy tóm tắt bài này.`,
     },
   ]);
 
   const d = parseJson(raw);
   return {
-    title: asText(d.title),
-    content: asText(d.content),
-    ai_summary: asText(d.ai_summary),
-    details: asText(d.details),
-    source: asText(d.source),
-    category: asText(d.category) || rule.category || "other",
+    content: asText(d.content) || article.snippet,
+    ai_summary: asText(d.ai_summary) || article.title,
     sentiment: asText(d.sentiment) || "neutral",
     is_important: d.is_important ?? false,
   };

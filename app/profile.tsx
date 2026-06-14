@@ -69,7 +69,7 @@ export default function ProfileScreen() {
 
   // Avatar: 1-2 chữ cái đầu của họ tên, fallback là chữ cái đầu email
   const initials = fullName.trim()
-    ? fullName.trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase()
+    ? fullName.trim().split(/\s+/).map((w: string) => w[0]).slice(0, 2).join("").toUpperCase()
     : (user?.email?.[0] ?? "?").toUpperCase();
 
   const displayName = fullName.trim() || user?.email?.split("@")[0] || "Người dùng";
