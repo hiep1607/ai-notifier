@@ -133,38 +133,46 @@ export interface ArticleSummary {
 }
 
 export async function summarizeArticle(
-  article: { title: string; snippet: string; source: string },
+  article: { title: string; snippet: string; source: string; body?: string },
   rule: { keyword: string; condition?: string }
 ): Promise<ArticleSummary> {
+  // Ưu tiên nội dung đầy đủ; không có thì dùng mô tả ngắn.
+  const articleText = (article.body && article.body.length > 50)
+    ? article.body
+    : article.snippet;
+
   const raw = await callOllama([
     {
       role: "system",
-      content: `Bạn là AI giám sát tin tức. Bạn nhận được 1 bài báo THẬT (tiêu đề + mô tả ngắn).
-Nhiệm vụ: tóm tắt lại bằng tiếng Việt tự nhiên, dễ đọc.
+      content: `Bạn là AI giám sát tin tức cho người dùng đang theo dõi một CHỦ ĐỀ cụ thể.
+Bạn nhận 1 bài báo THẬT và chủ đề người dùng quan tâm. Hãy viết thông báo NGẮN GỌN, TẬP TRUNG vào đúng chủ đề đó.
 
-QUAN TRỌNG: CHỈ dựa vào thông tin được cung cấp, TUYỆT ĐỐI KHÔNG bịa thêm số liệu, sự kiện hay chi tiết không có trong bài.
+NGUYÊN TẮC:
+1. content phải TRÍCH thông tin CỤ THỂ liên quan chủ đề: con số, giá, tỷ lệ %, mốc thời gian, mức tăng/giảm... nếu bài có.
+   Ví dụ chủ đề "giá vàng" → phải nêu giá bao nhiêu, tăng/giảm bao nhiêu.
+2. CHỈ dùng thông tin CÓ trong bài. TUYỆT ĐỐI KHÔNG bịa số liệu. Nếu bài không có số liệu cụ thể thì tóm tắt trung thực điều bài nói.
+3. Viết tiếng Việt tự nhiên, đi thẳng vào nội dung, không lan man.
 
 Trả về JSON thuần đúng 4 trường:
 {
-  "content": "tóm tắt 2-3 câu nội dung chính của bài",
-  "ai_summary": "tóm tắt 1 câu thật ngắn (~15 từ)",
+  "content": "2-4 câu, nêu rõ thông tin/số liệu cụ thể liên quan chủ đề",
+  "ai_summary": "1 câu ngắn (~15 từ) chứa điểm mấu chốt (kèm số nếu có)",
   "sentiment": "1 trong: positive, neutral, negative",
   "is_important": true/false
 }
-- is_important = true nếu bài có biến động lớn/bất thường/khẩn cấp, hoặc khớp điều kiện người dùng quan tâm.
-Chỉ trả về JSON thuần, không markdown, không giải thích.`,
+- is_important = true nếu có biến động lớn/bất thường, hoặc khớp điều kiện người dùng quan tâm.
+Chỉ trả JSON thuần, không markdown, không giải thích.`,
     },
     {
       role: "user",
-      content: `Từ khóa người dùng theo dõi: "${rule.keyword}"
-Điều kiện đáng chú ý: "${rule.condition ?? ""}"
+      content: `CHỦ ĐỀ người dùng theo dõi: "${rule.keyword}"
+Điều kiện đáng chú ý: "${rule.condition ?? "(không có)"}"
 
-BÀI BÁO THẬT:
-Nguồn: ${article.source}
+BÀI BÁO THẬT (nguồn ${article.source}):
 Tiêu đề: ${article.title}
-Mô tả: ${article.snippet}
+Nội dung: ${articleText}
 
-Hãy tóm tắt bài này.`,
+Viết thông báo tập trung vào chủ đề "${rule.keyword}", trích số liệu cụ thể nếu có.`,
     },
   ]);
 
@@ -172,7 +180,22 @@ Hãy tóm tắt bài này.`,
   return {
     content: asText(d.content) || article.snippet,
     ai_summary: asText(d.ai_summary) || article.title,
-    sentiment: asText(d.sentiment) || "neutral",
-    is_important: d.is_important ?? false,
+    sentiment: normSentiment(d.sentiment),
+    is_important: toBool(d.is_important),
   };
+}
+
+// Model nhỏ hay trả "NEUTRAL", "Positive"... → chuẩn hóa về 3 giá trị hợp lệ.
+function normSentiment(v: any): string {
+  const s = asText(v).toLowerCase();
+  if (s.includes("pos")) return "positive";
+  if (s.includes("neg")) return "negative";
+  return "neutral";
+}
+
+// Model hay trả "true"/"LOW"/"yes"... thay vì boolean → ép về boolean thật cho cột DB.
+function toBool(v: any): boolean {
+  if (typeof v === "boolean") return v;
+  const s = asText(v).toLowerCase();
+  return s === "true" || s === "yes" || s === "high" || s === "1";
 }

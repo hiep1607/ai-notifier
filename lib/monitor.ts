@@ -2,7 +2,7 @@
 // Chạy ngay trong app (cần Ollama local đang bật). Khi tắt máy thì không có gì chạy.
 
 import { supabase } from "./supabase";
-import { fetchNews, NewsItem } from "./news";
+import { fetchNews, fetchArticleBody, NewsItem } from "./news";
 import { summarizeArticle } from "./claude";
 import { Rule } from "../types/Rule";
 
@@ -16,7 +16,7 @@ export interface MonitorResult {
 
 // Chạy giám sát cho 1 rule. Trả về số thông báo mới được tạo.
 export async function runMonitorForRule(rule: Rule): Promise<MonitorResult> {
-  const items = await fetchNews(rule.keyword, 10);
+  const items = await fetchNews(rule.keyword, rule.category ?? "other", 10);
   if (items.length === 0) return { inserted: 0, checked: 0 };
 
   // Lấy các URL đã lưu cho rule này để chống trùng.
@@ -46,8 +46,11 @@ export async function runMonitorForRule(rule: Rule): Promise<MonitorResult> {
 }
 
 async function insertNotification(rule: Rule, item: NewsItem): Promise<boolean> {
+  // Lấy full nội dung bài để AI có số liệu thật; lỗi thì dùng snippet.
+  const body = await fetchArticleBody(item.link);
+
   const summary = await summarizeArticle(
-    { title: item.title, snippet: item.snippet, source: item.source },
+    { title: item.title, snippet: item.snippet, source: item.source, body },
     { keyword: rule.keyword, condition: rule.condition }
   );
 
