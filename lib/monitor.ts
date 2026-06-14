@@ -9,16 +9,6 @@ import { Rule } from "../types/Rule";
 // Mỗi lần chạy 1 rule, tạo tối đa bấy nhiêu thông báo mới (tránh spam + đỡ tốn thời gian gọi AI).
 const MAX_PER_RUN = 3;
 
-// Google News thêm hậu tố " - Tên nguồn" vào tiêu đề → bỏ đi cho gọn.
-function cleanTitle(title: string, source: string): string {
-  let t = title;
-  if (source && t.endsWith(` - ${source}`)) {
-    t = t.slice(0, -(source.length + 3));
-  }
-  // Bỏ hậu tố " - X" cuối cùng còn sót
-  return t.replace(/\s+-\s+[^-]+$/, (m) => (m.length < 40 ? "" : m)).trim() || title;
-}
-
 export interface MonitorResult {
   inserted: number;
   checked: number; // số bài lấy về
@@ -63,7 +53,7 @@ async function insertNotification(rule: Rule, item: NewsItem): Promise<boolean> 
 
   const { error } = await supabase.from("notifications").insert([{
     rule_id: rule.id,
-    title: cleanTitle(item.title, item.source),
+    title: item.title,
     content: summary.content,
     ai_summary: summary.ai_summary,
     source: item.source,

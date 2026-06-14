@@ -1,28 +1,26 @@
-// Lấy tin tức THẬT từ Google News RSS theo từ khóa.
-// Google News tự đi tìm bài từ các nguồn uy tín → trả về link bài thật.
+// Lấy tin tức THẬT từ Google News theo từ khóa, qua rss2json.
+// rss2json trả JSON đã parse sẵn + có CORS → chạy giống nhau trên web lẫn mobile,
+// không cần proxy riêng, không cần parse XML thủ công.
+// Google News tự đi tìm bài từ các nguồn uy tín → link bài là thật.
 // AI (Ollama) chỉ đọc các bài này rồi tóm tắt — không tự bịa.
-
-import { Platform } from "react-native";
 
 export interface NewsItem {
   title: string;
-  link: string;       // URL bài viết gốc (thật)
+  link: string;       // URL bài viết gốc (thật, qua redirect Google News)
   source: string;     // Tên nguồn (VnExpress, Tuổi Trẻ...)
-  pubDate: string;    // Ngày đăng (ISO hoặc raw)
+  pubDate: string;    // Ngày đăng
   snippet: string;    // Mô tả ngắn từ RSS
 }
 
-// Trên web, fetch thẳng news.google.com bị CORS chặn → đi qua proxy.
-// Trên mobile (Expo Go) không có CORS → fetch trực tiếp.
-// Đổi CORS_PROXY sang Edge Function riêng sau này nếu cần (chỉ sửa 1 dòng).
-const CORS_PROXY = "https://api.allorigins.win/raw?url=";
+// rss2json: free 10.000 request/ngày cho feed công khai, không cần API key.
+// Nếu sau này cần nhiều hơn, đăng ký key miễn phí và thêm &api_key=...
+const RSS2JSON = "https://api.rss2json.com/v1/api.json?rss_url=";
 
 function buildGoogleNewsUrl(keyword: string): string {
   const q = encodeURIComponent(keyword);
   return `https://news.google.com/rss/search?q=${q}&hl=vi&gl=VN&ceid=VN:vi`;
 }
 
-// Giải mã các entity HTML cơ bản mà RSS hay encode.
 function decodeEntities(str: string): string {
   return str
     .replace(/&lt;/g, "<")
@@ -33,59 +31,45 @@ function decodeEntities(str: string): string {
     .replace(/&amp;/g, "&");
 }
 
-// Lấy nội dung text bên trong 1 thẻ XML (hỗ trợ cả CDATA).
-function extractTag(block: string, tag: string): string {
-  const re = new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`, "i");
-  const m = block.match(re);
-  if (!m) return "";
-  let val = m[1].trim();
-  // Bóc CDATA nếu có
-  val = val.replace(/^<!\[CDATA\[/, "").replace(/\]\]>$/, "").trim();
-  return decodeEntities(val);
-}
-
-// Google News bọc tiêu đề thật + tên nguồn trong description (HTML). Bỏ tag để lấy text.
 function stripHtml(html: string): string {
   return decodeEntities(html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim());
 }
 
-// Parse RSS XML thành mảng NewsItem — dùng regex để chạy cả web lẫn React Native
-// (RN không có DOMParser). RSS đơn giản nên regex là đủ và ổn định.
-function parseRss(xml: string): NewsItem[] {
-  const items: NewsItem[] = [];
-  const itemBlocks = xml.match(/<item>([\s\S]*?)<\/item>/g) ?? [];
-
-  for (const block of itemBlocks) {
-    const title = extractTag(block, "title");
-    const link = extractTag(block, "link");
-    const pubDate = extractTag(block, "pubDate");
-    const source = extractTag(block, "source");
-    const rawDesc = extractTag(block, "description");
-
-    if (!title || !link) continue;
-
-    items.push({
-      title,
-      link,
-      source: source || "Google News",
-      pubDate,
-      snippet: stripHtml(rawDesc).slice(0, 300),
-    });
+// Google News nhét tên nguồn vào cuối tiêu đề: "Tiêu đề bài - VnExpress".
+// Tách ra để có tiêu đề sạch + tên nguồn.
+function splitTitleSource(raw: string): { title: string; source: string } {
+  const idx = raw.lastIndexOf(" - ");
+  if (idx > 0 && raw.length - idx < 45) {
+    return { title: raw.slice(0, idx).trim(), source: raw.slice(idx + 3).trim() };
   }
-
-  return items;
+  return { title: raw.trim(), source: "Google News" };
 }
 
 // Lấy tối đa `limit` bài mới nhất cho keyword.
 export async function fetchNews(keyword: string, limit = 10): Promise<NewsItem[]> {
   const target = buildGoogleNewsUrl(keyword);
-  const url = Platform.OS === "web" ? CORS_PROXY + encodeURIComponent(target) : target;
+  const res = await fetch(RSS2JSON + encodeURIComponent(target));
 
-  const res = await fetch(url);
   if (!res.ok) {
     throw new Error(`Không lấy được tin (HTTP ${res.status})`);
   }
 
-  const xml = await res.text();
-  return parseRss(xml).slice(0, limit);
+  const json = await res.json();
+  if (json.status !== "ok" || !Array.isArray(json.items)) {
+    throw new Error("Nguồn tin trả về dữ liệu không hợp lệ");
+  }
+
+  return json.items
+    .slice(0, limit)
+    .map((it: any): NewsItem => {
+      const { title, source } = splitTitleSource(String(it.title ?? ""));
+      return {
+        title,
+        link: String(it.link ?? ""),
+        source,
+        pubDate: String(it.pubDate ?? ""),
+        snippet: stripHtml(String(it.description ?? it.content ?? "")).slice(0, 300),
+      };
+    })
+    .filter((it: NewsItem) => it.title && it.link);
 }
