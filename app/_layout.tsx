@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { Platform } from "react-native";
 
 import { useColorScheme } from "@/hooks/use-color-scheme";
 
@@ -20,6 +21,7 @@ import {
   AuthProvider,
   useAuth,
 } from "../contexts/AuthContext";
+import { AppThemeProvider, useTheme } from "../contexts/ThemeContext";
 
 export const unstable_settings = {
   anchor: "(tabs)",
@@ -28,18 +30,23 @@ export const unstable_settings = {
 export default function RootLayout() {
   return (
     <AuthProvider>
-      <RootNavigator />
+      <AppThemeProvider>
+        <RootNavigator />
+      </AppThemeProvider>
     </AuthProvider>
   );
 }
 
 function RootNavigator() {
   const { session, loading } = useAuth();
+  const { isDark } = useTheme();
   const colorScheme = useColorScheme();
 
   useEffect(() => {
-    NavigationBar.setBehaviorAsync("overlay-swipe");
-    NavigationBar.setVisibilityAsync("hidden");
+    if (Platform.OS === "android") {
+      NavigationBar.setBehaviorAsync("overlay-swipe");
+      NavigationBar.setVisibilityAsync("hidden");
+    }
   }, []);
 
   useEffect(() => {
@@ -52,13 +59,7 @@ function RootNavigator() {
   if (loading) return null;
 
   return (
-    <ThemeProvider
-      value={
-        colorScheme === "dark"
-          ? DarkTheme
-          : DefaultTheme
-      }
-    >
+    <ThemeProvider value={isDark ? DarkTheme : DefaultTheme}>
       <Stack>
         <Stack.Screen
           name="(tabs)"
@@ -101,17 +102,7 @@ function RootNavigator() {
         />
 
         <Stack.Screen
-          name="ai-chat"
-          options={{ headerShown: false }}
-        />
-
-        <Stack.Screen
           name="manual-rule"
-          options={{ headerShown: false }}
-        />
-
-        <Stack.Screen
-          name="ai-summary"
           options={{ headerShown: false }}
         />
 
@@ -124,7 +115,7 @@ function RootNavigator() {
         />
       </Stack>
 
-      <StatusBar style="light" />
+      <StatusBar style={isDark ? "light" : "dark"} />
     </ThemeProvider>
   );
 }

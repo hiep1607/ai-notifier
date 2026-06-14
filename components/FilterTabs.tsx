@@ -1,6 +1,7 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
-import { COLORS } from "../lib/theme";
+import { type AppColors } from "../lib/theme";
+import { useTheme } from "../contexts/ThemeContext";
 
 export interface TabItem {
   key: string;
@@ -13,8 +14,10 @@ interface Props {
   onChange: (key: string) => void;
 }
 
-// Hàng tab lọc kiểu pill (Tất cả / Đang hoạt động / Tạm dừng...).
 export default function FilterTabs({ tabs, active, onChange }: Props) {
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
+
   return (
     <View style={styles.row}>
       {tabs.map((t) => {
@@ -34,30 +37,32 @@ export default function FilterTabs({ tabs, active, onChange }: Props) {
   );
 }
 
-const styles = StyleSheet.create({
-  row: {
-    flexDirection: "row",
-    gap: 10,
-    marginBottom: 22,
-  },
-  tab: {
-    paddingHorizontal: 16,
-    paddingVertical: 9,
-    borderRadius: 999,
-    backgroundColor: COLORS.card,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  tabActive: {
-    backgroundColor: COLORS.primary,
-    borderColor: COLORS.primary,
-  },
-  text: {
-    color: COLORS.subText,
-    fontSize: 13,
-    fontWeight: "600",
-  },
-  textActive: {
-    color: "white",
-  },
-});
+function createStyles(C: AppColors) {
+  return StyleSheet.create({
+    row: {
+      flexDirection: "row",
+      gap: 10,
+      marginBottom: 22,
+    },
+    tab: {
+      paddingHorizontal: 16,
+      paddingVertical: 9,
+      borderRadius: 999,
+      backgroundColor: C.card,
+      borderWidth: 1,
+      borderColor: C.border,
+    },
+    tabActive: {
+      backgroundColor: C.primary,
+      borderColor: C.primary,
+    },
+    text: {
+      color: C.subText,
+      fontSize: 13,
+      fontWeight: "600",
+    },
+    textActive: {
+      color: "white",
+    },
+  });
+}

@@ -1,29 +1,16 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
-import {
-  ScrollView,
-  StyleSheet,
-  Switch,
-  Text,
-  TouchableOpacity,
-  View,
-} from "react-native";
+import { ScrollView, StyleSheet, Text, View } from "react-native";
 
-import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
 import { supabase } from "../../lib/supabase";
+import { confirmAsync, alertMessage } from "../../lib/dialog";
+import { SCREEN, RADIUS, type AppColors } from "../../lib/theme";
+import { useTheme } from "../../contexts/ThemeContext";
+import SettingRow from "../../components/SettingRow";
 
 const SETTINGS_KEY = "@settings";
-
-const COLORS = {
-  background: "#081120",
-  card: "#101B35",
-  primary: "#4DA6FF",
-  text: "#FFFFFF",
-  subText: "#8FA1C7",
-  border: "#1E2B4A",
-};
 
 interface Settings {
   notificationsEnabled: boolean;
@@ -31,6 +18,7 @@ interface Settings {
   vibrationEnabled: boolean;
   aiSummaryEnabled: boolean;
   importantAlertsEnabled: boolean;
+  darkMode: boolean;
 }
 
 const DEFAULT_SETTINGS: Settings = {
@@ -39,14 +27,12 @@ const DEFAULT_SETTINGS: Settings = {
   vibrationEnabled: false,
   aiSummaryEnabled: true,
   importantAlertsEnabled: true,
-};
-
-const handleLogout = async () => {
-  await supabase.auth.signOut();
-  router.replace("/login");
+  darkMode: true,
 };
 
 export default function SettingsScreen() {
+  const { colors, setDarkMode } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
 
   useEffect(() => {
@@ -61,196 +47,151 @@ export default function SettingsScreen() {
     const updated = { ...settings, [key]: value };
     setSettings(updated);
     await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(updated));
+
+    if (key === "darkMode") {
+      setDarkMode(value);
+    }
+  };
+
+  const handleLogout = async () => {
+    const ok = await confirmAsync("Đăng xuất", "Bạn có chắc muốn đăng xuất?");
+    if (!ok) return;
+    await supabase.auth.signOut();
+    router.replace("/login");
+  };
+
+  const handleClearCache = async () => {
+    const ok = await confirmAsync("Xóa cache", "Xóa dữ liệu tạm của ứng dụng? (không ảnh hưởng tài khoản)");
+    if (!ok) return;
+    await AsyncStorage.removeItem(SETTINGS_KEY);
+    setSettings(DEFAULT_SETTINGS);
+    setDarkMode(true);
+    alertMessage("Đã xóa", "Cache ứng dụng đã được xóa.");
   };
 
   return (
     <ScrollView
       style={styles.container}
       showsVerticalScrollIndicator={false}
+      contentContainerStyle={{ paddingBottom: 40 }}
     >
       {/* HEADER */}
       <View style={styles.header}>
         <Text style={styles.title}>Cài đặt</Text>
-
-        <Text style={styles.subtitle}>
-          Quản lý ứng dụng AI Notifier
-        </Text>
+        <Text style={styles.subtitle}>Quản lý ứng dụng AI Notifier</Text>
       </View>
 
-      {/* NOTIFICATIONS */}
+      {/* TÀI KHOẢN */}
+      <Text style={styles.sectionLabel}>Tài khoản</Text>
       <View style={styles.card}>
-        <Text style={styles.sectionTitle}>🔔 Thông báo</Text>
-
-        <View style={styles.settingRow}>
-          <Text style={styles.settingText}>Bật thông báo</Text>
-          <Switch
-            value={settings.notificationsEnabled}
-            onValueChange={(v) => updateSetting("notificationsEnabled", v)}
-          />
-        </View>
-
-        <View style={styles.settingRow}>
-          <Text style={styles.settingText}>Âm thanh</Text>
-          <Switch
-            value={settings.soundEnabled}
-            onValueChange={(v) => updateSetting("soundEnabled", v)}
-          />
-        </View>
-
-        <View style={styles.settingRow}>
-          <Text style={styles.settingText}>Rung</Text>
-          <Switch
-            value={settings.vibrationEnabled}
-            onValueChange={(v) => updateSetting("vibrationEnabled", v)}
-          />
-        </View>
-      </View>
-
-      {/* AI SETTINGS */}
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>🤖 Cài đặt AI</Text>
-
-        <View style={styles.settingRow}>
-          <Text style={styles.settingText}>Tóm tắt AI</Text>
-          <Switch
-            value={settings.aiSummaryEnabled}
-            onValueChange={(v) => updateSetting("aiSummaryEnabled", v)}
-          />
-        </View>
-
-        <View style={styles.settingRow}>
-          <Text style={styles.settingText}>Thông báo quan trọng</Text>
-          <Switch
-            value={settings.importantAlertsEnabled}
-            onValueChange={(v) => updateSetting("importantAlertsEnabled", v)}
-          />
-        </View>
-      </View>
-
-      {/* ACCOUNT */}
-      <View style={styles.card}>
-        <Text style={styles.sectionTitle}>👤 Tài khoản</Text>
-
-        <TouchableOpacity
-          style={styles.linkRow}
+        <SettingRow
+          icon="person-outline"
+          label="Thông tin tài khoản"
           onPress={() => router.push("/profile")}
-        >
-          <Ionicons name="person-outline" size={22} color={COLORS.primary} />
-          <Text style={styles.linkText}>Hồ sơ cá nhân</Text>
-          <Ionicons name="chevron-forward" size={20} color={COLORS.subText} />
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.linkRow} onPress={handleLogout}>
-          <Ionicons name="log-out-outline" size={22} color="#FF6B6B" />
-          <Text style={[styles.linkText, { color: "#FF6B6B" }]}>
-            Đăng xuất
-          </Text>
-          <Ionicons name="chevron-forward" size={20} color={COLORS.subText} />
-        </TouchableOpacity>
+          last
+        />
       </View>
 
-      {/* ABOUT */}
+      {/* THÔNG BÁO */}
+      <Text style={styles.sectionLabel}>Thông báo</Text>
       <View style={styles.card}>
-        <Text style={styles.sectionTitle}>ℹ️ Thông tin</Text>
-
-        <TouchableOpacity style={styles.linkRow}>
-          <Ionicons
-            name="information-circle-outline"
-            size={22}
-            color={COLORS.primary}
-          />
-          <Text style={styles.linkText}>Phiên bản ứng dụng</Text>
-          <Text style={styles.version}>v1.0.0</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.linkRow}>
-          <Ionicons
-            name="shield-checkmark-outline"
-            size={22}
-            color={COLORS.primary}
-          />
-          <Text style={styles.linkText}>Chính sách bảo mật</Text>
-          <Ionicons name="chevron-forward" size={20} color={COLORS.subText} />
-        </TouchableOpacity>
-
-        <TouchableOpacity style={styles.linkRow}>
-          <Ionicons name="logo-github" size={22} color={COLORS.primary} />
-          <Text style={styles.linkText}>Github</Text>
-          <Ionicons name="chevron-forward" size={20} color={COLORS.subText} />
-        </TouchableOpacity>
+        <SettingRow
+          icon="notifications-outline"
+          label="Bật thông báo"
+          value={settings.notificationsEnabled}
+          onValueChange={(v) => updateSetting("notificationsEnabled", v)}
+        />
+        <SettingRow
+          icon="volume-high-outline"
+          label="Âm thanh"
+          value={settings.soundEnabled}
+          onValueChange={(v) => updateSetting("soundEnabled", v)}
+        />
+        <SettingRow
+          icon="phone-portrait-outline"
+          label="Rung"
+          value={settings.vibrationEnabled}
+          onValueChange={(v) => updateSetting("vibrationEnabled", v)}
+          last
+        />
       </View>
 
-      <View style={{ height: 40 }} />
+      {/* AI */}
+      <Text style={styles.sectionLabel}>AI</Text>
+      <View style={styles.card}>
+        <SettingRow
+          icon="sparkles-outline"
+          label="Tóm tắt bằng AI"
+          value={settings.aiSummaryEnabled}
+          onValueChange={(v) => updateSetting("aiSummaryEnabled", v)}
+        />
+        <SettingRow
+          icon="alert-circle-outline"
+          label="Cảnh báo quan trọng"
+          value={settings.importantAlertsEnabled}
+          onValueChange={(v) => updateSetting("importantAlertsEnabled", v)}
+          last
+        />
+      </View>
+
+      {/* GIAO DIỆN */}
+      <Text style={styles.sectionLabel}>Giao diện</Text>
+      <View style={styles.card}>
+        <SettingRow
+          icon="moon-outline"
+          label="Chế độ tối"
+          value={settings.darkMode}
+          onValueChange={(v) => updateSetting("darkMode", v)}
+          last
+        />
+      </View>
+
+      {/* KHÁC */}
+      <Text style={styles.sectionLabel}>Khác</Text>
+      <View style={styles.card}>
+        <SettingRow icon="information-circle-outline" label="Phiên bản" rightText="v1.0.0" />
+        <SettingRow icon="trash-outline" label="Xóa cache" onPress={handleClearCache} iconColor={colors.warning} />
+        <SettingRow icon="log-out-outline" label="Đăng xuất" onPress={handleLogout} danger last />
+      </View>
     </ScrollView>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-    paddingTop: 70,
-    paddingHorizontal: 20,
-  },
-
-  header: {
-    marginBottom: 28,
-  },
-
-  title: {
-    color: COLORS.text,
-    fontSize: 32,
-    fontWeight: "bold",
-  },
-
-  subtitle: {
-    color: COLORS.subText,
-    marginTop: 8,
-    fontSize: 16,
-  },
-
-  card: {
-    backgroundColor: COLORS.card,
-    borderRadius: 24,
-    padding: 22,
-    marginBottom: 24,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-
-  sectionTitle: {
-    color: COLORS.text,
-    fontSize: 18,
-    fontWeight: "bold",
-    marginBottom: 18,
-  },
-
-  settingRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 18,
-  },
-
-  settingText: {
-    color: COLORS.text,
-    fontSize: 16,
-  },
-
-  linkRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 18,
-  },
-
-  linkText: {
-    flex: 1,
-    color: COLORS.text,
-    fontSize: 16,
-    marginLeft: 14,
-  },
-
-  version: {
-    color: COLORS.subText,
-  },
-});
+function createStyles(C: AppColors) {
+  return StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: C.background,
+      paddingTop: SCREEN.paddingTop,
+      paddingHorizontal: SCREEN.paddingHorizontal,
+    },
+    header: {
+      marginBottom: 24,
+    },
+    title: {
+      color: C.text,
+      fontSize: 32,
+      fontWeight: "bold",
+    },
+    subtitle: {
+      color: C.subText,
+      marginTop: 6,
+      fontSize: 14,
+    },
+    sectionLabel: {
+      color: C.muted,
+      fontSize: 13,
+      fontWeight: "700",
+      textTransform: "uppercase",
+      letterSpacing: 0.5,
+      marginBottom: 10,
+      marginLeft: 4,
+    },
+    card: {
+      backgroundColor: C.card,
+      borderRadius: RADIUS.lg,
+      paddingHorizontal: 16,
+      marginBottom: 24,
+    },
+  });
+}

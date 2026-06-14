@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
 import {
   ActivityIndicator,
@@ -19,23 +19,15 @@ import { supabase } from "../lib/supabase";
 import { confirmAsync, alertMessage } from "../lib/dialog";
 import { generateMockNotification } from "../lib/claude";
 import { CATEGORIES, FREQUENCIES, findCategory, findFrequency } from "../lib/ruleOptions";
+import { useTheme } from "../contexts/ThemeContext";
 import { Rule } from "../types/Rule";
 import { Notification } from "../types/Notification";
-
-const COLORS = {
-  background: "#081120",
-  card: "#101B35",
-  primary: "#4DA6FF",
-  text: "#FFFFFF",
-  subText: "#7B8AA0",
-  success: "#22C55E",
-  danger: "#FF5B7F",
-  border: "#1F2A44",
-  inputBg: "#09152D",
-};
+import { RADIUS, type AppColors } from "../lib/theme";
 
 export default function RuleDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
 
   const [rule, setRule] = useState<Rule | null>(null);
   const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -181,18 +173,13 @@ export default function RuleDetailScreen() {
   };
 
   const handleDelete = async () => {
-    const ok = await confirmAsync(
-      "Xóa rule",
-      "Bạn có chắc muốn xóa rule này?"
-    );
+    const ok = await confirmAsync("Xóa rule", "Bạn có chắc muốn xóa rule này?");
     if (!ok) return;
 
     setSaving(true);
 
-    // Xóa các thông báo con trước (tránh lỗi khóa ngoại)
     await supabase.from("notifications").delete().eq("rule_id", id);
 
-    // .select() để biết thực sự có dòng nào bị xóa hay không
     const { data, error } = await supabase
       .from("rules")
       .delete()
@@ -207,10 +194,7 @@ export default function RuleDetailScreen() {
     }
 
     if (!data || data.length === 0) {
-      alertMessage(
-        "Không xóa được",
-        "Rule không bị xóa. Có thể do chính sách bảo mật (RLS) của bảng \"rules\" chưa cho phép DELETE."
-      );
+      alertMessage("Không xóa được", "Rule không bị xóa. Có thể do chính sách bảo mật (RLS) chưa cho phép DELETE.");
       return;
     }
 
@@ -220,7 +204,7 @@ export default function RuleDetailScreen() {
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color={COLORS.primary} />
+        <ActivityIndicator size="large" color={colors.primary} />
       </View>
     );
   }
@@ -228,9 +212,7 @@ export default function RuleDetailScreen() {
   if (!rule) {
     return (
       <View style={styles.loadingContainer}>
-        <Text style={{ color: COLORS.subText }}>
-          Không tìm thấy rule
-        </Text>
+        <Text style={{ color: colors.subText }}>Không tìm thấy rule</Text>
       </View>
     );
   }
@@ -239,14 +221,11 @@ export default function RuleDetailScreen() {
   const freq = findFrequency(rule.frequency);
 
   return (
-    <ScrollView
-      style={styles.container}
-      showsVerticalScrollIndicator={false}
-    >
+    <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
       {/* HEADER */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()}>
-          <Ionicons name="arrow-back" size={28} color="white" />
+          <Ionicons name="arrow-back" size={28} color={colors.text} />
         </TouchableOpacity>
 
         <View style={styles.headerText}>
@@ -256,7 +235,7 @@ export default function RuleDetailScreen() {
               value={editTitle}
               onChangeText={setEditTitle}
               placeholder="Tên rule"
-              placeholderTextColor={COLORS.subText}
+              placeholderTextColor={colors.subText}
             />
           ) : (
             <Text style={styles.title}>{rule.title}</Text>
@@ -268,7 +247,7 @@ export default function RuleDetailScreen() {
               value={editDescription}
               onChangeText={setEditDescription}
               placeholder="Mô tả"
-              placeholderTextColor={COLORS.subText}
+              placeholderTextColor={colors.subText}
               multiline
             />
           ) : (
@@ -284,14 +263,19 @@ export default function RuleDetailScreen() {
           <Ionicons
             name={isEditing ? "checkmark-outline" : "pencil-outline"}
             size={24}
-            color={isEditing ? COLORS.success : COLORS.subText}
+            color={isEditing ? colors.success : colors.subText}
           />
         </TouchableOpacity>
 
-        <Switch value={rule.is_active} onValueChange={toggleActive} />
+        <Switch
+          value={rule.is_active}
+          onValueChange={toggleActive}
+          thumbColor={rule.is_active ? colors.primary : "#999"}
+          trackColor={{ true: colors.primary + "66", false: colors.border }}
+        />
       </View>
 
-      {/* CATEGORY BADGE (view mode) */}
+      {/* CATEGORY BADGE */}
       {!isEditing && (
         <View style={[styles.catBadge, { backgroundColor: cat.color + "22", borderColor: cat.color }]}>
           <Ionicons name={cat.icon} size={16} color={cat.color} />
@@ -312,14 +296,14 @@ export default function RuleDetailScreen() {
               value={editKeyword}
               onChangeText={setEditKeyword}
               placeholder="Từ khóa"
-              placeholderTextColor={COLORS.subText}
+              placeholderTextColor={colors.subText}
             />
           ) : (
             <Text style={styles.value}>{rule.keyword}</Text>
           )}
         </View>
 
-        {/* Danh mục (chỉ khi edit) */}
+        {/* Danh mục (khi edit) */}
         {isEditing && (
           <View style={styles.editBlock}>
             <Text style={styles.label}>Danh mục</Text>
@@ -333,7 +317,7 @@ export default function RuleDetailScreen() {
                     onPress={() => setEditCategory(c.key)}
                     activeOpacity={0.8}
                   >
-                    <Ionicons name={c.icon} size={14} color={active ? "white" : COLORS.subText} />
+                    <Ionicons name={c.icon} size={14} color={active ? "white" : colors.subText} />
                     <Text style={[styles.chipText, active && { color: "white" }]}>{c.label}</Text>
                   </TouchableOpacity>
                 );
@@ -352,7 +336,7 @@ export default function RuleDetailScreen() {
                 return (
                   <TouchableOpacity
                     key={f.key}
-                    style={[styles.chip, active && { backgroundColor: COLORS.primary, borderColor: COLORS.primary }]}
+                    style={[styles.chip, active && { backgroundColor: colors.primary, borderColor: colors.primary }]}
                     onPress={() => setEditFrequency(f.key)}
                     activeOpacity={0.8}
                   >
@@ -378,7 +362,7 @@ export default function RuleDetailScreen() {
               value={editSources}
               onChangeText={setEditSources}
               placeholder="VD: VnExpress, CafeF"
-              placeholderTextColor={COLORS.subText}
+              placeholderTextColor={colors.subText}
             />
           </View>
         ) : rule.sources ? (
@@ -397,7 +381,7 @@ export default function RuleDetailScreen() {
               value={editCondition}
               onChangeText={setEditCondition}
               placeholder="VD: khi giá vượt 80 triệu"
-              placeholderTextColor={COLORS.subText}
+              placeholderTextColor={colors.subText}
               multiline
             />
           </View>
@@ -411,12 +395,7 @@ export default function RuleDetailScreen() {
         {/* Trạng thái */}
         <View style={styles.infoRow}>
           <Text style={styles.label}>Trạng thái</Text>
-          <Text
-            style={[
-              styles.value,
-              { color: rule.is_active ? COLORS.success : COLORS.subText },
-            ]}
-          >
+          <Text style={[styles.value, { color: rule.is_active ? colors.success : colors.subText }]}>
             {rule.is_active ? "Đang hoạt động" : "Tạm dừng"}
           </Text>
         </View>
@@ -448,9 +427,7 @@ export default function RuleDetailScreen() {
 
           {notifications.length === 0 ? (
             <View style={styles.emptyNotif}>
-              <Text style={{ color: COLORS.subText }}>
-                Chưa có thông báo nào
-              </Text>
+              <Text style={{ color: colors.subText }}>Chưa có thông báo nào</Text>
             </View>
           ) : (
             notifications.map((notif) => (
@@ -458,15 +435,11 @@ export default function RuleDetailScreen() {
                 key={notif.id}
                 style={styles.notificationCard}
                 onPress={() =>
-                  router.push({
-                    pathname: "/notification-detail",
-                    params: { id: notif.id },
-                  })
+                  router.push({ pathname: "/notification-detail", params: { id: notif.id } })
                 }
               >
                 <View style={styles.topRow}>
-                  <Ionicons name="notifications" size={20} color={COLORS.primary} />
-
+                  <Ionicons name="notifications" size={20} color={colors.primary} />
                   {notif.created_at && (
                     <Text style={styles.time}>
                       {new Date(notif.created_at).toLocaleDateString("vi-VN")}
@@ -475,10 +448,7 @@ export default function RuleDetailScreen() {
                 </View>
 
                 <Text style={styles.notificationTitle}>{notif.title}</Text>
-
-                <Text style={styles.notificationDesc} numberOfLines={2}>
-                  {notif.content}
-                </Text>
+                <Text style={styles.notificationDesc} numberOfLines={2}>{notif.content}</Text>
               </TouchableOpacity>
             ))
           )}
@@ -493,7 +463,7 @@ export default function RuleDetailScreen() {
               <Ionicons
                 name={monitoring ? "sync-outline" : "play-circle-outline"}
                 size={20}
-                color={COLORS.primary}
+                color={colors.primary}
               />
               <Text style={styles.monitorText}>
                 {monitoring ? "Đang chạy AI..." : "Chạy thử giám sát"}
@@ -507,10 +477,8 @@ export default function RuleDetailScreen() {
             onPress={handleDelete}
             disabled={saving}
           >
-            <Ionicons name="trash-outline" size={20} color={COLORS.danger} />
-            <Text style={styles.deleteText}>
-              {saving ? "Đang xóa..." : "Xóa rule"}
-            </Text>
+            <Ionicons name="trash-outline" size={20} color={colors.danger} />
+            <Text style={styles.deleteText}>{saving ? "Đang xóa..." : "Xóa rule"}</Text>
           </TouchableOpacity>
         </>
       )}
@@ -520,274 +488,239 @@ export default function RuleDetailScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  loadingContainer: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-    paddingTop: 70,
-    paddingHorizontal: 20,
-  },
-
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 16,
-  },
-
-  headerText: {
-    flex: 1,
-    marginLeft: 14,
-  },
-
-  title: {
-    color: "white",
-    fontSize: 24,
-    fontWeight: "bold",
-  },
-
-  subtitle: {
-    color: COLORS.subText,
-    marginTop: 6,
-  },
-
-  editTitleInput: {
-    color: "white",
-    fontSize: 22,
-    fontWeight: "bold",
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.primary,
-    paddingVertical: 4,
-    marginBottom: 4,
-  },
-
-  editSubtitleInput: {
-    color: COLORS.subText,
-    fontSize: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.border,
-    paddingVertical: 2,
-    marginTop: 4,
-  },
-
-  editInlineInput: {
-    color: "white",
-    fontSize: 14,
-    fontWeight: "600",
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.primary,
-    paddingVertical: 2,
-    minWidth: 120,
-    textAlign: "right",
-  },
-
-  editFullInput: {
-    backgroundColor: COLORS.inputBg,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    color: "white",
-    fontSize: 14,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    marginTop: 8,
-  },
-
-  editBlock: {
-    marginBottom: 16,
-  },
-
-  editButton: {
-    marginRight: 10,
-    padding: 4,
-  },
-
-  catBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    alignSelf: "flex-start",
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 16,
-    borderWidth: 1,
-    marginBottom: 20,
-  },
-
-  catBadgeText: {
-    fontSize: 13,
-    fontWeight: "bold",
-  },
-
-  infoCard: {
-    backgroundColor: COLORS.card,
-    borderRadius: 22,
-    padding: 20,
-    marginBottom: 22,
-  },
-
-  cardTitle: {
-    color: "white",
-    fontSize: 18,
-    fontWeight: "bold",
-    marginBottom: 18,
-  },
-
-  infoRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 14,
-  },
-
-  label: {
-    color: COLORS.subText,
-  },
-
-  value: {
-    color: "white",
-    fontWeight: "600",
-  },
-
-  valueRight: {
-    flex: 1,
-    textAlign: "right",
-    marginLeft: 16,
-  },
-
-  conditionBlock: {
-    marginBottom: 14,
-  },
-
-  conditionText: {
-    color: "white",
-    fontWeight: "500",
-    marginTop: 6,
-    lineHeight: 21,
-  },
-
-  chipWrap: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-    marginTop: 8,
-  },
-
-  chip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: COLORS.inputBg,
-  },
-
-  chipText: {
-    color: COLORS.subText,
-    fontSize: 12,
-    fontWeight: "600",
-  },
-
-  cancelEditBtn: {
-    alignItems: "center",
-    paddingVertical: 14,
-    marginBottom: 10,
-  },
-
-  cancelEditText: {
-    color: COLORS.subText,
-    fontSize: 15,
-    fontWeight: "600",
-  },
-
-  sectionTitle: {
-    color: "white",
-    fontSize: 20,
-    fontWeight: "bold",
-    marginBottom: 18,
-  },
-
-  emptyNotif: {
-    alignItems: "center",
-    paddingVertical: 24,
-  },
-
-  notificationCard: {
-    backgroundColor: COLORS.card,
-    borderRadius: 22,
-    padding: 18,
-    marginBottom: 18,
-  },
-
-  topRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 12,
-  },
-
-  time: {
-    color: COLORS.subText,
-  },
-
-  notificationTitle: {
-    color: "white",
-    fontSize: 17,
-    fontWeight: "bold",
-    marginBottom: 8,
-  },
-
-  notificationDesc: {
-    color: "#AAB6CC",
-    lineHeight: 22,
-  },
-
-  monitorButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    marginTop: 12,
-    marginBottom: 8,
-    padding: 16,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: COLORS.primary,
-    backgroundColor: "#071525",
-  },
-
-  monitorText: {
-    color: COLORS.primary,
-    fontSize: 16,
-    fontWeight: "600",
-  },
-
-  deleteButton: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    marginTop: 12,
-    marginBottom: 8,
-    padding: 16,
-    borderRadius: 18,
-    borderWidth: 1,
-    borderColor: COLORS.danger,
-    backgroundColor: "#1A0A0F",
-  },
-
-  deleteText: {
-    color: COLORS.danger,
-    fontSize: 16,
-    fontWeight: "600",
-  },
-});
+function createStyles(C: AppColors) {
+  return StyleSheet.create({
+    loadingContainer: {
+      flex: 1,
+      backgroundColor: C.background,
+      justifyContent: "center",
+      alignItems: "center",
+    },
+    container: {
+      flex: 1,
+      backgroundColor: C.background,
+      paddingTop: 70,
+      paddingHorizontal: 20,
+    },
+    header: {
+      flexDirection: "row",
+      alignItems: "center",
+      marginBottom: 16,
+    },
+    headerText: {
+      flex: 1,
+      marginLeft: 14,
+    },
+    title: {
+      color: C.text,
+      fontSize: 24,
+      fontWeight: "bold",
+    },
+    subtitle: {
+      color: C.subText,
+      marginTop: 6,
+    },
+    editTitleInput: {
+      color: C.text,
+      fontSize: 22,
+      fontWeight: "bold",
+      borderBottomWidth: 1,
+      borderBottomColor: C.primary,
+      paddingVertical: 4,
+      marginBottom: 4,
+    },
+    editSubtitleInput: {
+      color: C.subText,
+      fontSize: 14,
+      borderBottomWidth: 1,
+      borderBottomColor: C.border,
+      paddingVertical: 2,
+      marginTop: 4,
+    },
+    editInlineInput: {
+      color: C.text,
+      fontSize: 14,
+      fontWeight: "600",
+      borderBottomWidth: 1,
+      borderBottomColor: C.primary,
+      paddingVertical: 2,
+      minWidth: 120,
+      textAlign: "right",
+    },
+    editFullInput: {
+      backgroundColor: C.inputBg,
+      borderRadius: 12,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      color: C.text,
+      fontSize: 14,
+      borderWidth: 1,
+      borderColor: C.border,
+      marginTop: 8,
+    },
+    editBlock: {
+      marginBottom: 16,
+    },
+    editButton: {
+      marginRight: 10,
+      padding: 4,
+    },
+    catBadge: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+      alignSelf: "flex-start",
+      paddingHorizontal: 12,
+      paddingVertical: 7,
+      borderRadius: 16,
+      borderWidth: 1,
+      marginBottom: 20,
+    },
+    catBadgeText: {
+      fontSize: 13,
+      fontWeight: "bold",
+    },
+    infoCard: {
+      backgroundColor: C.card,
+      borderRadius: RADIUS.lg,
+      padding: 20,
+      marginBottom: 22,
+    },
+    cardTitle: {
+      color: C.text,
+      fontSize: 18,
+      fontWeight: "bold",
+      marginBottom: 18,
+    },
+    infoRow: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      marginBottom: 14,
+    },
+    label: {
+      color: C.subText,
+    },
+    value: {
+      color: C.text,
+      fontWeight: "600",
+    },
+    valueRight: {
+      flex: 1,
+      textAlign: "right",
+      marginLeft: 16,
+    },
+    conditionBlock: {
+      marginBottom: 14,
+    },
+    conditionText: {
+      color: C.text,
+      fontWeight: "500",
+      marginTop: 6,
+      lineHeight: 21,
+    },
+    chipWrap: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: 8,
+      marginTop: 8,
+    },
+    chip: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: C.border,
+      backgroundColor: C.inputBg,
+    },
+    chipText: {
+      color: C.subText,
+      fontSize: 12,
+      fontWeight: "600",
+    },
+    cancelEditBtn: {
+      alignItems: "center",
+      paddingVertical: 14,
+      marginBottom: 10,
+    },
+    cancelEditText: {
+      color: C.subText,
+      fontSize: 15,
+      fontWeight: "600",
+    },
+    sectionTitle: {
+      color: C.text,
+      fontSize: 20,
+      fontWeight: "bold",
+      marginBottom: 18,
+    },
+    emptyNotif: {
+      alignItems: "center",
+      paddingVertical: 24,
+    },
+    notificationCard: {
+      backgroundColor: C.card,
+      borderRadius: RADIUS.lg,
+      padding: 18,
+      marginBottom: 18,
+    },
+    topRow: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      marginBottom: 12,
+    },
+    time: {
+      color: C.subText,
+    },
+    notificationTitle: {
+      color: C.text,
+      fontSize: 17,
+      fontWeight: "bold",
+      marginBottom: 8,
+    },
+    notificationDesc: {
+      color: C.subText,
+      lineHeight: 22,
+    },
+    monitorButton: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 8,
+      marginTop: 12,
+      marginBottom: 8,
+      padding: 16,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: C.primary,
+      backgroundColor: C.primary + "11",
+    },
+    monitorText: {
+      color: C.primary,
+      fontSize: 16,
+      fontWeight: "600",
+    },
+    deleteButton: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 8,
+      marginTop: 12,
+      marginBottom: 8,
+      padding: 16,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: C.danger,
+      backgroundColor: C.danger + "11",
+    },
+    deleteText: {
+      color: C.danger,
+      fontSize: 16,
+      fontWeight: "600",
+    },
+  });
+}

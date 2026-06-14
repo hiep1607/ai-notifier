@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 
 import {
   RefreshControl,
@@ -11,31 +11,35 @@ import {
 } from "react-native";
 
 import { Ionicons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
 import { useFocusEffect } from "@react-navigation/native";
 
 import { supabase } from "../../lib/supabase";
 import { useAuth } from "../../contexts/AuthContext";
+import { useTheme } from "../../contexts/ThemeContext";
 import { Notification } from "../../types/Notification";
+import { SCREEN, RADIUS, type AppColors } from "../../lib/theme";
+import IconBadge from "../../components/IconBadge";
+import FilterTabs from "../../components/FilterTabs";
 
-const COLORS = {
-  background: "#081120",
-  card: "#101B35",
-  primary: "#4DA6FF",
-  text: "#FFFFFF",
-  subText: "#8FA1C7",
-  unread: "#3B82F6",
-  border: "#1E2B4A",
-};
+const TABS = [
+  { key: "all", label: "Tất cả" },
+  { key: "unread", label: "Chưa đọc" },
+  { key: "important", label: "Quan trọng" },
+];
 
 export default function NotificationsScreen() {
   const { user } = useAuth();
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
 
   const [activeTab, setActiveTab] = useState("all");
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [searchMode, setSearchMode] = useState(false);
   const [searchText, setSearchText] = useState("");
+  const [aiSummaryEnabled, setAiSummaryEnabled] = useState(true);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -45,6 +49,14 @@ export default function NotificationsScreen() {
 
   useFocusEffect(
     React.useCallback(() => {
+      AsyncStorage.getItem("@settings").then((raw) => {
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (typeof parsed.aiSummaryEnabled === "boolean") {
+            setAiSummaryEnabled(parsed.aiSummaryEnabled);
+          }
+        }
+      });
       if (user) fetchNotifications();
     }, [user])
   );
@@ -101,6 +113,17 @@ export default function NotificationsScreen() {
     setSearchText("");
   };
 
+  const timeAgo = (iso?: string) => {
+    if (!iso) return "";
+    const diff = Date.now() - new Date(iso).getTime();
+    const mins = Math.floor(diff / 60000);
+    if (mins < 1) return "Vừa xong";
+    if (mins < 60) return `${mins} phút trước`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours} giờ trước`;
+    return new Date(iso).toLocaleDateString("vi-VN");
+  };
+
   return (
     <View style={styles.container}>
       {/* HEADER */}
@@ -110,66 +133,39 @@ export default function NotificationsScreen() {
             <TextInput
               style={styles.searchInput}
               placeholder="Tìm kiếm thông báo..."
-              placeholderTextColor={COLORS.subText}
+              placeholderTextColor={colors.subText}
               value={searchText}
               onChangeText={setSearchText}
               autoFocus
             />
             <TouchableOpacity onPress={closeSearch} style={styles.searchClose}>
-              <Ionicons name="close" size={24} color={COLORS.subText} />
+              <Ionicons name="close" size={24} color={colors.subText} />
             </TouchableOpacity>
           </>
         ) : (
           <>
             <Text style={styles.title}>Thông báo</Text>
-            <TouchableOpacity onPress={() => setSearchMode(true)}>
-              <Ionicons name="search" size={24} color="white" />
+            <TouchableOpacity onPress={() => setSearchMode(true)} style={styles.searchBtn}>
+              <Ionicons name="search" size={22} color={colors.text} />
             </TouchableOpacity>
           </>
         )}
       </View>
 
       {/* TABS */}
-      <View style={styles.tabs}>
-        <TouchableOpacity onPress={() => setActiveTab("all")}>
-          <Text style={activeTab === "all" ? styles.activeTab : styles.tab}>
-            Tất cả
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity onPress={() => setActiveTab("unread")}>
-          <Text style={activeTab === "unread" ? styles.activeTab : styles.tab}>
-            Chưa đọc
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity onPress={() => setActiveTab("important")}>
-          <Text
-            style={activeTab === "important" ? styles.activeTab : styles.tab}
-          >
-            Quan trọng
-          </Text>
-        </TouchableOpacity>
-      </View>
+      <FilterTabs tabs={TABS} active={activeTab} onChange={setActiveTab} />
 
       {/* LIST */}
       <ScrollView
         showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 40 }}
         refreshControl={
-          <RefreshControl
-            refreshing={refreshing}
-            onRefresh={onRefresh}
-            tintColor="#4DA6FF"
-          />
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
         }
       >
         {displayedNotifications.length === 0 && (
           <View style={styles.empty}>
-            <Ionicons
-              name="notifications-off-outline"
-              size={48}
-              color={COLORS.subText}
-            />
+            <Ionicons name="notifications-off-outline" size={48} color={colors.muted} />
             <Text style={styles.emptyText}>
               {searchText ? "Không tìm thấy kết quả" : "Chưa có thông báo"}
             </Text>
@@ -179,143 +175,162 @@ export default function NotificationsScreen() {
         {displayedNotifications.map((item) => (
           <TouchableOpacity
             key={item.id}
-            style={styles.card}
+            style={[styles.card, !item.is_read && styles.cardUnread]}
+            activeOpacity={0.85}
             onPress={() =>
-              router.push({
-                pathname: "/notification-detail",
-                params: { id: item.id },
-              })
+              router.push({ pathname: "/notification-detail", params: { id: item.id } })
             }
           >
-            <View style={styles.cardLeft}>
-              <View style={styles.iconBox}>
-                <Ionicons name="notifications" size={20} color="white" />
+            <IconBadge category={item.category} size={48} />
+
+            <View style={styles.cardBody}>
+              <View style={styles.cardTop}>
+                <Text style={styles.cardTitle} numberOfLines={1}>{item.title}</Text>
+                {!item.is_read && <View style={styles.dot} />}
               </View>
 
-              <View style={{ flex: 1 }}>
-                <Text style={styles.cardTitle}>{item.title}</Text>
-                <Text style={styles.cardDesc} numberOfLines={2}>
-                  {item.content}
-                </Text>
+              <Text style={styles.cardDesc} numberOfLines={2}>
+                {aiSummaryEnabled && item.ai_summary ? item.ai_summary : item.content}
+              </Text>
+
+              <View style={styles.cardFooter}>
+                {item.is_important && (
+                  <View style={styles.importantBadge}>
+                    <Ionicons name="alert-circle" size={12} color={colors.danger} />
+                    <Text style={styles.importantText}>Quan trọng</Text>
+                  </View>
+                )}
+                {item.source ? <Text style={styles.source}>{item.source}</Text> : null}
+                <Text style={styles.time}>{timeAgo(item.created_at)}</Text>
               </View>
             </View>
-
-            {!item.is_read && <View style={styles.dot} />}
           </TouchableOpacity>
         ))}
-
-        <View style={{ height: 40 }} />
       </ScrollView>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-    paddingTop: 70,
-    paddingHorizontal: 20,
-  },
-
-  header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 24,
-  },
-
-  title: {
-    color: COLORS.text,
-    fontSize: 30,
-    fontWeight: "bold",
-  },
-
-  searchInput: {
-    flex: 1,
-    backgroundColor: COLORS.card,
-    borderRadius: 16,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    color: COLORS.text,
-    fontSize: 16,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-
-  searchClose: {
-    marginLeft: 12,
-    padding: 4,
-  },
-
-  tabs: {
-    flexDirection: "row",
-    gap: 22,
-    marginBottom: 28,
-  },
-
-  activeTab: {
-    color: COLORS.primary,
-    fontWeight: "bold",
-  },
-
-  tab: {
-    color: COLORS.subText,
-  },
-
-  empty: {
-    alignItems: "center",
-    marginTop: 80,
-    gap: 16,
-  },
-
-  emptyText: {
-    color: COLORS.subText,
-    fontSize: 16,
-  },
-
-  card: {
-    backgroundColor: COLORS.card,
-    borderRadius: 24,
-    padding: 18,
-    marginBottom: 18,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-
-  cardLeft: {
-    flexDirection: "row",
-    alignItems: "center",
-    flex: 1,
-  },
-
-  iconBox: {
-    width: 52,
-    height: 52,
-    borderRadius: 16,
-    backgroundColor: COLORS.primary,
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 14,
-  },
-
-  cardTitle: {
-    color: COLORS.text,
-    fontSize: 16,
-    fontWeight: "bold",
-    marginBottom: 6,
-  },
-
-  cardDesc: {
-    color: COLORS.subText,
-  },
-
-  dot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: COLORS.unread,
-    marginLeft: 8,
-  },
-});
+function createStyles(C: AppColors) {
+  return StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: C.background,
+      paddingTop: SCREEN.paddingTop,
+      paddingHorizontal: SCREEN.paddingHorizontal,
+    },
+    header: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      marginBottom: 22,
+    },
+    title: {
+      color: C.text,
+      fontSize: 32,
+      fontWeight: "bold",
+    },
+    searchBtn: {
+      width: 46,
+      height: 46,
+      borderRadius: 23,
+      backgroundColor: C.card,
+      justifyContent: "center",
+      alignItems: "center",
+    },
+    searchInput: {
+      flex: 1,
+      backgroundColor: C.card,
+      borderRadius: RADIUS.md,
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      color: C.text,
+      fontSize: 16,
+      borderWidth: 1,
+      borderColor: C.border,
+    },
+    searchClose: {
+      marginLeft: 12,
+      padding: 4,
+    },
+    empty: {
+      alignItems: "center",
+      marginTop: 80,
+      gap: 16,
+    },
+    emptyText: {
+      color: C.muted,
+      fontSize: 15,
+    },
+    card: {
+      backgroundColor: C.card,
+      borderRadius: RADIUS.lg,
+      padding: 16,
+      marginBottom: 14,
+      flexDirection: "row",
+      alignItems: "flex-start",
+    },
+    cardUnread: {
+      borderWidth: 1,
+      borderColor: C.primary + "44",
+    },
+    cardBody: {
+      flex: 1,
+      marginLeft: 14,
+    },
+    cardTop: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+    },
+    cardTitle: {
+      color: C.text,
+      fontSize: 16,
+      fontWeight: "bold",
+      flex: 1,
+      marginRight: 8,
+    },
+    dot: {
+      width: 10,
+      height: 10,
+      borderRadius: 5,
+      backgroundColor: C.primary,
+    },
+    cardDesc: {
+      color: C.subText,
+      fontSize: 14,
+      lineHeight: 20,
+      marginTop: 6,
+    },
+    cardFooter: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 10,
+      marginTop: 10,
+    },
+    importantBadge: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 4,
+      backgroundColor: C.danger + "22",
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      borderRadius: 999,
+    },
+    importantText: {
+      color: C.danger,
+      fontSize: 11,
+      fontWeight: "700",
+    },
+    source: {
+      color: C.muted,
+      fontSize: 12,
+      fontWeight: "500",
+    },
+    time: {
+      color: C.muted,
+      fontSize: 12,
+      marginLeft: "auto",
+    },
+  });
+}

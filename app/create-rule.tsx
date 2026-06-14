@@ -1,4 +1,4 @@
-import React, { useRef, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 
 import { Ionicons } from "@expo/vector-icons";
 import {
@@ -18,30 +18,30 @@ import { supabase } from "../lib/supabase";
 import { alertMessage } from "../lib/dialog";
 import { chatRule, RuleDraft } from "../lib/claude";
 import { useAuth } from "../contexts/AuthContext";
+import { useTheme } from "../contexts/ThemeContext";
 import { findCategory, findFrequency } from "../lib/ruleOptions";
-
-const COLORS = {
-  background: "#081120",
-  card: "#101B35",
-  primary: "#4DA6FF",
-  text: "#FFFFFF",
-  subText: "#8FA1C7",
-  border: "#1E2B4A",
-  userBubble: "#2563EB",
-};
+import { SCREEN, RADIUS, type AppColors } from "../lib/theme";
+import SuggestionChip from "../components/SuggestionChip";
 
 interface ChatMessage {
   role: "user" | "ai";
   text: string;
 }
 
+const SUGGESTIONS: { label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
+  { label: "Theo dõi giá iPhone trên Shopee", icon: "phone-portrait-outline" },
+  { label: "Theo dõi tin tức về AI mới nhất", icon: "newspaper-outline" },
+  { label: "Thông báo deadline bài tập", icon: "school-outline" },
+];
+
 export default function CreateRuleScreen() {
   const { user } = useAuth();
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const scrollRef = useRef<ScrollView>(null);
 
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  // Lịch sử hội thoại gửi cho model (role assistant/user)
   const historyRef = useRef<{ role: "user" | "assistant"; content: string }[]>([]);
   const [previewRule, setPreviewRule] = useState<RuleDraft | null>(null);
   const [loading, setLoading] = useState(false);
@@ -51,24 +51,8 @@ export default function CreateRuleScreen() {
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
   };
 
-  const ruleSummaryText = (r: RuleDraft) => {
-    const cat = findCategory(r.category);
-    const freq = findFrequency(r.frequency);
-    const lines = [
-      `📌 ${r.title}`,
-      `🔍 Từ khóa: ${r.keyword}`,
-      `🏷️ Danh mục: ${cat.label}`,
-      `⏰ Tần suất: ${freq?.label ?? r.frequency}`,
-    ];
-    if (r.sources) lines.push(`🌐 Nguồn: ${r.sources}`);
-    if (r.condition) lines.push(`⚡ Điều kiện: ${r.condition}`);
-    if (r.description) lines.push(`\n📝 ${r.description}`);
-    return lines.join("\n");
-  };
-
-  const handleSend = async () => {
-    const text = input.trim();
-    if (!text || loading) return;
+  const send = async (text: string) => {
+    if (!text.trim() || loading) return;
     if (!user) {
       alertMessage("Lỗi", "Bạn chưa đăng nhập");
       return;
@@ -86,23 +70,18 @@ export default function CreateRuleScreen() {
       setLoading(false);
 
       if (result.status === "need_info") {
-        // AI hỏi lại — lưu vào lịch sử để giữ ngữ cảnh
         historyRef.current.push({ role: "assistant", content: result.message });
         setMessages((prev) => [...prev, { role: "ai", text: result.message }]);
         scrollToBottom();
         return;
       }
 
-      // status === "ready"
       const rule = result.rule;
       historyRef.current.push({
         role: "assistant",
         content: JSON.stringify({ status: "ready", rule }),
       });
-      setMessages((prev) => [
-        ...prev,
-        { role: "ai", text: `${result.message}\n\n${ruleSummaryText(rule)}` },
-      ]);
+      setMessages((prev) => [...prev, { role: "ai", text: result.message }]);
       setPreviewRule(rule);
       scrollToBottom();
     } catch (err: any) {
@@ -147,6 +126,31 @@ export default function CreateRuleScreen() {
     scrollToBottom();
   };
 
+  const renderRuleCard = (r: RuleDraft) => {
+    const cat = findCategory(r.category);
+    const freq = findFrequency(r.frequency);
+    const rows: { icon: keyof typeof Ionicons.glyphMap; label: string; value: string }[] = [
+      { icon: "pricetag-outline", label: "Tên", value: r.title },
+      { icon: "search-outline", label: "Từ khóa", value: r.keyword },
+      { icon: cat.icon, label: "Danh mục", value: cat.label },
+      { icon: "time-outline", label: "Tần suất", value: freq?.label ?? r.frequency },
+    ];
+    if (r.sources) rows.push({ icon: "globe-outline", label: "Nguồn", value: r.sources });
+    if (r.condition) rows.push({ icon: "flash-outline", label: "Điều kiện", value: r.condition });
+
+    return (
+      <View style={styles.ruleCard}>
+        {rows.map((row, i) => (
+          <View key={i} style={[styles.ruleRow, i < rows.length - 1 && styles.ruleRowDivider]}>
+            <Ionicons name={row.icon} size={16} color={colors.primary} />
+            <Text style={styles.ruleRowLabel}>{row.label}</Text>
+            <Text style={styles.ruleRowValue} numberOfLines={2}>{row.value}</Text>
+          </View>
+        ))}
+      </View>
+    );
+  };
+
   return (
     <KeyboardAvoidingView
       style={styles.container}
@@ -156,7 +160,7 @@ export default function CreateRuleScreen() {
       {/* HEADER */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-          <Ionicons name="arrow-back" size={26} color="white" />
+          <Ionicons name="arrow-back" size={26} color={colors.text} />
         </TouchableOpacity>
 
         <View style={styles.headerContent}>
@@ -165,7 +169,7 @@ export default function CreateRuleScreen() {
         </View>
 
         <View style={styles.aiAvatar}>
-          <Ionicons name="sparkles" size={28} color="white" />
+          <Ionicons name="sparkles" size={26} color="white" />
         </View>
       </View>
 
@@ -177,16 +181,27 @@ export default function CreateRuleScreen() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 16 }}
       >
-        {/* Tin nhắn chào mặc định */}
-        <View style={styles.aiBubble}>
-          <Text style={styles.aiBubbleText}>
-            Xin chào 👋{"\n\n"}
-            Hãy mô tả điều bạn muốn AI theo dõi. Nếu còn thiếu thông tin, tôi sẽ hỏi lại bạn. Ví dụ:{"\n"}
-            • "Theo dõi giá vàng SJC mỗi sáng"{"\n"}
-            • "Báo khi VN30 có biến động mạnh"{"\n"}
-            • "Cập nhật tin công nghệ AI hằng ngày"
-          </Text>
+        {/* Welcome */}
+        <View style={styles.welcomeRow}>
+          <View style={styles.botAvatar}>
+            <Ionicons name="happy-outline" size={22} color="white" />
+          </View>
+          <View style={styles.aiBubble}>
+            <Text style={styles.aiBubbleTitle}>Xin chào 👋</Text>
+            <Text style={styles.aiBubbleText}>
+              Tôi là AI Assistant. Hãy mô tả điều bạn muốn theo dõi — nếu thiếu thông tin, tôi sẽ hỏi lại bạn.
+            </Text>
+          </View>
         </View>
+
+        {/* Suggestion chips chỉ hiện khi chưa chat */}
+        {messages.length === 0 && (
+          <View style={styles.suggestions}>
+            {SUGGESTIONS.map((s) => (
+              <SuggestionChip key={s.label} label={s.label} icon={s.icon} onPress={() => send(s.label)} />
+            ))}
+          </View>
+        )}
 
         {messages.map((msg, i) =>
           msg.role === "user" ? (
@@ -203,39 +218,40 @@ export default function CreateRuleScreen() {
         {loading && (
           <View style={styles.aiBubble}>
             <View style={{ flexDirection: "row", alignItems: "center", gap: 10 }}>
-              <ActivityIndicator size="small" color={COLORS.primary} />
+              <ActivityIndicator size="small" color={colors.primary} />
               <Text style={[styles.aiBubbleText, { marginBottom: 0 }]}>AI đang phân tích...</Text>
             </View>
           </View>
         )}
 
-        {/* Nút Confirm / Discard khi có rule đề xuất */}
+        {/* Card tóm tắt rule + nút */}
         {previewRule && !loading && (
-          <View style={styles.actionRow}>
-            <TouchableOpacity
-              style={[styles.actionBtn, styles.confirmBtn, confirming && { opacity: 0.6 }]}
-              onPress={handleConfirm}
-              disabled={confirming}
-            >
-              {confirming ? (
-                <ActivityIndicator size="small" color="white" />
-              ) : (
-                <Ionicons name="checkmark-circle-outline" size={20} color="white" />
-              )}
-              <Text style={styles.actionBtnText}>
-                {confirming ? "Đang tạo..." : "Tạo rule này"}
-              </Text>
-            </TouchableOpacity>
+          <>
+            {renderRuleCard(previewRule)}
+            <View style={styles.actionRow}>
+              <TouchableOpacity
+                style={[styles.actionBtn, styles.confirmBtn, confirming && { opacity: 0.6 }]}
+                onPress={handleConfirm}
+                disabled={confirming}
+              >
+                {confirming ? (
+                  <ActivityIndicator size="small" color="white" />
+                ) : (
+                  <Ionicons name="checkmark-circle-outline" size={20} color="white" />
+                )}
+                <Text style={styles.actionBtnText}>{confirming ? "Đang tạo..." : "Tạo rule"}</Text>
+              </TouchableOpacity>
 
-            <TouchableOpacity
-              style={[styles.actionBtn, styles.discardBtn]}
-              onPress={handleDiscard}
-              disabled={confirming}
-            >
-              <Ionicons name="refresh-outline" size={20} color={COLORS.subText} />
-              <Text style={[styles.actionBtnText, { color: COLORS.subText }]}>Sửa lại</Text>
-            </TouchableOpacity>
-          </View>
+              <TouchableOpacity
+                style={[styles.actionBtn, styles.discardBtn]}
+                onPress={handleDiscard}
+                disabled={confirming}
+              >
+                <Ionicons name="refresh-outline" size={20} color={colors.subText} />
+                <Text style={[styles.actionBtnText, { color: colors.subText }]}>Chỉnh sửa</Text>
+              </TouchableOpacity>
+            </View>
+          </>
         )}
       </ScrollView>
 
@@ -243,159 +259,196 @@ export default function CreateRuleScreen() {
       <View style={styles.inputRow}>
         <TextInput
           placeholder="Nhập mô tả hoặc trả lời AI..."
-          placeholderTextColor={COLORS.subText}
+          placeholderTextColor={colors.subText}
           style={styles.input}
           value={input}
           onChangeText={setInput}
-          onSubmitEditing={handleSend}
+          onSubmitEditing={() => send(input)}
           returnKeyType="send"
         />
         <TouchableOpacity
           style={[styles.sendBtn, (!input.trim() || loading) && { opacity: 0.5 }]}
-          onPress={handleSend}
+          onPress={() => send(input)}
           disabled={!input.trim() || loading}
         >
-          <Ionicons name="send" size={22} color="white" />
+          <Ionicons name="send" size={20} color="white" />
         </TouchableOpacity>
       </View>
     </KeyboardAvoidingView>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-    paddingTop: 70,
-    paddingHorizontal: 20,
-  },
-
-  header: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 20,
-  },
-
-  backButton: { marginRight: 14 },
-
-  headerContent: { flex: 1 },
-
-  title: {
-    color: COLORS.text,
-    fontSize: 26,
-    fontWeight: "bold",
-  },
-
-  subtitle: {
-    color: COLORS.subText,
-    marginTop: 4,
-    fontSize: 14,
-  },
-
-  aiAvatar: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: COLORS.primary,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-
-  chat: { flex: 1 },
-
-  aiBubble: {
-    backgroundColor: COLORS.card,
-    borderRadius: 20,
-    borderTopLeftRadius: 4,
-    padding: 16,
-    marginBottom: 12,
-    maxWidth: "85%",
-    alignSelf: "flex-start",
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-
-  aiBubbleText: {
-    color: COLORS.text,
-    fontSize: 15,
-    lineHeight: 24,
-  },
-
-  userBubble: {
-    backgroundColor: COLORS.userBubble,
-    borderRadius: 20,
-    borderTopRightRadius: 4,
-    padding: 16,
-    marginBottom: 12,
-    maxWidth: "80%",
-    alignSelf: "flex-end",
-  },
-
-  userBubbleText: {
-    color: COLORS.text,
-    fontSize: 15,
-    lineHeight: 22,
-  },
-
-  actionRow: {
-    flexDirection: "row",
-    gap: 12,
-    marginTop: 4,
-    marginBottom: 12,
-  },
-
-  actionBtn: {
-    flex: 1,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 8,
-    paddingVertical: 14,
-    borderRadius: 16,
-  },
-
-  confirmBtn: { backgroundColor: COLORS.primary },
-
-  discardBtn: {
-    backgroundColor: COLORS.card,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-
-  actionBtnText: {
-    color: COLORS.text,
-    fontWeight: "bold",
-    fontSize: 15,
-  },
-
-  inputRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    paddingTop: 12,
-    paddingBottom: 20,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.border,
-    gap: 12,
-  },
-
-  input: {
-    flex: 1,
-    backgroundColor: COLORS.card,
-    borderRadius: 24,
-    paddingHorizontal: 18,
-    paddingVertical: 14,
-    color: COLORS.text,
-    fontSize: 15,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-
-  sendBtn: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: COLORS.primary,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-});
+function createStyles(C: AppColors) {
+  return StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: C.background,
+      paddingTop: SCREEN.paddingTop,
+      paddingHorizontal: SCREEN.paddingHorizontal,
+    },
+    header: {
+      flexDirection: "row",
+      alignItems: "center",
+      marginBottom: 18,
+    },
+    backButton: { marginRight: 14 },
+    headerContent: { flex: 1 },
+    title: {
+      color: C.text,
+      fontSize: 24,
+      fontWeight: "bold",
+    },
+    subtitle: {
+      color: C.subText,
+      marginTop: 4,
+      fontSize: 13,
+    },
+    aiAvatar: {
+      width: 48,
+      height: 48,
+      borderRadius: 24,
+      backgroundColor: C.primary,
+      justifyContent: "center",
+      alignItems: "center",
+    },
+    chat: { flex: 1 },
+    welcomeRow: {
+      flexDirection: "row",
+      alignItems: "flex-start",
+      gap: 10,
+      marginBottom: 14,
+    },
+    botAvatar: {
+      width: 38,
+      height: 38,
+      borderRadius: 19,
+      backgroundColor: C.accent,
+      justifyContent: "center",
+      alignItems: "center",
+    },
+    suggestions: {
+      marginBottom: 12,
+    },
+    aiBubble: {
+      backgroundColor: C.card,
+      borderRadius: RADIUS.lg,
+      borderTopLeftRadius: 4,
+      padding: 16,
+      marginBottom: 12,
+      maxWidth: "88%",
+      alignSelf: "flex-start",
+      borderWidth: 1,
+      borderColor: C.border,
+      flexShrink: 1,
+    },
+    aiBubbleTitle: {
+      color: C.text,
+      fontSize: 16,
+      fontWeight: "bold",
+      marginBottom: 6,
+    },
+    aiBubbleText: {
+      color: C.text,
+      fontSize: 15,
+      lineHeight: 23,
+    },
+    userBubble: {
+      backgroundColor: C.primaryDark,
+      borderRadius: RADIUS.lg,
+      borderTopRightRadius: 4,
+      padding: 16,
+      marginBottom: 12,
+      maxWidth: "80%",
+      alignSelf: "flex-end",
+    },
+    userBubbleText: {
+      color: "#FFFFFF",
+      fontSize: 15,
+      lineHeight: 22,
+    },
+    ruleCard: {
+      backgroundColor: C.cardAlt,
+      borderRadius: RADIUS.md,
+      borderWidth: 1,
+      borderColor: C.primary + "44",
+      padding: 6,
+      marginBottom: 14,
+    },
+    ruleRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      paddingVertical: 12,
+      paddingHorizontal: 10,
+      gap: 10,
+    },
+    ruleRowDivider: {
+      borderBottomWidth: 1,
+      borderBottomColor: C.border,
+    },
+    ruleRowLabel: {
+      color: C.subText,
+      fontSize: 13,
+      width: 72,
+    },
+    ruleRowValue: {
+      color: C.text,
+      fontSize: 14,
+      fontWeight: "600",
+      flex: 1,
+      textAlign: "right",
+    },
+    actionRow: {
+      flexDirection: "row",
+      gap: 12,
+      marginBottom: 12,
+    },
+    actionBtn: {
+      flex: 1,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 8,
+      paddingVertical: 14,
+      borderRadius: RADIUS.md,
+    },
+    confirmBtn: { backgroundColor: C.primary },
+    discardBtn: {
+      backgroundColor: C.card,
+      borderWidth: 1,
+      borderColor: C.border,
+    },
+    actionBtnText: {
+      color: C.text,
+      fontWeight: "bold",
+      fontSize: 15,
+    },
+    inputRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      paddingTop: 12,
+      paddingBottom: 20,
+      borderTopWidth: 1,
+      borderTopColor: C.border,
+      gap: 12,
+    },
+    input: {
+      flex: 1,
+      backgroundColor: C.card,
+      borderRadius: 24,
+      paddingHorizontal: 18,
+      paddingVertical: 14,
+      color: C.text,
+      fontSize: 15,
+      borderWidth: 1,
+      borderColor: C.border,
+    },
+    sendBtn: {
+      width: 50,
+      height: 50,
+      borderRadius: 25,
+      backgroundColor: C.primary,
+      justifyContent: "center",
+      alignItems: "center",
+    },
+  });
+}

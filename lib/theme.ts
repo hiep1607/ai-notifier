@@ -1,29 +1,43 @@
-// Theme dùng chung cho toàn app — gom màu/spacing/radius về 1 nơi.
-// Trước đây mỗi màn tự khai báo COLORS riêng (lệch nhau nhẹ) → nay thống nhất ở đây.
-
-export const COLORS = {
+export const DARK_COLORS = {
   background: "#081120",
   card: "#101B35",
   cardAlt: "#0C1730",
   inputBg: "#09152D",
-
   primary: "#4DA6FF",
   primaryDark: "#2563EB",
   accent: "#7C3AED",
-
   text: "#FFFFFF",
   subText: "#8FA1C7",
   muted: "#7B8AA0",
-
   border: "#1E2B4A",
-
   success: "#22C55E",
   warning: "#F59E0B",
   danger: "#FF5B7F",
-
-  // Nền badge mờ (dùng với màu category: color + ALPHA)
   badgeAlpha: "22",
 };
+
+export const LIGHT_COLORS = {
+  background: "#F0F4FC",
+  card: "#FFFFFF",
+  cardAlt: "#F5F8FF",
+  inputBg: "#EEF2FF",
+  primary: "#2563EB",
+  primaryDark: "#1D4ED8",
+  accent: "#7C3AED",
+  text: "#0F172A",
+  subText: "#475569",
+  muted: "#64748B",
+  border: "#E2E8F0",
+  success: "#16A34A",
+  warning: "#D97706",
+  danger: "#E11D48",
+  badgeAlpha: "22",
+};
+
+export type AppColors = typeof DARK_COLORS;
+
+// Giữ COLORS = dark để các file chưa migrate vẫn compile
+export const COLORS = DARK_COLORS;
 
 export const SPACING = {
   xs: 4,

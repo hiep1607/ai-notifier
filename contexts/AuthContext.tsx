@@ -37,6 +37,12 @@ export function AuthProvider({
       .getSession()
       .then(({ data: { session } }) => {
         setSession(session);
+      })
+      .catch((err) => {
+        // Không để app treo màn hình trắng nếu load session lỗi
+        console.warn("getSession failed:", err);
+      })
+      .finally(() => {
         setLoading(false);
       });
 

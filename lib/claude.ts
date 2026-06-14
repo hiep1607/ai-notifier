@@ -2,7 +2,8 @@
 // Đổi MODEL hoặc OLLAMA_URL nếu cần
 
 const OLLAMA_URL = "http://localhost:11434/api/chat";
-const MODEL = "qwen2.5:7b-instruct";
+// Model 3B vừa với GPU 4GB VRAM (RTX 3050 Laptop). Bản 7B gây CUDA OOM/crash.
+const MODEL = "qwen2.5:3b-instruct";
 
 interface ChatTurn {
   role: "system" | "user" | "assistant";

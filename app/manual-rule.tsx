@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 
 import {
   KeyboardAvoidingView,
@@ -17,19 +17,15 @@ import { router } from "expo-router";
 import { supabase } from "../lib/supabase";
 import { alertMessage } from "../lib/dialog";
 import { useAuth } from "../contexts/AuthContext";
+import { useTheme } from "../contexts/ThemeContext";
 import { CATEGORIES, FREQUENCIES } from "../lib/ruleOptions";
-
-const COLORS = {
-  background: "#081120",
-  card: "#101B35",
-  primary: "#4DA6FF",
-  text: "#FFFFFF",
-  subText: "#8FA1C7",
-  border: "#1E2B4A",
-};
+import { SCREEN, RADIUS, type AppColors } from "../lib/theme";
+import PrimaryButton from "../components/PrimaryButton";
 
 export default function ManualRuleScreen() {
   const { user } = useAuth();
+  const { colors } = useTheme();
+  const styles = useMemo(() => createStyles(colors), [colors]);
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -80,7 +76,6 @@ export default function ManualRuleScreen() {
       return;
     }
 
-    // Quay lại danh sách ngay, không phụ thuộc vào nút OK của Alert
     router.back();
   };
 
@@ -90,16 +85,16 @@ export default function ManualRuleScreen() {
       behavior={Platform.OS === "ios" ? "padding" : undefined}
       keyboardVerticalOffset={Platform.OS === "ios" ? 60 : 0}
     >
-      <ScrollView showsVerticalScrollIndicator={false}>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 40 }}>
         {/* HEADER */}
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-            <Ionicons name="arrow-back" size={28} color="white" />
+            <Ionicons name="arrow-back" size={26} color={colors.text} />
           </TouchableOpacity>
 
           <View style={styles.headerContent}>
-            <Text style={styles.title}>Tạo rule thủ công</Text>
-            <Text style={styles.subtitle}>Điền thông tin rule bạn muốn theo dõi</Text>
+            <Text style={styles.title}>Tạo rule mới</Text>
+            <Text style={styles.subtitle}>Điền thông tin bạn muốn theo dõi</Text>
           </View>
         </View>
 
@@ -109,29 +104,44 @@ export default function ManualRuleScreen() {
           <TextInput
             style={styles.input}
             placeholder="VD: Theo dõi giá vàng"
-            placeholderTextColor={COLORS.subText}
+            placeholderTextColor={colors.subText}
             value={title}
             onChangeText={setTitle}
           />
+
+          <Text style={styles.label}>Nguồn / Website theo dõi</Text>
+          <View style={styles.inputIconRow}>
+            <Ionicons name="globe-outline" size={18} color={colors.subText} style={styles.inputIcon} />
+            <TextInput
+              style={styles.inputWithIcon}
+              placeholder="VD: VnExpress, CafeF hoặc URL"
+              placeholderTextColor={colors.subText}
+              value={sources}
+              onChangeText={setSources}
+              autoCapitalize="none"
+            />
+          </View>
+
+          <Text style={styles.label}>Từ khóa *</Text>
+          <View style={styles.inputIconRow}>
+            <Ionicons name="search-outline" size={18} color={colors.subText} style={styles.inputIcon} />
+            <TextInput
+              style={styles.inputWithIcon}
+              placeholder="VD: giá vàng SJC"
+              placeholderTextColor={colors.subText}
+              value={keyword}
+              onChangeText={setKeyword}
+            />
+          </View>
 
           <Text style={styles.label}>Mô tả</Text>
           <TextInput
             style={[styles.input, styles.textarea]}
             placeholder="Mô tả ngắn về rule này..."
-            placeholderTextColor={COLORS.subText}
+            placeholderTextColor={colors.subText}
             value={description}
             onChangeText={setDescription}
             multiline
-            numberOfLines={3}
-          />
-
-          <Text style={styles.label}>Từ khóa *</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="VD: giá vàng SJC"
-            placeholderTextColor={COLORS.subText}
-            value={keyword}
-            onChangeText={setKeyword}
           />
 
           {/* DANH MỤC */}
@@ -146,11 +156,7 @@ export default function ManualRuleScreen() {
                   onPress={() => setCategory(c.key)}
                   activeOpacity={0.8}
                 >
-                  <Ionicons
-                    name={c.icon}
-                    size={15}
-                    color={active ? "white" : COLORS.subText}
-                  />
+                  <Ionicons name={c.icon} size={15} color={active ? "white" : colors.subText} />
                   <Text style={[styles.chipText, active && { color: "white" }]}>{c.label}</Text>
                 </TouchableOpacity>
               );
@@ -165,7 +171,7 @@ export default function ManualRuleScreen() {
               return (
                 <TouchableOpacity
                   key={f.key}
-                  style={[styles.chip, active && { backgroundColor: COLORS.primary, borderColor: COLORS.primary }]}
+                  style={[styles.chip, active && { backgroundColor: colors.primary, borderColor: colors.primary }]}
                   onPress={() => setFrequency(f.key)}
                   activeOpacity={0.8}
                 >
@@ -175,188 +181,155 @@ export default function ManualRuleScreen() {
             })}
           </View>
 
-          {/* NGUỒN */}
-          <Text style={[styles.label, { marginTop: 18 }]}>Nguồn theo dõi</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="VD: VnExpress, CafeF (cách nhau dấu phẩy)"
-            placeholderTextColor={COLORS.subText}
-            value={sources}
-            onChangeText={setSources}
-          />
-
           {/* ĐIỀU KIỆN */}
-          <Text style={styles.label}>Điều kiện kích hoạt</Text>
+          <Text style={[styles.label, { marginTop: 18 }]}>Điều kiện kích hoạt</Text>
           <TextInput
             style={[styles.input, styles.textarea]}
             placeholder="VD: khi giá vượt 80 triệu, khi có tin mới..."
-            placeholderTextColor={COLORS.subText}
+            placeholderTextColor={colors.subText}
             value={condition}
             onChangeText={setCondition}
             multiline
-            numberOfLines={2}
           />
 
           <View style={styles.switchRow}>
-            <View>
+            <View style={{ flex: 1 }}>
               <Text style={styles.switchLabel}>Kích hoạt ngay</Text>
               <Text style={styles.switchSub}>Rule sẽ bắt đầu theo dõi ngay sau khi tạo</Text>
             </View>
             <Switch
               value={isActive}
               onValueChange={setIsActive}
-              thumbColor={isActive ? COLORS.primary : "#555"}
+              thumbColor={isActive ? colors.primary : "#999"}
+              trackColor={{ true: colors.primary + "66", false: colors.border }}
             />
           </View>
         </View>
 
-        {/* SUBMIT */}
-        <TouchableOpacity
-          style={[styles.createButton, loading && styles.createButtonDisabled]}
+        <PrimaryButton
+          label={loading ? "Đang tạo..." : "Tạo rule"}
+          icon="add-circle-outline"
           onPress={handleCreate}
-          disabled={loading}
-        >
-          <Ionicons name="add-circle-outline" size={22} color="white" />
-          <Text style={styles.createButtonText}>
-            {loading ? "Đang tạo..." : "Tạo rule"}
-          </Text>
-        </TouchableOpacity>
-
-        <View style={{ height: 40 }} />
+          loading={loading}
+        />
       </ScrollView>
     </KeyboardAvoidingView>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.background,
-    paddingTop: 70,
-    paddingHorizontal: 20,
-  },
-
-  header: {
-    flexDirection: "row",
-    alignItems: "flex-start",
-    marginBottom: 32,
-  },
-
-  backButton: {
-    marginRight: 16,
-    marginTop: 4,
-  },
-
-  headerContent: {
-    flex: 1,
-  },
-
-  title: {
-    color: COLORS.text,
-    fontSize: 26,
-    fontWeight: "bold",
-  },
-
-  subtitle: {
-    color: COLORS.subText,
-    marginTop: 6,
-    fontSize: 15,
-  },
-
-  card: {
-    backgroundColor: COLORS.card,
-    borderRadius: 24,
-    padding: 22,
-    marginBottom: 24,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-
-  label: {
-    color: COLORS.subText,
-    fontSize: 14,
-    marginBottom: 8,
-    marginTop: 4,
-  },
-
-  input: {
-    backgroundColor: "#09152D",
-    borderRadius: 14,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    color: COLORS.text,
-    fontSize: 16,
-    marginBottom: 18,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-
-  textarea: {
-    height: 90,
-    textAlignVertical: "top",
-  },
-
-  chipWrap: {
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-  },
-
-  chip: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 6,
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    backgroundColor: "#09152D",
-  },
-
-  chipText: {
-    color: COLORS.subText,
-    fontSize: 13,
-    fontWeight: "600",
-  },
-
-  switchRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginTop: 20,
-  },
-
-  switchLabel: {
-    color: COLORS.text,
-    fontSize: 16,
-    fontWeight: "600",
-  },
-
-  switchSub: {
-    color: COLORS.subText,
-    fontSize: 13,
-    marginTop: 2,
-    maxWidth: 240,
-  },
-
-  createButton: {
-    backgroundColor: COLORS.primary,
-    borderRadius: 18,
-    paddingVertical: 18,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 10,
-  },
-
-  createButtonDisabled: {
-    opacity: 0.6,
-  },
-
-  createButtonText: {
-    color: "white",
-    fontWeight: "bold",
-    fontSize: 17,
-  },
-});
+function createStyles(C: AppColors) {
+  return StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: C.background,
+      paddingTop: SCREEN.paddingTop,
+      paddingHorizontal: SCREEN.paddingHorizontal,
+    },
+    header: {
+      flexDirection: "row",
+      alignItems: "center",
+      marginBottom: 26,
+    },
+    backButton: {
+      marginRight: 14,
+    },
+    headerContent: {
+      flex: 1,
+    },
+    title: {
+      color: C.text,
+      fontSize: 24,
+      fontWeight: "bold",
+    },
+    subtitle: {
+      color: C.subText,
+      marginTop: 4,
+      fontSize: 14,
+    },
+    card: {
+      backgroundColor: C.card,
+      borderRadius: RADIUS.xl,
+      padding: 20,
+      marginBottom: 22,
+      borderWidth: 1,
+      borderColor: C.border,
+    },
+    label: {
+      color: C.subText,
+      fontSize: 14,
+      marginBottom: 8,
+      marginTop: 4,
+    },
+    input: {
+      backgroundColor: C.inputBg,
+      borderRadius: RADIUS.sm,
+      paddingHorizontal: 16,
+      paddingVertical: 14,
+      color: C.text,
+      fontSize: 15,
+      marginBottom: 16,
+      borderWidth: 1,
+      borderColor: C.border,
+    },
+    inputIconRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      backgroundColor: C.inputBg,
+      borderRadius: RADIUS.sm,
+      borderWidth: 1,
+      borderColor: C.border,
+      marginBottom: 16,
+      paddingHorizontal: 14,
+    },
+    inputIcon: {
+      marginRight: 10,
+    },
+    inputWithIcon: {
+      flex: 1,
+      paddingVertical: 14,
+      color: C.text,
+      fontSize: 15,
+    },
+    textarea: {
+      height: 84,
+      textAlignVertical: "top",
+    },
+    chipWrap: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: 8,
+    },
+    chip: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+      paddingHorizontal: 14,
+      paddingVertical: 9,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: C.border,
+      backgroundColor: C.inputBg,
+    },
+    chipText: {
+      color: C.subText,
+      fontSize: 13,
+      fontWeight: "600",
+    },
+    switchRow: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      marginTop: 22,
+    },
+    switchLabel: {
+      color: C.text,
+      fontSize: 15,
+      fontWeight: "600",
+    },
+    switchSub: {
+      color: C.subText,
+      fontSize: 13,
+      marginTop: 2,
+    },
+  });
+}
