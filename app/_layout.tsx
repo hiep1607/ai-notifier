@@ -1,8 +1,6 @@
 import { useEffect } from "react";
 import { Platform } from "react-native";
 
-import { useColorScheme } from "@/hooks/use-color-scheme";
-
 import {
   DarkTheme,
   DefaultTheme,
@@ -40,7 +38,6 @@ export default function RootLayout() {
 function RootNavigator() {
   const { session, loading } = useAuth();
   const { isDark } = useTheme();
-  const colorScheme = useColorScheme();
 
   useEffect(() => {
     if (Platform.OS === "android") {
@@ -106,13 +103,7 @@ function RootNavigator() {
           options={{ headerShown: false }}
         />
 
-        <Stack.Screen
-          name="modal"
-          options={{
-            presentation: "modal",
-            title: "Modal",
-          }}
-        />
+
       </Stack>
 
       <StatusBar style={isDark ? "light" : "dark"} />
