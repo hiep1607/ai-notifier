@@ -149,7 +149,7 @@ export default function RuleDetailScreen() {
       }
     } catch (err: any) {
       alertMessage("Lỗi", err.message?.includes("fetch") || err.message?.includes("Network")
-        ? "Không kết nối được. Kiểm tra Ollama đang chạy (localhost:11434) và mạng."
+        ? "Không kết nối được máy chủ. Kiểm tra mạng rồi thử lại."
         : err.message);
     } finally {
       setMonitoring(false);

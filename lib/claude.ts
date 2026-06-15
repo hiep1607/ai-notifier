@@ -1,54 +1,7 @@
-// Gọi local Ollama model — không cần API key, chạy offline
-// Đổi MODEL hoặc OLLAMA_URL nếu cần
+// NL → Rule: gọi Edge Function "generate-rule" (chạy Gemini server-side, key giấu trong
+// Supabase secret). Trước đây gọi Ollama local; giờ không cần PC bật Ollama nữa.
 
-const OLLAMA_URL = "http://localhost:11434/api/chat";
-// Model 3B vừa với GPU 4GB VRAM (RTX 3050 Laptop). Bản 7B gây CUDA OOM/crash.
-const MODEL = "qwen2.5:3b-instruct";
-
-interface ChatTurn {
-  role: "system" | "user" | "assistant";
-  content: string;
-}
-
-async function callOllama(messages: ChatTurn[]): Promise<string> {
-  const res = await fetch(OLLAMA_URL, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      model: MODEL,
-      stream: false,
-      think: false, // tắt thinking để response nhanh hơn và dễ parse JSON
-      format: "json", // ép Ollama trả JSON hợp lệ
-      messages,
-    }),
-  });
-
-  if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Ollama ${res.status}: ${err}`);
-  }
-
-  const json = await res.json();
-  return json.message?.content ?? "";
-}
-
-// Ép về chuỗi: model nhỏ đôi khi trả mảng cho sources → join lại
-function asText(v: any): string {
-  if (Array.isArray(v)) return v.join(", ");
-  if (v == null) return "";
-  return String(v);
-}
-
-function parseJson(raw: string): any {
-  // Loại bỏ markdown code fence nếu model wrap JSON trong ```
-  const clean = raw.replace(/```json?\n?/g, "").replace(/```/g, "").trim();
-  // Tìm JSON object đầu tiên trong chuỗi (đề phòng model thêm text thừa)
-  const match = clean.match(/\{[\s\S]*\}/);
-  if (!match) throw new Error(`Không parse được JSON từ: ${raw.slice(0, 200)}`);
-  return JSON.parse(match[0]);
-}
-
-// ===== TẠO RULE (multi-turn, hỏi lại khi thiếu thông tin) =====
+import { supabase } from "./supabase";
 
 export interface RuleDraft {
   title: string;
@@ -64,148 +17,24 @@ export type RuleAIResult =
   | { status: "need_info"; message: string }
   | { status: "ready"; message: string; rule: RuleDraft };
 
-const RULE_SYSTEM = `Bạn là trợ lý tạo "rule theo dõi thông tin tự động" cho một app thông báo.
-Nhiệm vụ: qua hội thoại, thu thập đủ thông tin để dựng 1 rule hoàn chỉnh.
+interface ChatTurn {
+  role: "user" | "assistant";
+  content: string;
+}
 
-Một rule hoàn chỉnh gồm các trường:
-- title: tên ngắn gọn (tối đa 6 từ), KHÔNG được để trống
-- description: 1 câu mô tả rule làm gì
-- keyword: từ khóa tìm kiếm chính (1-5 từ)
-- category: PHẢI là 1 trong: finance, news, tech, sports, weather, health, other
-- sources: 1 CHUỖI text các nguồn cách nhau dấu phẩy, vd "VnExpress, CafeF". KHÔNG dùng mảng. Để "" nếu không rõ.
-- frequency: PHẢI là 1 trong: realtime, hourly, daily, weekly
-- condition: điều kiện để gửi thông báo, vd "khi giá vượt 80 triệu". Để "" nếu chỉ cần tin mới.
-
-QUY TẮC HỎI LẠI (rất quan trọng):
-- Nếu yêu cầu quá chung chung / mơ hồ (vd chỉ nói "tin tức", "thời tiết", "thể thao" mà chưa rõ CHỦ ĐỀ CỤ THỂ hoặc TẦN SUẤT), thì PHẢI trả về status "need_info" và hỏi lại, KHÔNG được tự bịa rule.
-- Chỉ trả "ready" khi đã rõ: chủ đề cụ thể (keyword), category, và frequency.
-- Hỏi ngắn gọn, thân thiện, tiếng Việt, mỗi lần 1-2 câu.
-
-LUÔN trả về JSON thuần (không markdown) theo đúng 1 trong 2 dạng.
-
-VÍ DỤ 1 — yêu cầu mơ hồ:
-User: "theo dõi tin tức"
-Trả về: { "status": "need_info", "message": "Bạn muốn theo dõi tin tức về chủ đề gì cụ thể (vd: kinh tế, thể thao, công nghệ...) và muốn cập nhật bao lâu một lần?" }
-
-VÍ DỤ 2 — đủ thông tin:
-User: "báo khi giá bitcoin tăng mạnh, kiểm tra mỗi giờ"
-Trả về: { "status": "ready", "message": "Tôi đã tạo rule theo dõi Bitcoin cho bạn:", "rule": { "title": "Theo dõi giá Bitcoin", "description": "Báo khi giá Bitcoin tăng mạnh, kiểm tra mỗi giờ.", "keyword": "giá bitcoin", "category": "finance", "sources": "", "frequency": "hourly", "condition": "khi giá tăng mạnh bất thường" } }`;
-
-// history: toàn bộ lượt user/assistant trước đó (không gồm system)
 export async function chatRule(history: ChatTurn[]): Promise<RuleAIResult> {
-  const raw = await callOllama([
-    { role: "system", content: RULE_SYSTEM },
-    ...history,
-  ]);
-  const data = parseJson(raw);
+  const { data, error } = await supabase.functions.invoke("generate-rule", {
+    body: { history },
+  });
 
-  if (data.status === "ready" && data.rule) {
-    const r = data.rule;
-    return {
-      status: "ready",
-      message: data.message ?? "Đây là rule tôi đề xuất:",
-      rule: {
-        title: asText(r.title),
-        description: asText(r.description),
-        keyword: asText(r.keyword),
-        category: asText(r.category) || "other",
-        sources: asText(r.sources),
-        frequency: asText(r.frequency) || "daily",
-        condition: asText(r.condition),
-      },
-    };
+  if (error) throw new Error(error.message);
+  if (data?.error) throw new Error(data.error);
+
+  if (data?.status === "ready" && data.rule) {
+    return { status: "ready", message: data.message, rule: data.rule as RuleDraft };
   }
-
   return {
     status: "need_info",
-    message: data.message ?? "Bạn có thể cho tôi biết thêm chi tiết không?",
+    message: data?.message ?? "Bạn có thể cho tôi biết thêm chi tiết không?",
   };
-}
-
-// ===== TÓM TẮT BÀI VIẾT THẬT =====
-// AI đọc 1 bài THẬT (tiêu đề + mô tả ngắn từ RSS) rồi tóm tắt — KHÔNG bịa thông tin.
-
-export interface ArticleSummary {
-  content: string;     // 2-3 câu tóm tắt dễ đọc, dựa trên bài thật
-  ai_summary: string;  // 1 câu ngắn (~15 từ)
-  sentiment: string;   // positive | neutral | negative
-  is_important: boolean;
-  // Ý từ Smart Notify (trigger "match"/"threshold"): chỉ báo khi bài THẬT SỰ
-  // thỏa điều kiện người dùng đặt. Rule không có điều kiện → luôn true.
-  matches_condition: boolean;
-}
-
-export async function summarizeArticle(
-  article: { title: string; snippet: string; source: string; body?: string },
-  rule: { keyword: string; condition?: string }
-): Promise<ArticleSummary> {
-  // Ưu tiên nội dung đầy đủ; không có thì dùng mô tả ngắn.
-  const articleText = (article.body && article.body.length > 50)
-    ? article.body
-    : article.snippet;
-
-  const raw = await callOllama([
-    {
-      role: "system",
-      content: `Bạn là AI giám sát tin tức cho người dùng đang theo dõi một CHỦ ĐỀ cụ thể.
-Bạn nhận 1 bài báo THẬT, chủ đề và ĐIỀU KIỆN người dùng quan tâm. Hãy viết thông báo NGẮN GỌN, TẬP TRUNG vào đúng chủ đề đó.
-
-NGUYÊN TẮC:
-1. content phải TRÍCH thông tin CỤ THỂ liên quan chủ đề: con số, giá, tỷ lệ %, mốc thời gian, mức tăng/giảm... nếu bài có.
-   Ví dụ chủ đề "giá vàng" → phải nêu giá bao nhiêu, tăng/giảm bao nhiêu.
-2. CHỈ dùng thông tin CÓ trong bài. TUYỆT ĐỐI KHÔNG bịa số liệu. Nếu bài không có số liệu cụ thể thì tóm tắt trung thực điều bài nói.
-3. Viết tiếng Việt tự nhiên, đi thẳng vào nội dung, không lan man.
-4. matches_condition: đánh giá bài này có THẬT SỰ thỏa ĐIỀU KIỆN người dùng đặt không.
-   - Nếu điều kiện là "(không có)" → luôn trả true.
-   - Nếu có điều kiện (vd "giá vượt 80 triệu", "giảm hơn 5%") → chỉ true khi bài có dữ liệu CHO THẤY điều kiện đã xảy ra. Không chắc/không đủ dữ liệu → false.
-
-Trả về JSON thuần đúng 5 trường:
-{
-  "content": "2-4 câu, nêu rõ thông tin/số liệu cụ thể liên quan chủ đề",
-  "ai_summary": "1 câu ngắn (~15 từ) chứa điểm mấu chốt (kèm số nếu có)",
-  "sentiment": "1 trong: positive, neutral, negative",
-  "is_important": true/false,
-  "matches_condition": true/false
-}
-- is_important = true nếu có biến động lớn/bất thường, hoặc khớp điều kiện người dùng quan tâm.
-Chỉ trả JSON thuần, không markdown, không giải thích.`,
-    },
-    {
-      role: "user",
-      content: `CHỦ ĐỀ người dùng theo dõi: "${rule.keyword}"
-Điều kiện đáng chú ý: "${rule.condition ?? "(không có)"}"
-
-BÀI BÁO THẬT (nguồn ${article.source}):
-Tiêu đề: ${article.title}
-Nội dung: ${articleText}
-
-Viết thông báo tập trung vào chủ đề "${rule.keyword}", trích số liệu cụ thể nếu có.`,
-    },
-  ]);
-
-  const d = parseJson(raw);
-  // Không có điều kiện → mặc định khớp (báo mọi tin mới). Có điều kiện → theo phán đoán AI.
-  const hasCondition = Boolean(rule.condition && rule.condition.trim());
-  return {
-    content: asText(d.content) || article.snippet,
-    ai_summary: asText(d.ai_summary) || article.title,
-    sentiment: normSentiment(d.sentiment),
-    is_important: toBool(d.is_important),
-    matches_condition: hasCondition ? toBool(d.matches_condition) : true,
-  };
-}
-
-// Model nhỏ hay trả "NEUTRAL", "Positive"... → chuẩn hóa về 3 giá trị hợp lệ.
-function normSentiment(v: any): string {
-  const s = asText(v).toLowerCase();
-  if (s.includes("pos")) return "positive";
-  if (s.includes("neg")) return "negative";
-  return "neutral";
-}
-
-// Model hay trả "true"/"LOW"/"yes"... thay vì boolean → ép về boolean thật cho cột DB.
-function toBool(v: any): boolean {
-  if (typeof v === "boolean") return v;
-  const s = asText(v).toLowerCase();
-  return s === "true" || s === "yes" || s === "high" || s === "1";
 }

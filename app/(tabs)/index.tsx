@@ -69,7 +69,7 @@ export default function HomeScreen() {
       const res = await runMonitorForActiveRules(user.id);
       if (res.inserted > 0) await fetchData();
     } catch (err) {
-      // Ollama tắt / mất mạng → im lặng, không làm phiền người dùng.
+      // Mất mạng / function lỗi → im lặng, không làm phiền người dùng (cron vẫn quét nền).
       console.log("Quét tin nền bỏ qua:", err);
     } finally {
       setScanning(false);
