@@ -130,6 +130,9 @@ export interface ArticleSummary {
   ai_summary: string;  // 1 câu ngắn (~15 từ)
   sentiment: string;   // positive | neutral | negative
   is_important: boolean;
+  // Ý từ Smart Notify (trigger "match"/"threshold"): chỉ báo khi bài THẬT SỰ
+  // thỏa điều kiện người dùng đặt. Rule không có điều kiện → luôn true.
+  matches_condition: boolean;
 }
 
 export async function summarizeArticle(
@@ -145,20 +148,24 @@ export async function summarizeArticle(
     {
       role: "system",
       content: `Bạn là AI giám sát tin tức cho người dùng đang theo dõi một CHỦ ĐỀ cụ thể.
-Bạn nhận 1 bài báo THẬT và chủ đề người dùng quan tâm. Hãy viết thông báo NGẮN GỌN, TẬP TRUNG vào đúng chủ đề đó.
+Bạn nhận 1 bài báo THẬT, chủ đề và ĐIỀU KIỆN người dùng quan tâm. Hãy viết thông báo NGẮN GỌN, TẬP TRUNG vào đúng chủ đề đó.
 
 NGUYÊN TẮC:
 1. content phải TRÍCH thông tin CỤ THỂ liên quan chủ đề: con số, giá, tỷ lệ %, mốc thời gian, mức tăng/giảm... nếu bài có.
    Ví dụ chủ đề "giá vàng" → phải nêu giá bao nhiêu, tăng/giảm bao nhiêu.
 2. CHỈ dùng thông tin CÓ trong bài. TUYỆT ĐỐI KHÔNG bịa số liệu. Nếu bài không có số liệu cụ thể thì tóm tắt trung thực điều bài nói.
 3. Viết tiếng Việt tự nhiên, đi thẳng vào nội dung, không lan man.
+4. matches_condition: đánh giá bài này có THẬT SỰ thỏa ĐIỀU KIỆN người dùng đặt không.
+   - Nếu điều kiện là "(không có)" → luôn trả true.
+   - Nếu có điều kiện (vd "giá vượt 80 triệu", "giảm hơn 5%") → chỉ true khi bài có dữ liệu CHO THẤY điều kiện đã xảy ra. Không chắc/không đủ dữ liệu → false.
 
-Trả về JSON thuần đúng 4 trường:
+Trả về JSON thuần đúng 5 trường:
 {
   "content": "2-4 câu, nêu rõ thông tin/số liệu cụ thể liên quan chủ đề",
   "ai_summary": "1 câu ngắn (~15 từ) chứa điểm mấu chốt (kèm số nếu có)",
   "sentiment": "1 trong: positive, neutral, negative",
-  "is_important": true/false
+  "is_important": true/false,
+  "matches_condition": true/false
 }
 - is_important = true nếu có biến động lớn/bất thường, hoặc khớp điều kiện người dùng quan tâm.
 Chỉ trả JSON thuần, không markdown, không giải thích.`,
@@ -177,11 +184,14 @@ Viết thông báo tập trung vào chủ đề "${rule.keyword}", trích số l
   ]);
 
   const d = parseJson(raw);
+  // Không có điều kiện → mặc định khớp (báo mọi tin mới). Có điều kiện → theo phán đoán AI.
+  const hasCondition = Boolean(rule.condition && rule.condition.trim());
   return {
     content: asText(d.content) || article.snippet,
     ai_summary: asText(d.ai_summary) || article.title,
     sentiment: normSentiment(d.sentiment),
     is_important: toBool(d.is_important),
+    matches_condition: hasCondition ? toBool(d.matches_condition) : true,
   };
 }
 
