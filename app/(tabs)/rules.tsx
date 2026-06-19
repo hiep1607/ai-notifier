@@ -248,13 +248,13 @@ export default function RulesScreen() {
                 activeOpacity={0.7}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
               >
-                <Switch
-                  value={item.is_active}
-                  onValueChange={() => toggleRule(item)}
-                  thumbColor={item.is_active ? colors.primary : "#999"}
-                  trackColor={{ true: colors.primary + "66", false: colors.border }}
-                  pointerEvents="none"
-                />
+                <View pointerEvents="none">
+                  <Switch
+                    value={item.is_active}
+                    thumbColor={item.is_active ? colors.primary : "#999"}
+                    trackColor={{ true: colors.primary + "66", false: colors.border }}
+                  />
+                </View>
               </TouchableOpacity>
             </View>
             </ReanimatedSwipeable>
