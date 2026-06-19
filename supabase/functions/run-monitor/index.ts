@@ -201,6 +201,9 @@ async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult
   const hasCond = Boolean(rule.condition && rule.condition.trim());
   // Rule "theo điều kiện" + đã có giá trị nền → chỉ báo khi giá trị THỰC SỰ đổi.
   const changeGate = rule.frequency === "change" && Boolean(rule.last_value && rule.last_value.trim());
+  // So sánh số liệu lỏng (bỏ khoảng trắng + thường hóa) để biết có đổi so với lần trước không.
+  const normVal = (s: string) => s.toLowerCase().replace(/\s+/g, "");
+  const lastValNorm = normVal(String(rule.last_value ?? ""));
 
   // Lấy URL đã có để chống trùng.
   const { data: existing } = await supabase
@@ -225,7 +228,11 @@ async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult
 
     let url = isUrl(it.source_url) ? it.source_url : "";
     if (!url && pool.length > 0) url = pool.shift()!.uri; // vá bằng nguồn grounding
-    if (!url || seen.has(url)) continue;
+    if (!url) continue; // không có nguồn → bỏ
+    // Chống trùng: bỏ qua khi CÙNG URL mà số liệu KHÔNG đổi (không có gì mới để báo).
+    // Chủ đề kiểu giá-trị (thời tiết/giá): URL nguồn đứng yên nhưng số đổi → vẫn báo.
+    const valueChanged = v !== "" && normVal(v) !== lastValNorm;
+    if (seen.has(url) && !valueChanged) continue;
     seen.add(url);
 
     const title = String(it.title ?? "").slice(0, 300) || "Tin mới";
