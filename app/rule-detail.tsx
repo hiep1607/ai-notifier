@@ -12,6 +12,7 @@ import {
 } from "react-native";
 
 import { Ionicons } from "@expo/vector-icons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { router, useLocalSearchParams } from "expo-router";
 
@@ -27,6 +28,7 @@ import { RADIUS, type AppColors } from "../lib/theme";
 export default function RuleDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { colors } = useTheme();
+  const insets = useSafeAreaInsets();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
   const [rule, setRule] = useState<Rule | null>(null);
@@ -205,7 +207,11 @@ export default function RuleDetailScreen() {
   const cat = findCategory(rule.category);
 
   return (
-    <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={{ paddingBottom: insets.bottom + 48 }}
+      showsVerticalScrollIndicator={false}
+    >
       {/* HEADER */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()}>
@@ -251,12 +257,19 @@ export default function RuleDetailScreen() {
           />
         </TouchableOpacity>
 
-        <Switch
-          value={rule.is_active}
-          onValueChange={toggleActive}
-          thumbColor={rule.is_active ? colors.primary : "#999"}
-          trackColor={{ true: colors.primary + "66", false: colors.border }}
-        />
+        <TouchableOpacity
+          onPress={toggleActive}
+          activeOpacity={0.7}
+          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+        >
+          <Switch
+            value={rule.is_active}
+            onValueChange={toggleActive}
+            thumbColor={rule.is_active ? colors.primary : "#999"}
+            trackColor={{ true: colors.primary + "66", false: colors.border }}
+            pointerEvents="none"
+          />
+        </TouchableOpacity>
       </View>
 
       {/* CATEGORY BADGE */}
