@@ -70,23 +70,38 @@ export default function SettingsScreen() {
       });
   }, [user]);
 
-  // Lưu nguyên trạng thái giờ yên lặng (truyền giá trị tường minh để tránh closure cũ).
+  // Lưu trạng thái giờ yên lặng. Dùng update→insert thay cho upsert(onConflict) để khỏi
+  // phụ thuộc ràng buộc unique trên user_id (bảng user_settings có thể đã tồn tại sẵn).
   const persistQuiet = async (enabled: boolean, start: number, end: number) => {
     if (!user) return;
-    const { error } = await supabase.from("user_settings").upsert(
-      {
-        user_id: user.id,
-        quiet_enabled: enabled,
-        quiet_start: start,
-        quiet_end: end,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "user_id" }
-    );
-    if (error) {
-      console.log("user_settings upsert error:", error);
-      const code = error.code ? ` (mã ${error.code})` : "";
-      alertMessage("Chưa lưu được", `${error.message}${code}`);
+    const payload = {
+      quiet_enabled: enabled,
+      quiet_start: start,
+      quiet_end: end,
+      updated_at: new Date().toISOString(),
+    };
+
+    const { data: updated, error: updErr } = await supabase
+      .from("user_settings")
+      .update(payload)
+      .eq("user_id", user.id)
+      .select("user_id");
+
+    if (updErr) {
+      console.log("user_settings update error:", updErr);
+      alertMessage("Chưa lưu được", `${updErr.message}${updErr.code ? ` (mã ${updErr.code})` : ""}`);
+      return;
+    }
+
+    // Chưa có dòng nào của user này → tạo mới.
+    if (!updated || updated.length === 0) {
+      const { error: insErr } = await supabase
+        .from("user_settings")
+        .insert({ user_id: user.id, ...payload });
+      if (insErr) {
+        console.log("user_settings insert error:", insErr);
+        alertMessage("Chưa lưu được", `${insErr.message}${insErr.code ? ` (mã ${insErr.code})` : ""}`);
+      }
     }
   };
 
