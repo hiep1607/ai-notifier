@@ -212,13 +212,15 @@ interface NotifFields {
   source_url: string;
   sentiment: string;
   is_important: boolean;
+  related_notification_id?: string; // trỏ tới thông báo trước (khi không có URL bài gốc)
 }
 
 // Chèn 1 notification + đẩy push. Trả 1 nếu thành công, 0 nếu lỗi.
 // deno-lint-ignore no-explicit-any
 async function insertNotif(supabase: any, rule: Rule, f: NotifFields): Promise<number> {
   const title = (f.title || "Tin mới").slice(0, 300);
-  const { data: ins, error } = await supabase.from("notifications").insert([{
+  // deno-lint-ignore no-explicit-any
+  const row: Record<string, any> = {
     rule_id: rule.id,
     title,
     content: f.content ?? "",
@@ -230,7 +232,11 @@ async function insertNotif(supabase: any, rule: Rule, f: NotifFields): Promise<n
     sentiment: f.sentiment || "neutral",
     is_important: Boolean(f.is_important),
     is_read: false,
-  }]).select("id").single();
+  };
+  // Chỉ set khi có (tránh tham chiếu cột nếu migration 0009 chưa chạy).
+  if (f.related_notification_id) row.related_notification_id = f.related_notification_id;
+  const { data: ins, error } = await supabase.from("notifications")
+    .insert([row]).select("id").single();
   if (error || !ins) return 0;
   await sendPush(supabase, rule.user_id, title, f.ai_summary || f.content || "", ins.id);
   return 1;
@@ -271,11 +277,12 @@ async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult
   );
   const { data: prevRows } = await supabase
     .from("notifications")
-    .select("title, source, source_url")
+    .select("id, title, source, source_url")
     .eq("rule_id", rule.id)
     .order("created_at", { ascending: false })
     .limit(1);
-  const prev = prevRows?.[0] as { title?: string; source?: string; source_url?: string } | undefined;
+  const prev = prevRows?.[0] as
+    { id?: string; title?: string; source?: string; source_url?: string } | undefined;
 
   const top = items[0];
   let value: string | undefined;
@@ -311,14 +318,16 @@ async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult
   if (inserted === 0 && forceSend) {
     const topic = (rule.keyword || rule.title || "thông tin").slice(0, 60);
     if (prev) {
-      // Có tb trước → "tạm thời chưa có thay đổi", link trỏ về tb trước.
+      // Có tb trước → "tạm thời chưa có thay đổi". KHÔNG có URL bài mới → cho người dùng
+      // mở lại THÔNG BÁO TRƯỚC ngay trong app (related_notification_id), thay vì link web.
       inserted += await insertNotif(supabase, rule, {
         title: `Chưa có thay đổi mới: ${topic}`,
-        content: "Tạm thời chưa tìm thấy thông tin mới theo yêu cầu — chưa có thay đổi so với thông báo trước. Bạn có thể xem lại bài gần nhất ở liên kết bên dưới.",
+        content: "Tạm thời chưa tìm thấy thông tin mới theo yêu cầu — chưa có thay đổi so với thông báo trước. Bạn có thể xem lại thông báo gần nhất bên dưới.",
         details: "",
         ai_summary: "Chưa có thay đổi so với lần trước.",
         source: prev.source || "Web",
-        source_url: prev.source_url || "",
+        source_url: "",
+        related_notification_id: prev.id,
         sentiment: "neutral",
         is_important: false,
       });

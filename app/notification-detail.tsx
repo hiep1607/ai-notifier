@@ -166,7 +166,7 @@ export default function NotificationDetailScreen() {
         </View>
       ) : null}
 
-      {/* ĐỌC BÀI GỐC */}
+      {/* ĐỌC BÀI GỐC — hoặc, nếu không có URL, mở thông báo trước (fallback "chưa có thay đổi") */}
       {notification.source_url ? (
         <TouchableOpacity
           style={styles.sourceButton}
@@ -175,6 +175,20 @@ export default function NotificationDetailScreen() {
         >
           <Ionicons name="open-outline" size={20} color="white" />
           <Text style={styles.sourceButtonText}>Đọc bài gốc</Text>
+        </TouchableOpacity>
+      ) : notification.related_notification_id ? (
+        <TouchableOpacity
+          style={styles.sourceButton}
+          onPress={() =>
+            router.push({
+              pathname: "/notification-detail",
+              params: { id: notification.related_notification_id! },
+            })
+          }
+          activeOpacity={0.85}
+        >
+          <Ionicons name="albums-outline" size={20} color="white" />
+          <Text style={styles.sourceButtonText}>Xem thông báo trước</Text>
         </TouchableOpacity>
       ) : null}
 

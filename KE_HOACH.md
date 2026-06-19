@@ -1,7 +1,7 @@
 # Kế hoạch & Tiến độ — AI Notifier
 
 > File này theo dõi: kiến trúc, việc ĐÃ LÀM, việc CẦN LÀM. Cập nhật sau mỗi task.
-> Cập nhật lần cuối: 2026-06-19 (phân quyền run-monitor)
+> Cập nhật lần cuối: 2026-06-19 (link thông báo trước khi không có URL)
 
 ## Mục tiêu sản phẩm
 Người dùng mô tả bằng ngôn ngữ tự nhiên → AI tạo **rule** → hệ thống **tự quét tin thật nhiều nguồn 24/7** → gửi **thông báo** đúng chủ đề/điều kiện, kèm link bài gốc.
@@ -42,6 +42,7 @@ pg_cron (mỗi 15 phút) → run-monitor (quét nền, lọc rule tới hạn th
 - [x] **Phân quyền run-monitor**: anon key là công khai nên không tin được. Cron gọi bằng service_role → admin (quét tất cả); app gọi kèm JWT → xác thực, lấy userId TỪ token (bỏ qua userId body), chỉ quét rule của mình; ruleId người khác → 403; anon thuần → 401. Không cần thêm secret / sửa SQL (cron đã dùng service_role).
 
 ## ⏳ ĐANG CHỜ NGƯỜI DÙNG (tôi không tự làm được)
+- [ ] **Chạy SQL `0009_notification_related.sql`** trong Supabase SQL Editor (thêm cột `related_notification_id`) — cần để fallback "chưa có thay đổi" link được về thông báo trước.
 - [ ] **Chạy SQL** gộp (`run_at` + `push_tokens`) trong Supabase SQL Editor — tôi không có mật khẩu DB.
 - [ ] **Đổi key Gemini** — key cũ đã lộ trong ảnh chụp lúc setup (bảo mật).
 - [ ] **EAS init + dev build** để nhận push thật trên điện thoại (cần tài khoản Expo + thiết bị; build cloud tính phí).
@@ -64,6 +65,7 @@ Giải thích chi tiết từng lỗi (hệ thống, ảnh hưởng mọi rule) 
 ---
 
 ## Nhật ký thay đổi
+- 2026-06-19: Fallback "chưa có thay đổi" giờ link về THÔNG BÁO TRƯỚC trong app (không có URL bài mới) — thêm cột `related_notification_id` (migration 0009), run-monitor lưu id tb gần nhất, notification-detail hiện nút "Xem thông báo trước" khi source_url rỗng. Deploy lại run-monitor.
 - 2026-06-19: Phân quyền run-monitor — chống lạm dụng anon key (công khai). Phân biệt cron (service_role = admin, quét tất cả) với người dùng (JWT đăng nhập): xác thực token, lấy userId từ token thay vì body, chỉ quét rule của mình; chặn ruleId người khác (403) và anon thuần (401). Test 401 OK. Deploy lại run-monitor.
 - 2026-06-19: Luôn-gửi cho rule định kỳ/đặt giờ — không tìm thấy tin vẫn gửi tb: có tb trước → "chưa thay đổi" + link trỏ tb trước; chưa có → "chưa tìm thấy" + tin liên quan gần nhất; tuyệt đối không im. Rule "theo điều kiện" giữ im khi chưa thỏa. Rule đặt giờ gửi đúng giờ [target, target+15). Deploy lại run-monitor.
 - 2026-06-19: Bỏ phụ thuộc cột last_value cho #8 — khi chưa có mốc cũ thì KHÔNG tự nhận "đã đổi" (hết báo lặp mỗi phiên); cơ chế chính = AI chấm điều kiện rule mỗi phiên + dedup URL. Deploy lại run-monitor.
