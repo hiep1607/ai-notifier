@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { Platform } from "react-native";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 
 import {
   DarkTheme,
@@ -30,11 +31,13 @@ export const unstable_settings = {
 
 export default function RootLayout() {
   return (
-    <AuthProvider>
-      <AppThemeProvider>
-        <RootNavigator />
-      </AppThemeProvider>
-    </AuthProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <AuthProvider>
+        <AppThemeProvider>
+          <RootNavigator />
+        </AppThemeProvider>
+      </AuthProvider>
+    </GestureHandlerRootView>
   );
 }
 
