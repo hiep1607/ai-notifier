@@ -31,6 +31,7 @@ export default function RuleDetailScreen() {
 
   const [rule, setRule] = useState<Rule | null>(null);
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [showAllNotifs, setShowAllNotifs] = useState(false);
   const [loading, setLoading] = useState(true);
 
   const [isEditing, setIsEditing] = useState(false);
@@ -66,7 +67,7 @@ export default function RuleDetailScreen() {
       .select("*")
       .eq("rule_id", id)
       .order("created_at", { ascending: false })
-      .limit(10);
+      .limit(50);
 
     if (notifData) {
       setNotifications(notifData as Notification[]);
@@ -403,39 +404,9 @@ export default function RuleDetailScreen() {
         </TouchableOpacity>
       )}
 
-      {/* RECENT NOTIFICATIONS */}
+      {/* ACTION BUTTONS — đưa lên trên danh sách thông báo */}
       {!isEditing && (
         <>
-          <Text style={styles.sectionTitle}>Thông báo gần đây</Text>
-
-          {notifications.length === 0 ? (
-            <View style={styles.emptyNotif}>
-              <Text style={{ color: colors.subText }}>Chưa có thông báo nào</Text>
-            </View>
-          ) : (
-            notifications.map((notif) => (
-              <TouchableOpacity
-                key={notif.id}
-                style={styles.notificationCard}
-                onPress={() =>
-                  router.push({ pathname: "/notification-detail", params: { id: notif.id } })
-                }
-              >
-                <View style={styles.topRow}>
-                  <Ionicons name="notifications" size={20} color={colors.primary} />
-                  {notif.created_at && (
-                    <Text style={styles.time}>
-                      {new Date(notif.created_at).toLocaleDateString("vi-VN")}
-                    </Text>
-                  )}
-                </View>
-
-                <Text style={styles.notificationTitle}>{notif.title}</Text>
-                <Text style={styles.notificationDesc} numberOfLines={2}>{notif.content}</Text>
-              </TouchableOpacity>
-            ))
-          )}
-
           {/* RUN MONITOR BUTTON */}
           {rule.is_active && (
             <TouchableOpacity
@@ -463,6 +434,61 @@ export default function RuleDetailScreen() {
             <Ionicons name="trash-outline" size={20} color={colors.danger} />
             <Text style={styles.deleteText}>{saving ? "Đang xóa..." : "Xóa rule"}</Text>
           </TouchableOpacity>
+        </>
+      )}
+
+      {/* RECENT NOTIFICATIONS */}
+      {!isEditing && (
+        <>
+          <Text style={[styles.sectionTitle, { marginTop: 24 }]}>Thông báo gần đây</Text>
+
+          {notifications.length === 0 ? (
+            <View style={styles.emptyNotif}>
+              <Text style={{ color: colors.subText }}>Chưa có thông báo nào</Text>
+            </View>
+          ) : (
+            (showAllNotifs ? notifications : notifications.slice(0, 5)).map((notif) => (
+              <TouchableOpacity
+                key={notif.id}
+                style={styles.notificationCard}
+                onPress={() =>
+                  router.push({ pathname: "/notification-detail", params: { id: notif.id } })
+                }
+              >
+                <View style={styles.topRow}>
+                  <Ionicons name="notifications" size={20} color={colors.primary} />
+                  {notif.created_at && (
+                    <Text style={styles.time}>
+                      {new Date(notif.created_at).toLocaleDateString("vi-VN")}
+                    </Text>
+                  )}
+                </View>
+
+                <Text style={styles.notificationTitle}>{notif.title}</Text>
+                <Text style={styles.notificationDesc} numberOfLines={2}>{notif.content}</Text>
+              </TouchableOpacity>
+            ))
+          )}
+
+          {/* XEM TẤT CẢ / THU GỌN — chỉ khi có hơn 5 thông báo */}
+          {notifications.length > 5 && (
+            <TouchableOpacity
+              style={styles.seeAllButton}
+              onPress={() => setShowAllNotifs((v) => !v)}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.seeAllText}>
+                {showAllNotifs
+                  ? "Thu gọn"
+                  : `Xem tất cả thông báo (${notifications.length})`}
+              </Text>
+              <Ionicons
+                name={showAllNotifs ? "chevron-up" : "chevron-down"}
+                size={18}
+                color={colors.primary}
+              />
+            </TouchableOpacity>
+          )}
         </>
       )}
 
@@ -703,6 +729,19 @@ function createStyles(C: AppColors) {
     deleteText: {
       color: C.danger,
       fontSize: 16,
+      fontWeight: "600",
+    },
+    seeAllButton: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 6,
+      paddingVertical: 14,
+      marginTop: 4,
+    },
+    seeAllText: {
+      color: C.primary,
+      fontSize: 15,
       fontWeight: "600",
     },
   });
