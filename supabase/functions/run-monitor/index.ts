@@ -79,6 +79,18 @@ function vnMinutesOfDay(): number {
   return vn.getUTCHours() * 60 + vn.getUTCMinutes();
 }
 
+// Giờ hiện tại (0..23) theo VN, có lẻ phút (vd 7.5 = 7h30) để so với khung yên lặng.
+function vnHourNow(): number {
+  return vnMinutesOfDay() / 60;
+}
+
+// Đang trong khung "giờ yên lặng" [start, end)? Hỗ trợ vắt qua nửa đêm (vd 22→7).
+function isQuietNow(start: number, end: number, hour = vnHourNow()): boolean {
+  if (start === end) return false; // khung rỗng → không yên lặng
+  if (start < end) return hour >= start && hour < end;
+  return hour >= start || hour < end; // vắt qua nửa đêm
+}
+
 // Rule đã tới hạn quét chưa? (cron chạy mỗi 15 phút gọi hàm này cho từng rule)
 function isDue(rule: Rule): boolean {
   const interval = intervalMs(rule.frequency);
@@ -173,6 +185,15 @@ async function sendPush(
   notificationId: string,
 ) {
   if (!userId) return;
+
+  // Giờ yên lặng: trong khung người dùng đặt → KHÔNG đẩy push (thông báo vẫn đã lưu, xem trong app).
+  const { data: settings } = await supabase
+    .from("user_settings")
+    .select("quiet_enabled, quiet_start, quiet_end")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (settings?.quiet_enabled && isQuietNow(settings.quiet_start, settings.quiet_end)) return;
+
   const { data: toks } = await supabase
     .from("push_tokens")
     .select("token")

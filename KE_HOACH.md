@@ -1,7 +1,7 @@
 # Kế hoạch & Tiến độ — AI Notifier
 
 > File này theo dõi: kiến trúc, việc ĐÃ LÀM, việc CẦN LÀM. Cập nhật sau mỗi task.
-> Cập nhật lần cuối: 2026-06-20 (mute push/rule, nhóm thông báo theo ngày, empty CTA, AI Insight động, onboarding)
+> Cập nhật lần cuối: 2026-06-20 (giờ yên lặng tùy chỉnh; mute push/rule, nhóm thông báo theo ngày, empty CTA, AI Insight động, onboarding)
 
 ## Mục tiêu sản phẩm
 Người dùng mô tả bằng ngôn ngữ tự nhiên → AI tạo **rule** → hệ thống **tự quét tin thật nhiều nguồn 24/7** → gửi **thông báo** đúng chủ đề/điều kiện, kèm link bài gốc.
@@ -46,10 +46,12 @@ pg_cron (mỗi 15 phút) → run-monitor (quét nền, lọc rule tới hạn th
 - [x] **AI Insight động**: thẻ ở Home lấy tóm tắt tin quan trọng/mới nhất THẬT, bấm mở đúng thông báo.
 - [x] **Onboarding lần đầu**: 3 slide giới thiệu khi đăng nhập lần đầu trên thiết bị (cờ `@onboarded`).
 - [x] **Badge tab Alerts**: đã có sẵn; cap hiển thị "99+".
+- [x] **Giờ yên lặng (tùy chỉnh)**: trong Settings có nút bật/tắt + 2 thanh trượt chọn giờ bắt đầu/kết thúc (vắt qua nửa đêm OK). Trong khung này server `run-monitor` KHÔNG đẩy push (tin vẫn vào app). Lưu trên DB `user_settings` để server đọc (migration 0011); slider dùng `@react-native-community/slider`.
 
 ## ⏳ ĐANG CHỜ NGƯỜI DÙNG (tôi không tự làm được)
 - [ ] **Chạy SQL `0009_notification_related.sql`** trong Supabase SQL Editor (thêm cột `related_notification_id`) — cần để fallback "chưa có thay đổi" link được về thông báo trước.
 - [ ] **Chạy SQL `0010_rule_muted.sql`** trong Supabase SQL Editor (thêm cột `muted`) — cần để nút "Để êm" lưu được trạng thái.
+- [ ] **Chạy SQL `0011_user_settings.sql`** trong Supabase SQL Editor (bảng `user_settings`) — cần để "Giờ yên lặng" lưu & server đọc được.
 - [ ] **Chạy SQL** gộp (`run_at` + `push_tokens`) trong Supabase SQL Editor — tôi không có mật khẩu DB.
 - [ ] **Đổi key Gemini** — key cũ đã lộ trong ảnh chụp lúc setup (bảo mật).
 - [ ] **EAS init + dev build** để nhận push thật trên điện thoại (cần tài khoản Expo + thiết bị; build cloud tính phí).

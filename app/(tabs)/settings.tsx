@@ -2,13 +2,18 @@ import React, { useEffect, useMemo, useState } from "react";
 
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 
+import Slider from "@react-native-community/slider";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { supabase } from "../../lib/supabase";
 import { confirmAsync, alertMessage } from "../../lib/dialog";
 import { SCREEN, RADIUS, type AppColors } from "../../lib/theme";
+import { useAuth } from "../../contexts/AuthContext";
 import { useTheme } from "../../contexts/ThemeContext";
 import SettingRow from "../../components/SettingRow";
+
+const fmtHour = (h: number) => `${String(h).padStart(2, "0")}:00`;
 
 const SETTINGS_KEY = "@settings";
 
@@ -32,8 +37,14 @@ const DEFAULT_SETTINGS: Settings = {
 
 export default function SettingsScreen() {
   const { colors, setDarkMode } = useTheme();
+  const { user } = useAuth();
   const styles = useMemo(() => createStyles(colors), [colors]);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
+
+  // Giờ yên lặng — lưu trên DB (server đọc để bỏ qua push trong khung giờ này).
+  const [quietEnabled, setQuietEnabled] = useState(false);
+  const [quietStart, setQuietStart] = useState(22);
+  const [quietEnd, setQuietEnd] = useState(7);
 
   useEffect(() => {
     const loadSettings = async () => {
@@ -42,6 +53,45 @@ export default function SettingsScreen() {
     };
     loadSettings();
   }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    supabase
+      .from("user_settings")
+      .select("quiet_enabled, quiet_start, quiet_end")
+      .eq("user_id", user.id)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data) {
+          setQuietEnabled(Boolean(data.quiet_enabled));
+          setQuietStart(data.quiet_start ?? 22);
+          setQuietEnd(data.quiet_end ?? 7);
+        }
+      });
+  }, [user]);
+
+  // Lưu nguyên trạng thái giờ yên lặng (truyền giá trị tường minh để tránh closure cũ).
+  const persistQuiet = async (enabled: boolean, start: number, end: number) => {
+    if (!user) return;
+    const { error } = await supabase.from("user_settings").upsert(
+      {
+        user_id: user.id,
+        quiet_enabled: enabled,
+        quiet_start: start,
+        quiet_end: end,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id" }
+    );
+    if (error) {
+      alertMessage("Chưa lưu được", "Cần chạy migration 0011 (bảng user_settings) trong Supabase trước.");
+    }
+  };
+
+  const onToggleQuiet = (v: boolean) => {
+    setQuietEnabled(v);
+    persistQuiet(v, quietStart, quietEnd);
+  };
 
   const updateSetting = async (key: keyof Settings, value: boolean) => {
     const updated = { ...settings, [key]: value };
@@ -114,6 +164,63 @@ export default function SettingsScreen() {
           onValueChange={(v) => updateSetting("vibrationEnabled", v)}
           last
         />
+      </View>
+
+      {/* GIỜ YÊN LẶNG */}
+      <Text style={styles.sectionLabel}>Giờ yên lặng</Text>
+      <View style={styles.card}>
+        <SettingRow
+          icon="moon-outline"
+          label="Bật giờ yên lặng"
+          value={quietEnabled}
+          onValueChange={onToggleQuiet}
+          last={!quietEnabled}
+        />
+
+        {quietEnabled && (
+          <View style={styles.quietBox}>
+            <View style={styles.quietSummaryRow}>
+              <Ionicons name="notifications-off-outline" size={15} color={colors.warning} />
+              <Text style={styles.quietSummary}>
+                Không đẩy push từ {fmtHour(quietStart)} → {fmtHour(quietEnd)} (tin vẫn vào app)
+              </Text>
+            </View>
+
+            {/* Bắt đầu */}
+            <View style={styles.sliderRow}>
+              <Text style={styles.sliderLabel}>Bắt đầu</Text>
+              <Text style={styles.sliderValue}>{fmtHour(quietStart)}</Text>
+            </View>
+            <Slider
+              minimumValue={0}
+              maximumValue={23}
+              step={1}
+              value={quietStart}
+              minimumTrackTintColor={colors.primary}
+              maximumTrackTintColor={colors.border}
+              thumbTintColor={colors.primary}
+              onValueChange={(v) => setQuietStart(Math.round(v))}
+              onSlidingComplete={(v) => persistQuiet(quietEnabled, Math.round(v), quietEnd)}
+            />
+
+            {/* Kết thúc */}
+            <View style={[styles.sliderRow, { marginTop: 14 }]}>
+              <Text style={styles.sliderLabel}>Kết thúc</Text>
+              <Text style={styles.sliderValue}>{fmtHour(quietEnd)}</Text>
+            </View>
+            <Slider
+              minimumValue={0}
+              maximumValue={23}
+              step={1}
+              value={quietEnd}
+              minimumTrackTintColor={colors.primary}
+              maximumTrackTintColor={colors.border}
+              thumbTintColor={colors.primary}
+              onValueChange={(v) => setQuietEnd(Math.round(v))}
+              onSlidingComplete={(v) => persistQuiet(quietEnabled, quietStart, Math.round(v))}
+            />
+          </View>
+        )}
       </View>
 
       {/* AI */}
@@ -192,6 +299,35 @@ function createStyles(C: AppColors) {
       borderRadius: RADIUS.lg,
       paddingHorizontal: 16,
       marginBottom: 24,
+    },
+    quietBox: {
+      paddingTop: 8,
+      paddingBottom: 16,
+    },
+    quietSummaryRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+      marginBottom: 12,
+    },
+    quietSummary: {
+      color: C.subText,
+      fontSize: 13,
+      flex: 1,
+    },
+    sliderRow: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+    },
+    sliderLabel: {
+      color: C.subText,
+      fontSize: 14,
+    },
+    sliderValue: {
+      color: C.text,
+      fontSize: 15,
+      fontWeight: "700",
     },
   });
 }
