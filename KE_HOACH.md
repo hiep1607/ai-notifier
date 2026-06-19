@@ -1,7 +1,7 @@
 # Kế hoạch & Tiến độ — AI Notifier
 
 > File này theo dõi: kiến trúc, việc ĐÃ LÀM, việc CẦN LÀM. Cập nhật sau mỗi task.
-> Cập nhật lần cuối: 2026-06-19 (tách nhiều rule từ 1 câu)
+> Cập nhật lần cuối: 2026-06-19 (phân quyền run-monitor)
 
 ## Mục tiêu sản phẩm
 Người dùng mô tả bằng ngôn ngữ tự nhiên → AI tạo **rule** → hệ thống **tự quét tin thật nhiều nguồn 24/7** → gửi **thông báo** đúng chủ đề/điều kiện, kèm link bài gốc.
@@ -39,6 +39,7 @@ pg_cron (mỗi 15 phút) → run-monitor (quét nền, lọc rule tới hạn th
 - [x] **Tối ưu quota Gemini**: cron là bộ lập lịch DUY NHẤT (lọc `isDue` theo `last_run_at`+tần suất); Home không quét trùng nữa (chỉ đọc tin); refresh thủ công throttle 5'; client retry lỗi tạm (không retry 429); server gặp 429/503 thì DỪNG sớm (giữ `last_run_at` để quét lại) + trần 8 rule/lần.
 - [x] **Trigger "thay đổi"**: lưu `last_value` mỗi rule; truyền giá trị lần trước vào Gemini để chấm `changed`/`matches_condition`; rule "theo điều kiện" chỉ báo khi số liệu THỰC SỰ đổi so với lần trước (migration 0008).
 - [x] **Tách nhiều rule từ 1 câu**: generate-rule trả về MẢNG `rules` (tách chủ đề độc lập, giữ chung nếu cùng 1 thứ, vẫn hỏi lại khi thiếu); UI hiện nhiều card ("Rule i/N", xóa bớt được) + tạo hàng loạt 1 lượt. Tương thích ngược shape cũ.
+- [x] **Phân quyền run-monitor**: anon key là công khai nên không tin được. Cron gọi bằng service_role → admin (quét tất cả); app gọi kèm JWT → xác thực, lấy userId TỪ token (bỏ qua userId body), chỉ quét rule của mình; ruleId người khác → 403; anon thuần → 401. Không cần thêm secret / sửa SQL (cron đã dùng service_role).
 
 ## ⏳ ĐANG CHỜ NGƯỜI DÙNG (tôi không tự làm được)
 - [ ] **Chạy SQL** gộp (`run_at` + `push_tokens`) trong Supabase SQL Editor — tôi không có mật khẩu DB.
@@ -46,12 +47,12 @@ pg_cron (mỗi 15 phút) → run-monitor (quét nền, lọc rule tới hạn th
 - [ ] **EAS init + dev build** để nhận push thật trên điện thoại (cần tài khoản Expo + thiết bị; build cloud tính phí).
 
 ## 📋 CẦN LÀM TIẾP (backlog, ưu tiên trên xuống)
-- [ ] **Phân quyền run-monitor theo user** (hiện ai đăng nhập cũng kích hoạt được).
 - [ ] **Polish UI/UX**: lọc/tìm thông báo, trạng thái rỗng, hiển thị điều kiện/lịch rõ hơn.
 
 ---
 
 ## Nhật ký thay đổi
+- 2026-06-19: Phân quyền run-monitor — chống lạm dụng anon key (công khai). Phân biệt cron (service_role = admin, quét tất cả) với người dùng (JWT đăng nhập): xác thực token, lấy userId từ token thay vì body, chỉ quét rule của mình; chặn ruleId người khác (403) và anon thuần (401). Test 401 OK. Deploy lại run-monitor.
 - 2026-06-19: Luôn-gửi cho rule định kỳ/đặt giờ — không tìm thấy tin vẫn gửi tb: có tb trước → "chưa thay đổi" + link trỏ tb trước; chưa có → "chưa tìm thấy" + tin liên quan gần nhất; tuyệt đối không im. Rule "theo điều kiện" giữ im khi chưa thỏa. Rule đặt giờ gửi đúng giờ [target, target+15). Deploy lại run-monitor.
 - 2026-06-19: Bỏ phụ thuộc cột last_value cho #8 — khi chưa có mốc cũ thì KHÔNG tự nhận "đã đổi" (hết báo lặp mỗi phiên); cơ chế chính = AI chấm điều kiện rule mỗi phiên + dedup URL. Deploy lại run-monitor.
 - 2026-06-19: Quét sớm cho rule ĐẶT GIỜ — khung [target-15, target+15): bắn sát giờ kể cả cron lỡ nhịp; xử lý mốc gần nửa đêm (vòng 24h). KHÔNG áp cho định kỳ thuần (tránh trôi tần suất). Deploy lại run-monitor.

@@ -6,6 +6,13 @@
 //  - { ruleId }  : 1 rule (nút "Kiểm tra tin ngay")
 //  - { userId }  : mọi rule active của 1 user (khi mở app)
 //  - {}          : MỌI rule active (pg_cron chạy nền 24/7)
+//
+// PHÂN QUYỀN: anon key là CÔNG KHAI (nằm trong mọi bản app), nên không thể tin nó.
+//  - Cron gọi với SERVICE_ROLE key (role "service_role") → chế độ ADMIN: quét toàn bộ,
+//    được truyền userId/ruleId tùy ý.
+//  - Người dùng gọi từ app → kèm JWT đăng nhập; ta xác thực JWT, LẤY userId TỪ TOKEN
+//    (bỏ qua userId trong body) và chỉ cho quét rule của chính họ. Với ruleId thì
+//    kiểm tra quyền sở hữu. Không có JWT hợp lệ → 401, không phải chủ rule → 403.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, json } from "../_shared/cors.ts";
@@ -49,6 +56,20 @@ interface Rule {
   last_run_at?: string | null;
   last_value?: string | null; // số liệu chính lần quét trước (trigger "thay đổi")
   is_active: boolean;
+}
+
+// Đọc field "role" trong payload JWT (không verify chữ ký — chỉ để phân loại; quyền
+// thật vẫn do platform verify_jwt + auth.getUser bên dưới đảm bảo).
+function decodeJwtRole(token: string): string | null {
+  try {
+    const payload = token.split(".")[1];
+    if (!payload) return null;
+    const norm = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const obj = JSON.parse(atob(norm)) as { role?: unknown };
+    return typeof obj.role === "string" ? obj.role : null;
+  } catch {
+    return null;
+  }
 }
 
 // Số phút từ 0h theo GIỜ VIỆT NAM (server chạy UTC, VN = UTC+7, không có DST).
@@ -337,10 +358,26 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
-    const supabase = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-    );
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const supabase = createClient(Deno.env.get("SUPABASE_URL")!, serviceKey);
+
+    // --- PHÂN QUYỀN ---
+    // Lấy token từ header Authorization. Cron gửi service_role (admin); app gửi JWT user.
+    const token = (req.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
+    const role = decodeJwtRole(token);
+    const isAdmin = token === serviceKey || role === "service_role";
+
+    let authUserId: string | null = null;
+    if (!isAdmin) {
+      // Chỉ có anon key (chưa đăng nhập) hoặc không token → từ chối.
+      if (!token || role === "anon" || !role) {
+        return json({ error: "Cần đăng nhập để chạy giám sát." }, 401);
+      }
+      // Xác thực JWT thật sự, lấy userId TỪ TOKEN (không tin userId trong body).
+      const { data: u, error: uErr } = await supabase.auth.getUser(token);
+      if (uErr || !u?.user) return json({ error: "Phiên đăng nhập không hợp lệ." }, 401);
+      authUserId = u.user.id;
+    }
 
     const body = await req.json().catch(() => ({}));
     const { ruleId, userId } = body as { ruleId?: string; userId?: string };
@@ -356,14 +393,29 @@ Deno.serve(async (req) => {
       .select("*")
       .eq("is_active", true)
       .order("last_run_at", { ascending: true, nullsFirst: true });
-    if (ruleId) query = supabase.from("rules").select("*").eq("id", ruleId);
-    else if (userId) {
-      query = query.eq("user_id", userId);
+    if (ruleId) {
+      // ruleId: lấy theo id rồi kiểm tra quyền sở hữu bên dưới.
+      query = supabase.from("rules").select("*").eq("id", ruleId);
+    } else if (isAdmin) {
+      // Admin (cron) mới được nhắm userId tùy ý; không có userId → quét tất cả.
+      if (userId) query = query.eq("user_id", userId);
+    } else {
+      // Người dùng thường: CHỈ rule của chính mình (bỏ qua userId trong body).
+      query = query.eq("user_id", authUserId);
     }
 
     const { data: rules, error } = await query;
     if (error) return json({ error: error.message }, 500);
     if (!rules || rules.length === 0) return json({ inserted: 0, checked: 0 });
+
+    // User thường chỉ được đụng vào rule của mình (chặn ruleId của người khác → 403).
+    if (!isAdmin) {
+      for (const r of rules as Rule[]) {
+        if (r.user_id !== authUserId) {
+          return json({ error: "Bạn không có quyền với rule này." }, 403);
+        }
+      }
+    }
 
     // Ngân sách thời gian: quét tới ~70s thì dừng và trả phần đã làm, tránh nền tảng
     // kill tiến trình (timeout) khi có nhiều rule. Cron/Home gọi lại sẽ quét tiếp.
