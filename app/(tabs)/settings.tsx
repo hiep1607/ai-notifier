@@ -84,7 +84,9 @@ export default function SettingsScreen() {
       { onConflict: "user_id" }
     );
     if (error) {
-      alertMessage("Chưa lưu được", "Cần chạy migration 0011 (bảng user_settings) trong Supabase trước.");
+      console.log("user_settings upsert error:", error);
+      const code = error.code ? ` (mã ${error.code})` : "";
+      alertMessage("Chưa lưu được", `${error.message}${code}`);
     }
   };
 
