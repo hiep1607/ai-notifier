@@ -7,6 +7,7 @@ import {
   StyleSheet,
   Switch,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -21,7 +22,7 @@ import { useAuth } from "../../contexts/AuthContext";
 import { useTheme } from "../../contexts/ThemeContext";
 import { Rule } from "../../types/Rule";
 import { SCREEN, RADIUS, GLOW, type AppColors } from "../../lib/theme";
-import { findCategory } from "../../lib/ruleOptions";
+import { findCategory, formatSchedule } from "../../lib/ruleOptions";
 import IconBadge from "../../components/IconBadge";
 import FilterTabs from "../../components/FilterTabs";
 
@@ -41,6 +42,8 @@ export default function RulesScreen() {
   const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
   const [refreshing, setRefreshing] = useState(false);
   const [createMenuVisible, setCreateMenuVisible] = useState(false);
+  const [searchMode, setSearchMode] = useState(false);
+  const [searchText, setSearchText] = useState("");
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -103,12 +106,29 @@ export default function RulesScreen() {
     </TouchableOpacity>
   );
 
-  const filteredRules =
+  const tabFiltered =
     activeTab === "all"
       ? rules
       : activeTab === "active"
       ? rules.filter((r) => r.is_active)
       : rules.filter((r) => !r.is_active);
+
+  const q = searchText.trim().toLowerCase();
+  const filteredRules =
+    q === ""
+      ? tabFiltered
+      : tabFiltered.filter(
+          (r) =>
+            r.title.toLowerCase().includes(q) ||
+            (r.description ?? "").toLowerCase().includes(q) ||
+            (r.keyword ?? "").toLowerCase().includes(q) ||
+            (r.condition ?? "").toLowerCase().includes(q)
+        );
+
+  const closeSearch = () => {
+    setSearchMode(false);
+    setSearchText("");
+  };
 
   const toggleRule = async (item: Rule) => {
     const newValue = !item.is_active;
@@ -122,11 +142,28 @@ export default function RulesScreen() {
     <View style={styles.container}>
       {/* HEADER */}
       <View style={styles.header}>
-        <Text style={styles.title}>Rules</Text>
-        <View style={styles.headerIcons}>
-          <Ionicons name="search" size={22} color={colors.text} />
-          <Ionicons name="filter" size={22} color={colors.text} />
-        </View>
+        {searchMode ? (
+          <>
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Tìm rule theo tên, từ khóa, điều kiện..."
+              placeholderTextColor={colors.subText}
+              value={searchText}
+              onChangeText={setSearchText}
+              autoFocus
+            />
+            <TouchableOpacity onPress={closeSearch} style={styles.searchClose}>
+              <Ionicons name="close" size={24} color={colors.subText} />
+            </TouchableOpacity>
+          </>
+        ) : (
+          <>
+            <Text style={styles.title}>Rules</Text>
+            <TouchableOpacity onPress={() => setSearchMode(true)} style={styles.searchBtn}>
+              <Ionicons name="search" size={22} color={colors.text} />
+            </TouchableOpacity>
+          </>
+        )}
       </View>
 
       {/* FILTER TABS */}
@@ -142,8 +179,20 @@ export default function RulesScreen() {
       >
         {filteredRules.length === 0 && (
           <View style={styles.empty}>
-            <Ionicons name="albums-outline" size={44} color={colors.muted} />
-            <Text style={styles.emptyText}>Chưa có rule nào</Text>
+            <Ionicons
+              name={searchText ? "search-outline" : "albums-outline"}
+              size={44}
+              color={colors.muted}
+            />
+            <Text style={styles.emptyText}>
+              {searchText
+                ? "Không tìm thấy rule phù hợp"
+                : activeTab === "active"
+                ? "Chưa có rule nào đang hoạt động"
+                : activeTab === "paused"
+                ? "Không có rule nào tạm dừng"
+                : "Chưa có rule nào"}
+            </Text>
           </View>
         )}
 
@@ -170,9 +219,27 @@ export default function RulesScreen() {
                 <View style={styles.ruleText}>
                   <Text style={styles.ruleTitle} numberOfLines={1}>{item.title}</Text>
                   <Text style={styles.ruleDesc} numberOfLines={1}>{item.description}</Text>
-                  <View style={[styles.catTag, { backgroundColor: cat.color + "22" }]}>
-                    <Text style={[styles.catTagText, { color: cat.color }]}>{cat.label}</Text>
+                  <View style={styles.metaRow}>
+                    <View style={[styles.catTag, { backgroundColor: cat.color + "22" }]}>
+                      <Text style={[styles.catTagText, { color: cat.color }]}>{cat.label}</Text>
+                    </View>
+                    <View style={styles.metaChip}>
+                      <Ionicons
+                        name={item.frequency === "change" ? "flash-outline" : "time-outline"}
+                        size={11}
+                        color={colors.subText}
+                      />
+                      <Text style={styles.metaText} numberOfLines={1}>
+                        {formatSchedule(item.frequency, item.run_at)}
+                      </Text>
+                    </View>
                   </View>
+                  {item.condition ? (
+                    <View style={styles.condRow}>
+                      <Ionicons name="filter-outline" size={11} color={colors.subText} />
+                      <Text style={styles.metaText} numberOfLines={1}>{item.condition}</Text>
+                    </View>
+                  ) : null}
                 </View>
               </TouchableOpacity>
 
@@ -280,9 +347,28 @@ function createStyles(C: AppColors) {
       fontSize: 32,
       fontWeight: "bold",
     },
-    headerIcons: {
-      flexDirection: "row",
-      gap: 18,
+    searchBtn: {
+      width: 46,
+      height: 46,
+      borderRadius: 23,
+      backgroundColor: C.card,
+      justifyContent: "center",
+      alignItems: "center",
+    },
+    searchInput: {
+      flex: 1,
+      backgroundColor: C.card,
+      borderRadius: RADIUS.md,
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      color: C.text,
+      fontSize: 16,
+      borderWidth: 1,
+      borderColor: C.border,
+    },
+    searchClose: {
+      marginLeft: 12,
+      padding: 4,
     },
     empty: {
       alignItems: "center",
@@ -322,16 +408,38 @@ function createStyles(C: AppColors) {
       fontSize: 13,
       marginTop: 3,
     },
+    metaRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      flexWrap: "wrap",
+      gap: 8,
+      marginTop: 8,
+    },
     catTag: {
-      alignSelf: "flex-start",
       paddingHorizontal: 10,
       paddingVertical: 3,
       borderRadius: 999,
-      marginTop: 8,
     },
     catTagText: {
       fontSize: 11,
       fontWeight: "700",
+    },
+    metaChip: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 4,
+      flexShrink: 1,
+    },
+    condRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 4,
+      marginTop: 5,
+    },
+    metaText: {
+      color: C.subText,
+      fontSize: 12,
+      flexShrink: 1,
     },
     addButton: {
       position: "absolute",

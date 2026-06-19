@@ -23,6 +23,7 @@ import { useTheme } from "../../contexts/ThemeContext";
 import { Rule } from "../../types/Rule";
 import { Notification } from "../../types/Notification";
 import { SCREEN, RADIUS, GLOW, type AppColors } from "../../lib/theme";
+import { formatSchedule } from "../../lib/ruleOptions";
 import StatCard from "../../components/StatCard";
 import IconBadge from "../../components/IconBadge";
 import PrimaryButton from "../../components/PrimaryButton";
@@ -226,6 +227,17 @@ export default function HomeScreen() {
               <View style={styles.ruleInfo}>
                 <Text style={styles.ruleTitle} numberOfLines={1}>{rule.title}</Text>
                 <Text style={styles.ruleDesc} numberOfLines={1}>{rule.description}</Text>
+                <View style={styles.ruleMeta}>
+                  <Ionicons
+                    name={rule.frequency === "change" ? "flash-outline" : "time-outline"}
+                    size={11}
+                    color={colors.muted}
+                  />
+                  <Text style={styles.ruleMetaText} numberOfLines={1}>
+                    {formatSchedule(rule.frequency, rule.run_at)}
+                    {rule.condition ? ` · ${rule.condition}` : ""}
+                  </Text>
+                </View>
               </View>
               <View style={styles.statusDot} />
             </TouchableOpacity>
@@ -440,6 +452,17 @@ function createStyles(C: AppColors) {
       color: C.subText,
       fontSize: 13,
       marginTop: 4,
+    },
+    ruleMeta: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 4,
+      marginTop: 6,
+    },
+    ruleMetaText: {
+      color: C.muted,
+      fontSize: 12,
+      flex: 1,
     },
     statusDot: {
       width: 12,
