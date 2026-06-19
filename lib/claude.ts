@@ -23,13 +23,25 @@ interface ChatTurn {
   content: string;
 }
 
-export async function chatRule(history: ChatTurn[]): Promise<RuleAIResult> {
-  const { data, error } = await supabase.functions.invoke("generate-rule", {
-    body: { history },
-  });
+// Không retry lỗi do hết quota/quyền — chỉ retry lỗi tạm thời (mạng/5xx/timeout).
+function isNonRetryable(msg: string): boolean {
+  const m = msg.toLowerCase();
+  return m.includes("429") || m.includes("quota") || m.includes("resource_exhausted") ||
+    m.includes("401") || m.includes("403");
+}
 
-  if (error) throw new Error(error.message);
-  if (data?.error) throw new Error(data.error);
+export async function chatRule(history: ChatTurn[]): Promise<RuleAIResult> {
+  let data: any, lastErr: unknown;
+  // Tối đa 3 lần, backoff 1s/2s — tránh fail vì Gemini trục trặc tạm thời.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const res = await supabase.functions.invoke("generate-rule", { body: { history } });
+    const err = res.error || (res.data?.error ? new Error(res.data.error) : null);
+    if (!err) { data = res.data; lastErr = null; break; }
+    lastErr = err;
+    if (isNonRetryable(err.message) || attempt === 2) break;
+    await new Promise((r) => setTimeout(r, (attempt + 1) * 1000));
+  }
+  if (lastErr) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 
   // Tương thích cả "rules" (mảng, mới) lẫn "rule" (đơn, cũ).
   const rules: RuleDraft[] = Array.isArray(data?.rules)
