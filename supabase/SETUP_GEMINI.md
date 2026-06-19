@@ -39,8 +39,11 @@ thay `<PROJECT_REF>` và `<SERVICE_ROLE_KEY>` (Settings → API), rồi Run.
 ## Ghi chú / giới hạn hiện tại
 - **Bảo mật key**: đã an toàn (server-side secret). Free tier AI Studio đủ cho dùng cá nhân;
   để ý quota grounding nếu nhiều rule × tần suất dày (chỉnh lịch cron ở bước 4).
-- **Push notification** (báo khi không mở app) CHƯA làm — hiện thông báo lưu vào DB, thấy khi mở app.
-  Bước tiếp theo: thêm `expo-notifications` + lưu push token + cho run-monitor gửi push.
-- **Phân quyền**: run-monitor dùng service role nên ai đăng nhập cũng kích hoạt quét được;
-  đủ cho app cá nhân, sau này nên giới hạn theo user trong JWT.
+- **Push notification**: đã có code — `expo-notifications` đăng ký token vào bảng `push_tokens`,
+  run-monitor gửi Expo Push khi tạo thông báo. Để nhận push lúc app đóng trên ĐIỆN THOẠI cần
+  **EAS dev/standalone build** (Expo Go SDK 54 & web không nhận remote push).
+- **Phân quyền run-monitor**: ĐÃ vá. Cron gọi bằng `service_role` (admin, quét tất cả); app gọi
+  kèm JWT đăng nhập → function xác thực token, lấy `userId` TỪ token (bỏ qua `userId` trong body),
+  chỉ quét rule của chính người đó; `ruleId` người khác → 403, chỉ có anon key → 401.
+  Anon key là CÔNG KHAI (nằm trong mọi bản app) nên không được tin — bảo mật dựa vào RLS + JWT.
 - `lib/news.ts` (RSS + Ollama cũ) đã xoá; logic quét chuyển hẳn server-side.

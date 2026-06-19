@@ -51,6 +51,18 @@ pg_cron (mỗi 15 phút) → run-monitor (quét nền, lọc rule tới hạn th
 
 ---
 
+## 🐞 Lỗi đã gặp & cách giải quyết
+Giải thích chi tiết từng lỗi (hệ thống, ảnh hưởng mọi rule) ở **[PROJECT_CONTEXT.md §3](PROJECT_CONTEXT.md#3--lỗi-đã-gặp--cách-giải-quyết)**. Tóm tắt:
+1. **Dedup khóa cứng theo URL** → chủ đề số liệu (thời tiết/giá) bị chặn vĩnh viễn → dedup theo URL + `last_value`.
+2. **Bỏ đói rule khi >8 rule** → sắp theo `last_run_at` tăng dần, xoay vòng công bằng.
+3. **Đốt quota Gemini** → cron là lịch duy nhất, bỏ auto-scan client, dừng sớm khi 429, trần 8 rule/lần.
+4. **Quét xong im lặng** → rule định kỳ/đặt giờ LUÔN gửi (tin / "chưa thay đổi" + link cũ / "chưa tìm thấy" + tin liên quan).
+5. **Rule ghim giờ không đúng giờ** → khung [giờ hẹn, +15'), guard chu kỳ, xử lý quanh nửa đêm.
+6. **Rule mơ hồ** → xử lý lúc tạo: hỏi lại, không bịa điều kiện.
+7. **Anon key công khai lạm dụng run-monitor** → xác thực JWT, lấy userId từ token, chặn 401/403.
+
+---
+
 ## Nhật ký thay đổi
 - 2026-06-19: Phân quyền run-monitor — chống lạm dụng anon key (công khai). Phân biệt cron (service_role = admin, quét tất cả) với người dùng (JWT đăng nhập): xác thực token, lấy userId từ token thay vì body, chỉ quét rule của mình; chặn ruleId người khác (403) và anon thuần (401). Test 401 OK. Deploy lại run-monitor.
 - 2026-06-19: Luôn-gửi cho rule định kỳ/đặt giờ — không tìm thấy tin vẫn gửi tb: có tb trước → "chưa thay đổi" + link trỏ tb trước; chưa có → "chưa tìm thấy" + tin liên quan gần nhất; tuyệt đối không im. Rule "theo điều kiện" giữ im khi chưa thỏa. Rule đặt giờ gửi đúng giờ [target, target+15). Deploy lại run-monitor.
