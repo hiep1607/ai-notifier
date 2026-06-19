@@ -109,6 +109,8 @@ Deno.serve(async (req) => {
       user: `${convo}\n\nDựa trên hội thoại trên, trả về JSON đúng định dạng.`,
       json: true,
       temperature: 0.3,
+      // Task này chỉ trích xuất JSON (không cần grounding) → dùng model rẻ hơn.
+      model: "gemini-2.5-flash-lite",
     });
 
     const data = parseJsonLoose<Record<string, unknown>>(text);

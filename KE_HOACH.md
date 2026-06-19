@@ -75,6 +75,7 @@ Giải thích chi tiết từng lỗi (hệ thống, ảnh hưởng mọi rule) 
 ---
 
 ## Nhật ký thay đổi
+- 2026-06-20: Tối ưu chi phí AI — tách model theo task: `geminiGenerate` thêm tham số `model?` (mặc định giữ `gemini-2.5-flash`); generate-rule (chỉ trích JSON, không cần grounding) hạ xuống `gemini-2.5-flash-lite` ($0.10/$0.40, rẻ ~33%, không giảm chất lượng); run-monitor GIỮ `gemini-2.5-flash` để còn Google Search grounding (free 1.500 lượt/ngày). Deploy lại generate-rule. (Kết luận khảo sát: ở quy mô cá nhân grounding đang miễn phí nên giữ kiến trúc Gemini; đổi sang API rẻ hơn không tiết kiệm đáng kể mà mất grounding → tin dễ bịa.)
 - 2026-06-20: Giờ yên lặng (tùy chỉnh) — Settings có toggle + 2 slider chọn giờ; server `run-monitor` bỏ qua push trong khung (vắt nửa đêm OK), tin vẫn vào app. Lưu DB `user_settings`. LƯU Ý: bảng `user_settings` cũ trùng tên đã tồn tại sẵn với FK sai (trỏ sai bảng) gây loạt lỗi PGRST204 → 42P10 → 23503; đã DROP + tạo lại sạch (`user_id` PK → auth.users). Client dùng update→insert (không upsert onConflict) cho an toàn ràng buộc. Verify lưu OK.
 - 2026-06-20: "Để êm" theo rule (mute push, cột `muted`, migration 0010); nhóm thông báo theo ngày; empty state có nút CTA; AI Insight động (tin thật); onboarding 3 slide lần đầu; badge tab cap "99+".
 - 2026-06-19: Nút "+" tạo rule (màn Rules) giờ KÉO THẢ tự do được (Gesture.Pan + reanimated), vẫn bấm để mở menu (Gesture.Tap, Race); nhớ vị trí qua AsyncStorage @fab_pos. Chạy cả web lẫn native.

@@ -28,11 +28,15 @@ interface GeminiOpts {
   grounding?: boolean;
   temperature?: number;
   timeoutMs?: number;
+  // Cho phép chọn model riêng theo task (vd generate-rule dùng flash-lite rẻ hơn,
+  // run-monitor giữ flash để có grounding tốt). Mặc định = GEMINI_MODEL.
+  model?: string;
 }
 
 export async function geminiGenerate(opts: GeminiOpts): Promise<GeminiResult> {
   const key = Deno.env.get("GEMINI_API_KEY");
   if (!key) throw new Error("Thiếu GEMINI_API_KEY (đặt qua supabase secrets set)");
+  const model = opts.model ?? MODEL;
 
   const body: Record<string, unknown> = {
     contents: [{ role: "user", parts: [{ text: opts.user }] }],
@@ -55,7 +59,7 @@ export async function geminiGenerate(opts: GeminiOpts): Promise<GeminiResult> {
   const t = setTimeout(() => ctrl.abort(), opts.timeoutMs ?? 60000);
   let res: Response;
   try {
-    res = await fetch(ENDPOINT(MODEL, key), {
+    res = await fetch(ENDPOINT(model, key), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
