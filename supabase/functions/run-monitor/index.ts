@@ -12,6 +12,14 @@ import { corsHeaders, json } from "../_shared/cors.ts";
 import { geminiGenerate, parseJsonLoose, GeminiSource } from "../_shared/gemini.ts";
 
 const MAX_PER_RUN = 1; // mỗi lần quét 1 rule chỉ tạo 1 thông báo (tin mới/đáng chú ý nhất)
+const MAX_RULES_PER_RUN = 8; // trần số rule gọi Gemini trong 1 lần (giữ quota + tránh timeout)
+
+// Lỗi hết quota / quá tải tạm thời từ Gemini → nên DỪNG sớm thay vì đốt thêm request.
+function isQuotaErr(e: unknown): boolean {
+  const m = (e instanceof Error ? e.message : String(e)).toLowerCase();
+  return m.includes("429") || m.includes("resource_exhausted") || m.includes("quota") ||
+    m.includes("rate") || m.includes("503") || m.includes("overloaded");
+}
 
 // frequency lưu dạng "change" (theo điều kiện → quét 15 phút) HOẶC số phút (định kỳ, tối thiểu 30).
 // Khóa cũ (enum) vẫn được map để tương thích rule tạo trước đây.
@@ -253,8 +261,10 @@ Deno.serve(async (req) => {
     const deadline = Date.now() + 70000;
     let inserted = 0;
     let checked = 0;
+    let quotaHit = false;
     for (const rule of rules as Rule[]) {
       if (Date.now() > deadline) break;
+      if (!manual && checked >= MAX_RULES_PER_RUN) break; // chừa quota; cron lần sau quét tiếp
 
       // Lịch theo từng rule: chỉ quét khi tới hạn (trừ khi gọi thủ công "Kiểm tra tin ngay").
       if (!manual && !isDue(rule)) continue;
@@ -264,6 +274,12 @@ Deno.serve(async (req) => {
         inserted += await monitorRule(supabase, rule);
       } catch (e) {
         console.log(`Rule ${rule.id} lỗi:`, (e as Error).message);
+        // Hết quota/quá tải → DỪNG ngay, KHÔNG cập nhật last_run_at để cron lần sau quét lại rule này.
+        if (isQuotaErr(e)) {
+          quotaHit = true;
+          checked--; // rule này coi như chưa quét
+          break;
+        }
       }
       // Đánh dấu đã quét (kể cả khi không có tin mới) để tính lịch lần sau.
       await supabase
@@ -272,7 +288,7 @@ Deno.serve(async (req) => {
         .eq("id", rule.id);
     }
 
-    return json({ inserted, checked });
+    return json({ inserted, checked, quotaHit });
   } catch (err) {
     return json({ error: (err as Error).message }, 500);
   }

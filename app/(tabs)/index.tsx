@@ -43,26 +43,25 @@ export default function HomeScreen() {
   const onRefresh = async () => {
     setRefreshing(true);
     await fetchData();
-    await runMonitor(true);
+    await runMonitor();
     setRefreshing(false);
   };
 
   useFocusEffect(
     React.useCallback(() => {
-      if (user) {
-        fetchData();
-        runMonitor(false); // tự quét nền khi mở Home (có throttle)
-      }
+      // Mở app chỉ ĐỌC tin mới (cron trên Supabase đã quét nền 24/7 theo lịch từng rule).
+      // KHÔNG tự gọi Gemini ở client để khỏi quét trùng cron → tiết kiệm quota.
+      if (user) fetchData();
     }, [user])
   );
 
-  // Quét tin thật cho các rule active. force=true bỏ qua throttle 30 phút.
-  const runMonitor = async (force: boolean) => {
+  // Quét thủ công khi người dùng kéo refresh — có throttle 5 phút chống bấm dồn.
+  const runMonitor = async () => {
     if (!user) return;
     try {
       const raw = await AsyncStorage.getItem("@last_monitor");
       const last = raw ? parseInt(raw, 10) : 0;
-      if (!force && Date.now() - last < 30 * 60 * 1000) return;
+      if (Date.now() - last < 5 * 60 * 1000) return; // vừa quét xong → bỏ qua, tránh đốt quota
 
       setScanning(true);
       await AsyncStorage.setItem("@last_monitor", String(Date.now()));
@@ -70,7 +69,7 @@ export default function HomeScreen() {
       if (res.inserted > 0) await fetchData();
     } catch (err) {
       // Mất mạng / function lỗi → im lặng, không làm phiền người dùng (cron vẫn quét nền).
-      console.log("Quét tin nền bỏ qua:", err);
+      console.log("Quét tin thủ công bỏ qua:", err);
     } finally {
       setScanning(false);
     }
