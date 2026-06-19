@@ -8,12 +8,15 @@ import {
 } from "@react-navigation/native";
 
 import * as NavigationBar from "expo-navigation-bar";
+import * as Notifications from "expo-notifications";
 
 import { router, Stack } from "expo-router";
 
 import { StatusBar } from "expo-status-bar";
 
 import "react-native-reanimated";
+
+import { registerForPush } from "../lib/push";
 
 import {
   AuthProvider,
@@ -52,6 +55,21 @@ function RootNavigator() {
       router.replace("/login");
     }
   }, [session, loading]);
+
+  // Đăng ký push token sau khi đăng nhập (no-op trên web/Expo Go/thiếu EAS).
+  useEffect(() => {
+    const uid = session?.user?.id;
+    if (uid) registerForPush(uid);
+  }, [session?.user?.id]);
+
+  // Chạm vào push → mở đúng thông báo.
+  useEffect(() => {
+    const sub = Notifications.addNotificationResponseReceivedListener((resp) => {
+      const id = resp.notification.request.content.data?.notificationId;
+      if (id) router.push({ pathname: "/notification-detail", params: { id: String(id) } });
+    });
+    return () => sub.remove();
+  }, []);
 
   if (loading) return null;
 

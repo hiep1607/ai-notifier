@@ -31,6 +31,7 @@ function intervalMs(freq?: string): number {
 
 interface Rule {
   id: string;
+  user_id?: string;
   keyword: string;
   category?: string;
   sources?: string;
@@ -122,6 +123,42 @@ function isUrl(s: unknown): boolean {
   return typeof s === "string" && /^https?:\/\//i.test(s);
 }
 
+// Gửi push qua Expo Push API tới mọi thiết bị của user (nếu có token).
+// deno-lint-ignore no-explicit-any
+async function sendPush(
+  supabase: any,
+  userId: string | undefined,
+  title: string,
+  body: string,
+  notificationId: string,
+) {
+  if (!userId) return;
+  const { data: toks } = await supabase
+    .from("push_tokens")
+    .select("token")
+    .eq("user_id", userId);
+  const tokens = (toks ?? []).map((t: { token: string }) => t.token).filter(Boolean);
+  if (tokens.length === 0) return;
+
+  const messages = tokens.map((to: string) => ({
+    to,
+    sound: "default",
+    title: title.slice(0, 150) || "Tin mới",
+    body: body.slice(0, 300),
+    data: { notificationId },
+  }));
+
+  try {
+    await fetch("https://exp.host/--/api/v2/push/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Accept": "application/json" },
+      body: JSON.stringify(messages),
+    });
+  } catch (e) {
+    console.log("Push send lỗi:", (e as Error).message);
+  }
+}
+
 // deno-lint-ignore no-explicit-any
 async function monitorRule(supabase: any, rule: Rule): Promise<number> {
   const { text, sources } = await geminiGenerate({
@@ -162,9 +199,10 @@ async function monitorRule(supabase: any, rule: Rule): Promise<number> {
     if (!url || seen.has(url)) continue;
     seen.add(url);
 
-    const { error } = await supabase.from("notifications").insert([{
+    const title = String(it.title ?? "").slice(0, 300) || "Tin mới";
+    const { data: ins, error } = await supabase.from("notifications").insert([{
       rule_id: rule.id,
-      title: String(it.title ?? "").slice(0, 300) || "Tin mới",
+      title,
       content: String(it.content ?? ""),
       details: String(it.details ?? ""),
       ai_summary: String(it.ai_summary ?? ""),
@@ -174,8 +212,13 @@ async function monitorRule(supabase: any, rule: Rule): Promise<number> {
       sentiment: normSentiment(it.sentiment),
       is_important: toBool(it.is_important),
       is_read: false,
-    }]);
-    if (!error) inserted++;
+    }]).select("id").single();
+
+    if (!error && ins) {
+      inserted++;
+      // Báo đẩy tới thiết bị của chủ rule (nếu đã đăng ký push).
+      await sendPush(supabase, rule.user_id, title, String(it.ai_summary ?? it.content ?? ""), ins.id);
+    }
   }
 
   return inserted;
