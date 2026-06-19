@@ -9,6 +9,12 @@ create table if not exists user_settings (
   updated_at timestamptz default now()
 );
 
+-- Nếu bảng đã tồn tại từ trước (create table bị bỏ qua) → vẫn đảm bảo có đủ cột.
+alter table user_settings add column if not exists quiet_enabled boolean not null default false;
+alter table user_settings add column if not exists quiet_start int not null default 22;
+alter table user_settings add column if not exists quiet_end int not null default 7;
+alter table user_settings add column if not exists updated_at timestamptz default now();
+
 alter table user_settings enable row level security;
 
 -- Mỗi người chỉ đọc/ghi cài đặt của chính mình. Server dùng service_role nên bỏ qua RLS.
