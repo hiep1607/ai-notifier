@@ -26,12 +26,24 @@ export interface FrequencyOption {
   label: string;
 }
 
+// Tối thiểu 30 phút/lần. Riêng rule theo dõi SỰ THAY ĐỔI quét dày hơn (15 phút).
 export const FREQUENCIES: FrequencyOption[] = [
-  { key: "realtime", label: "Liên tục" },
+  { key: "change", label: "Theo dõi thay đổi (15 phút)" },
+  { key: "m30", label: "Mỗi 30 phút" },
   { key: "hourly", label: "Mỗi giờ" },
   { key: "daily", label: "Hằng ngày" },
   { key: "weekly", label: "Hằng tuần" },
 ];
+
+// Tần suất → số phút giữa 2 lần quét (dùng cả ở Edge Function run-monitor).
+// Legacy/không rõ → 30 phút (mức tối thiểu).
+export const FREQUENCY_MINUTES: Record<string, number> = {
+  change: 15,
+  m30: 30,
+  hourly: 60,
+  daily: 1440,
+  weekly: 10080,
+};
 
 export interface SentimentOption {
   key: string;

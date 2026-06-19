@@ -13,11 +13,12 @@ create extension if not exists pg_net;
 select cron.unschedule('run-monitor')
 where exists (select 1 from cron.job where jobname = 'run-monitor');
 
--- Mỗi giờ quét MỌI rule active. Đổi '0 * * * *' nếu muốn dày/thưa hơn
--- (vd '*/30 * * * *' = mỗi 30 phút). Cân nhắc quota Gemini.
+-- Mỗi 15 phút: cron đánh thức run-monitor, function tự lọc rule nào TỚI HẠN theo
+-- frequency của nó (change=15p, m30=30p, hourly, daily, weekly) để quét. Nhờ vậy
+-- rule "theo dõi thay đổi" được quét sát 15 phút, rule thường giãn ra theo cài đặt.
 select cron.schedule(
   'run-monitor',
-  '0 * * * *',
+  '*/15 * * * *',
   $$
   select net.http_post(
     url     := 'https://<PROJECT_REF>.supabase.co/functions/v1/run-monitor',

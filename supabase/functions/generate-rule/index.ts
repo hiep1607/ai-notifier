@@ -14,7 +14,10 @@ Một rule hoàn chỉnh gồm các trường:
 - keyword: từ khóa tìm kiếm chính (1-5 từ)
 - category: PHẢI là 1 trong: finance, news, tech, sports, weather, health, other
 - sources: 1 CHUỖI text các nguồn cách nhau dấu phẩy, vd "VnExpress, CafeF". KHÔNG dùng mảng. Để "" nếu không rõ.
-- frequency: PHẢI là 1 trong: realtime, hourly, daily, weekly
+- frequency: PHẢI là 1 trong: change, m30, hourly, daily, weekly
+    * TUYỆT ĐỐI KHÔNG dùng "liên tục"/"realtime". Tần suất dày nhất cho tin thường là "m30" (30 phút).
+    * Dùng "change" (15 phút) CHỈ KHI rule theo dõi SỰ THAY ĐỔI cần phát hiện nhanh: giá tăng/giảm, biến động, vượt ngưỡng, có cập nhật/diễn biến mới.
+    * Tin tức theo dõi bình thường: chọn "m30", "hourly", "daily" hoặc "weekly" tùy mức độ gấp.
 - condition: điều kiện để gửi thông báo, vd "khi giá vượt 80 triệu". Để "" nếu chỉ cần tin mới.
 
 QUY TẮC HỎI LẠI (rất quan trọng):
@@ -25,7 +28,15 @@ QUY TẮC HỎI LẠI (rất quan trọng):
 LUÔN trả về JSON thuần (không markdown) theo đúng 1 trong 2 dạng:
 { "status": "need_info", "message": "..." }
 hoặc
-{ "status": "ready", "message": "...", "rule": { "title": "...", "description": "...", "keyword": "...", "category": "...", "sources": "", "frequency": "...", "condition": "" } }`;
+{ "status": "ready", "message": "...", "rule": { "title": "...", "description": "...", "keyword": "...", "category": "...", "sources": "", "frequency": "...", "condition": "" } }
+
+VÍ DỤ (theo dõi thay đổi → frequency "change"):
+User: "báo khi giá bitcoin tăng mạnh"
+→ { "status": "ready", "message": "Đã tạo rule theo dõi Bitcoin:", "rule": { "title": "Theo dõi giá Bitcoin", "description": "Báo khi giá Bitcoin biến động mạnh.", "keyword": "giá bitcoin", "category": "finance", "sources": "", "frequency": "change", "condition": "khi giá tăng/giảm mạnh bất thường" } }
+
+VÍ DỤ (tin tức thường → "daily" hoặc "m30"):
+User: "theo dõi tin công nghệ AI mỗi ngày"
+→ { "status": "ready", "message": "Đã tạo rule theo dõi tin AI:", "rule": { "title": "Tin AI mới nhất", "description": "Cập nhật tin tức công nghệ AI hằng ngày.", "keyword": "trí tuệ nhân tạo AI", "category": "tech", "sources": "", "frequency": "daily", "condition": "" } }`;
 
 function asText(v: unknown): string {
   if (Array.isArray(v)) return v.join(", ");
