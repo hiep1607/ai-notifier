@@ -1,5 +1,5 @@
 import { useFocusEffect } from "@react-navigation/native";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Modal,
   RefreshControl,
@@ -13,8 +13,15 @@ import {
 } from "react-native";
 
 import { Ionicons } from "@expo/vector-icons";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { router } from "expo-router";
 import ReanimatedSwipeable from "react-native-gesture-handler/ReanimatedSwipeable";
+import { Gesture, GestureDetector } from "react-native-gesture-handler";
+import Animated, {
+  runOnJS,
+  useAnimatedStyle,
+  useSharedValue,
+} from "react-native-reanimated";
 
 import { supabase } from "../../lib/supabase";
 import { confirmAsync } from "../../lib/dialog";
@@ -44,6 +51,55 @@ export default function RulesScreen() {
   const [createMenuVisible, setCreateMenuVisible] = useState(false);
   const [searchMode, setSearchMode] = useState(false);
   const [searchText, setSearchText] = useState("");
+
+  // Nút "+" nổi: kéo thả tự do, vẫn bấm để mở menu. Lưu vị trí để lần sau giữ nguyên.
+  const fabX = useSharedValue(0);
+  const fabY = useSharedValue(0);
+  const fabStartX = useSharedValue(0);
+  const fabStartY = useSharedValue(0);
+
+  useEffect(() => {
+    AsyncStorage.getItem("@fab_pos").then((raw) => {
+      if (!raw) return;
+      try {
+        const { x, y } = JSON.parse(raw);
+        if (typeof x === "number") fabX.value = x;
+        if (typeof y === "number") fabY.value = y;
+      } catch {}
+    });
+  }, [fabX, fabY]);
+
+  const saveFabPos = (x: number, y: number) => {
+    AsyncStorage.setItem("@fab_pos", JSON.stringify({ x, y })).catch(() => {});
+  };
+
+  const openCreateMenu = () => setCreateMenuVisible(true);
+
+  const dragGesture = Gesture.Pan()
+    .onStart(() => {
+      fabStartX.value = fabX.value;
+      fabStartY.value = fabY.value;
+    })
+    .onUpdate((e) => {
+      fabX.value = fabStartX.value + e.translationX;
+      fabY.value = fabStartY.value + e.translationY;
+    })
+    .onEnd(() => {
+      runOnJS(saveFabPos)(fabX.value, fabY.value);
+    });
+
+  // Chạm (di chuyển nhỏ) → mở menu; kéo → di chuyển. Race: cái nào nhận trước thì thắng.
+  const tapGesture = Gesture.Tap()
+    .maxDistance(10)
+    .onEnd(() => {
+      runOnJS(openCreateMenu)();
+    });
+
+  const fabGesture = Gesture.Race(dragGesture, tapGesture);
+
+  const fabStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: fabX.value }, { translateY: fabY.value }],
+  }));
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -262,13 +318,12 @@ export default function RulesScreen() {
         })}
       </ScrollView>
 
-      {/* ADD BUTTON */}
-      <TouchableOpacity
-        style={styles.addButton}
-        onPress={() => setCreateMenuVisible(true)}
-      >
-        <Ionicons name="add" size={32} color="white" />
-      </TouchableOpacity>
+      {/* ADD BUTTON — nổi, kéo thả tự do (giữ vị trí), bấm để mở menu */}
+      <GestureDetector gesture={fabGesture}>
+        <Animated.View style={[styles.addButton, fabStyle]}>
+          <Ionicons name="add" size={32} color="white" />
+        </Animated.View>
+      </GestureDetector>
 
       {/* CREATE RULE MENU */}
       <Modal

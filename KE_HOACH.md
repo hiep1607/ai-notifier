@@ -66,6 +66,7 @@ Giải thích chi tiết từng lỗi (hệ thống, ảnh hưởng mọi rule) 
 ---
 
 ## Nhật ký thay đổi
+- 2026-06-19: Nút "+" tạo rule (màn Rules) giờ KÉO THẢ tự do được (Gesture.Pan + reanimated), vẫn bấm để mở menu (Gesture.Tap, Race); nhớ vị trí qua AsyncStorage @fab_pos. Chạy cả web lẫn native.
 - 2026-06-19: FIX mobile — (1) cuộn không tới cuối ở màn chi tiết (nút dưới bị thanh điều hướng Android che): thêm SafeAreaProvider + paddingBottom theo insets.bottom cho notification-detail & rule-detail. (2) Công tắc bật/tắt rule giờ BẤM được (bọc TouchableOpacity + Switch pointerEvents none + hitSlop) ở rule-detail & danh sách Rules.
 - 2026-06-19: FIX crash/màn trắng trên Expo Go (native) — Reanimated 4 nhưng babel còn dùng plugin cũ `react-native-reanimated/plugin` → worklet không biên dịch → crash native (web vẫn chạy). Đổi sang `react-native-worklets/plugin`. Bọc app bằng `GestureHandlerRootView` (cần cho vuốt-xóa trên native). CẦN restart `npx expo start -c` (xóa cache) để babel ăn.
 - 2026-06-19: Chi tiết rule — đưa 2 nút "Kiểm tra tin ngay" + "Xóa rule" lên TRÊN danh sách thông báo; mặc định chỉ hiện 5 thông báo gần nhất, thêm nút "Xem tất cả thông báo (N)" / "Thu gọn" để xổ hết (fetch tối đa 50). Chỉ sửa client.
