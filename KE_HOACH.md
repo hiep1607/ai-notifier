@@ -52,6 +52,7 @@ pg_cron (mỗi 15 phút) → run-monitor (quét nền, lọc rule tới hạn th
 ---
 
 ## Nhật ký thay đổi
+- 2026-06-19: Soát hệ thống — sửa lỗi "bỏ đói" rule khi >8 rule (cron giờ sắp theo last_run_at tăng dần, xoay vòng công bằng, rule đặt giờ không bị chen). Deploy lại run-monitor.
 - 2026-06-19: Sửa chống-trùng cho chủ đề kiểu giá-trị (thời tiết/giá): dedup theo URL + last_value, cùng URL mà số liệu đổi vẫn báo (trước đây URL đứng yên bị chặn vĩnh viễn). + retry generate-rule. Deploy lại run-monitor.
 - 2026-06-19: Tách nhiều rule từ 1 câu — generate-rule trả mảng rules, UI nhiều card + tạo hàng loạt. Deploy lại generate-rule.
 - 2026-06-19: Trigger "thay đổi" — lưu last_value, so sánh với lần trước để chỉ báo khi số liệu thực sự đổi (migration 0008). Deploy lại run-monitor.

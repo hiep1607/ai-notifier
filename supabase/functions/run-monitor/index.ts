@@ -275,10 +275,18 @@ Deno.serve(async (req) => {
     // manual = bấm "Kiểm tra tin ngay" cho 1 rule → bỏ qua lịch, quét luôn.
     const manual = Boolean(ruleId);
 
-    // Chọn tập rule cần quét.
-    let query = supabase.from("rules").select("*").eq("is_active", true);
+    // Chọn tập rule cần quét. Sắp theo last_run_at TĂNG DẦN (lâu chưa quét / chưa quét
+    // lần nào lên trước) để khi nhiều rule + trần MAX_RULES_PER_RUN, mọi rule đều tới
+    // lượt theo vòng, không bị "bỏ đói"; rule đặt giờ cũng không bị chen mất khung.
+    let query = supabase
+      .from("rules")
+      .select("*")
+      .eq("is_active", true)
+      .order("last_run_at", { ascending: true, nullsFirst: true });
     if (ruleId) query = supabase.from("rules").select("*").eq("id", ruleId);
-    else if (userId) query = query.eq("user_id", userId);
+    else if (userId) {
+      query = query.eq("user_id", userId);
+    }
 
     const { data: rules, error } = await query;
     if (error) return json({ error: error.message }, 500);
