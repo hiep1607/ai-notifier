@@ -36,6 +36,8 @@ export default function HomeScreen() {
   const [rules, setRules] = useState<Rule[]>([]);
   const [notificationsCount, setNotificationsCount] = useState(0);
   const [importantCount, setImportantCount] = useState(0);
+  const [latestImportant, setLatestImportant] = useState<Notification | null>(null);
+  const [latestNotif, setLatestNotif] = useState<Notification | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [createMenuVisible, setCreateMenuVisible] = useState(false);
@@ -95,20 +97,42 @@ export default function HomeScreen() {
       const { data: notificationsData } = await supabase
         .from("notifications")
         .select("*")
-        .in("rule_id", ruleIds);
+        .in("rule_id", ruleIds)
+        .order("created_at", { ascending: false });
 
       if (notificationsData) {
         const typed = notificationsData as Notification[];
         setNotificationsCount(typed.length);
-        setImportantCount(typed.filter((n) => n.is_important).length);
+        const important = typed.filter((n) => n.is_important);
+        setImportantCount(important.length);
+        setLatestImportant(important[0] ?? null);
+        setLatestNotif(typed[0] ?? null);
       }
     } else {
       setNotificationsCount(0);
       setImportantCount(0);
+      setLatestImportant(null);
+      setLatestNotif(null);
     }
   };
 
   const activeRules = rules.filter((r) => r.is_active);
+
+  // AI Insight động: ưu tiên tin quan trọng gần nhất, rồi tới tin mới nhất; lấy tóm tắt thật.
+  const insightSource = latestImportant ?? latestNotif;
+  const insightText = latestImportant
+    ? `⚠ ${importantCount} tin quan trọng. ${latestImportant.ai_summary || latestImportant.title}`
+    : latestNotif
+    ? latestNotif.ai_summary || latestNotif.title
+    : "Chưa có thông báo nào. AI vẫn đang theo dõi cho bạn.";
+
+  const openInsight = () => {
+    if (insightSource) {
+      router.push({ pathname: "/notification-detail", params: { id: insightSource.id } });
+    } else {
+      router.push("/(tabs)/notifications");
+    }
+  };
 
   return (
     <View style={styles.container}>
@@ -175,10 +199,7 @@ export default function HomeScreen() {
         </View>
 
         {/* AI INSIGHT */}
-        <TouchableOpacity
-          activeOpacity={0.85}
-          onPress={() => router.push("/(tabs)/notifications")}
-        >
+        <TouchableOpacity activeOpacity={0.85} onPress={openInsight}>
           <LinearGradient
             colors={isDark ? ["#1E3A8A", "#172554"] : [colors.primary, colors.primaryDark]}
             start={{ x: 0, y: 0 }}
@@ -191,11 +212,10 @@ export default function HomeScreen() {
               </View>
               <Text style={styles.aiTitle}>AI Insight</Text>
             </View>
-            <Text style={styles.aiText}>
-              {importantCount > 0
-                ? `Có ${importantCount} thông báo quan trọng cần bạn xem hôm nay.`
-                : "Chưa có thông báo quan trọng nào. AI vẫn đang theo dõi cho bạn."}
-            </Text>
+            <Text style={styles.aiText} numberOfLines={3}>{insightText}</Text>
+            {insightSource?.source ? (
+              <Text style={styles.aiSource}>{insightSource.source}</Text>
+            ) : null}
           </LinearGradient>
         </TouchableOpacity>
 
@@ -212,6 +232,14 @@ export default function HomeScreen() {
           <View style={styles.empty}>
             <Ionicons name="moon-outline" size={40} color={colors.muted} />
             <Text style={styles.emptyText}>Chưa có rule nào hoạt động</Text>
+            <TouchableOpacity
+              style={styles.emptyButton}
+              onPress={() => setCreateMenuVisible(true)}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="add" size={18} color="white" />
+              <Text style={styles.emptyButtonText}>Tạo rule đầu tiên</Text>
+            </TouchableOpacity>
           </View>
         ) : (
           activeRules.map((rule) => (
@@ -406,6 +434,12 @@ function createStyles(C: AppColors) {
       fontSize: 15,
       lineHeight: 23,
     },
+    aiSource: {
+      color: "#A9C0F5",
+      fontSize: 12,
+      fontWeight: "600",
+      marginTop: 10,
+    },
     sectionHeader: {
       flexDirection: "row",
       justifyContent: "space-between",
@@ -430,6 +464,21 @@ function createStyles(C: AppColors) {
     emptyText: {
       color: C.muted,
       fontSize: 14,
+    },
+    emptyButton: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      backgroundColor: C.primary,
+      paddingHorizontal: 18,
+      paddingVertical: 12,
+      borderRadius: RADIUS.md,
+      marginTop: 4,
+    },
+    emptyButtonText: {
+      color: "white",
+      fontSize: 15,
+      fontWeight: "700",
     },
     ruleCard: {
       backgroundColor: C.card,

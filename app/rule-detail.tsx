@@ -90,6 +90,25 @@ export default function RuleDetailScreen() {
       .eq("id", rule.id);
   };
 
+  // "Để êm": rule vẫn chạy & vẫn nhận thông báo trong app, chỉ KHÔNG đẩy push về máy.
+  const toggleMuted = async () => {
+    if (!rule) return;
+
+    const newValue = !rule.muted;
+    setRule({ ...rule, muted: newValue });
+
+    const { error } = await supabase
+      .from("rules")
+      .update({ muted: newValue })
+      .eq("id", rule.id);
+
+    if (error) {
+      // Cột chưa có (migration 0010 chưa chạy) → khôi phục trạng thái + báo nhẹ.
+      setRule({ ...rule, muted: !newValue });
+      alertMessage("Chưa bật được", "Cần chạy migration 0010 (cột muted) trong Supabase trước.");
+    }
+  };
+
   const startEditing = () => {
     if (!rule) return;
     setEditTitle(rule.title);
@@ -438,6 +457,22 @@ export default function RuleDetailScreen() {
             </TouchableOpacity>
           )}
 
+          {/* MUTE BUTTON — vẫn nhận tin trong app, chỉ tắt push về máy */}
+          <TouchableOpacity
+            style={[styles.muteButton, rule.muted && styles.muteButtonOn]}
+            onPress={toggleMuted}
+            activeOpacity={0.8}
+          >
+            <Ionicons
+              name={rule.muted ? "notifications-off" : "notifications-outline"}
+              size={20}
+              color={rule.muted ? colors.warning : colors.subText}
+            />
+            <Text style={[styles.muteText, rule.muted && { color: colors.warning }]}>
+              {rule.muted ? "Đang để êm — bật lại push" : "Tắt push (vẫn nhận tin trong app)"}
+            </Text>
+          </TouchableOpacity>
+
           {/* DELETE BUTTON */}
           <TouchableOpacity
             style={[styles.deleteButton, saving && { opacity: 0.6 }]}
@@ -723,6 +758,28 @@ function createStyles(C: AppColors) {
     },
     monitorText: {
       color: C.primary,
+      fontSize: 16,
+      fontWeight: "600",
+    },
+    muteButton: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 8,
+      marginTop: 12,
+      marginBottom: 8,
+      padding: 16,
+      borderRadius: 18,
+      borderWidth: 1,
+      borderColor: C.border,
+      backgroundColor: C.card,
+    },
+    muteButtonOn: {
+      borderColor: C.warning,
+      backgroundColor: C.warning + "11",
+    },
+    muteText: {
+      color: C.subText,
       fontSize: 16,
       fontWeight: "600",
     },

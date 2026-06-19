@@ -289,6 +289,14 @@ export default function RulesScreen() {
                         {formatSchedule(item.frequency, item.run_at)}
                       </Text>
                     </View>
+                    {item.muted ? (
+                      <View style={styles.metaChip}>
+                        <Ionicons name="notifications-off-outline" size={11} color={colors.warning} />
+                        <Text style={[styles.metaText, { color: colors.warning }]} numberOfLines={1}>
+                          Để êm
+                        </Text>
+                      </View>
+                    ) : null}
                   </View>
                   {item.condition ? (
                     <View style={styles.condRow}>

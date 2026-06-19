@@ -148,6 +148,34 @@ export default function NotificationsScreen() {
     return new Date(iso).toLocaleDateString("vi-VN");
   };
 
+  // Nhãn ngày cho tiêu đề nhóm: Hôm nay / Hôm qua / dd/mm/yyyy.
+  const dayLabel = (iso?: string) => {
+    if (!iso) return "Khác";
+    const d = new Date(iso);
+    const today = new Date();
+    const yesterday = new Date();
+    yesterday.setDate(today.getDate() - 1);
+    const sameDay = (a: Date, b: Date) =>
+      a.getFullYear() === b.getFullYear() &&
+      a.getMonth() === b.getMonth() &&
+      a.getDate() === b.getDate();
+    if (sameDay(d, today)) return "Hôm nay";
+    if (sameDay(d, yesterday)) return "Hôm qua";
+    return d.toLocaleDateString("vi-VN");
+  };
+
+  // Gom danh sách (đã sắp xếp mới→cũ) thành các nhóm theo ngày, giữ nguyên thứ tự.
+  const groupedNotifications = (() => {
+    const groups: { label: string; items: Notification[] }[] = [];
+    for (const n of displayedNotifications) {
+      const label = dayLabel(n.created_at);
+      const last = groups[groups.length - 1];
+      if (last && last.label === label) last.items.push(n);
+      else groups.push({ label, items: [n] });
+    }
+    return groups;
+  })();
+
   return (
     <View style={styles.container}>
       {/* HEADER */}
@@ -201,10 +229,23 @@ export default function NotificationsScreen() {
             <Text style={styles.emptyText}>
               {searchText ? "Không tìm thấy kết quả" : "Chưa có thông báo"}
             </Text>
+            {!searchText && (
+              <TouchableOpacity
+                style={styles.emptyButton}
+                onPress={() => router.push("/(tabs)/rules" as any)}
+                activeOpacity={0.85}
+              >
+                <Ionicons name="add" size={18} color="white" />
+                <Text style={styles.emptyButtonText}>Tạo rule để nhận thông báo</Text>
+              </TouchableOpacity>
+            )}
           </View>
         )}
 
-        {displayedNotifications.map((item) => (
+        {groupedNotifications.map((group) => (
+          <View key={group.label}>
+            <Text style={styles.groupLabel}>{group.label}</Text>
+            {group.items.map((item) => (
           <ReanimatedSwipeable key={item.id} renderRightActions={() => renderRightActions(item.id)}>
           <TouchableOpacity
             style={[styles.card, !item.is_read && styles.cardUnread]}
@@ -238,6 +279,8 @@ export default function NotificationsScreen() {
             </View>
           </TouchableOpacity>
           </ReanimatedSwipeable>
+            ))}
+          </View>
         ))}
       </ScrollView>
     </View>
@@ -313,6 +356,31 @@ function createStyles(C: AppColors) {
     emptyText: {
       color: C.muted,
       fontSize: 15,
+    },
+    emptyButton: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      backgroundColor: C.primary,
+      paddingHorizontal: 18,
+      paddingVertical: 12,
+      borderRadius: RADIUS.md,
+      marginTop: 4,
+    },
+    emptyButtonText: {
+      color: "white",
+      fontSize: 15,
+      fontWeight: "700",
+    },
+    groupLabel: {
+      color: C.muted,
+      fontSize: 13,
+      fontWeight: "700",
+      textTransform: "uppercase",
+      letterSpacing: 0.5,
+      marginBottom: 10,
+      marginTop: 4,
+      marginLeft: 2,
     },
     card: {
       backgroundColor: C.card,

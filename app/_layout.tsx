@@ -12,6 +12,8 @@ import {
 import * as NavigationBar from "expo-navigation-bar";
 import * as Notifications from "expo-notifications";
 
+import AsyncStorage from "@react-native-async-storage/async-storage";
+
 import { router, Stack } from "expo-router";
 
 import { StatusBar } from "expo-status-bar";
@@ -59,7 +61,12 @@ function RootNavigator() {
     if (loading) return;
     if (!session) {
       router.replace("/login");
+      return;
     }
+    // Lần đầu đăng nhập trên thiết bị này → giới thiệu nhanh rồi vào app.
+    AsyncStorage.getItem("@onboarded").then((v) => {
+      if (!v) router.replace("/onboarding" as any);
+    });
   }, [session, loading]);
 
   // Đăng ký push token sau khi đăng nhập (no-op trên web/Expo Go/thiếu EAS).
@@ -124,6 +131,11 @@ function RootNavigator() {
 
         <Stack.Screen
           name="manual-rule"
+          options={{ headerShown: false }}
+        />
+
+        <Stack.Screen
+          name="onboarding"
           options={{ headerShown: false }}
         />
 

@@ -10,6 +10,7 @@ export interface Rule {
   run_at?: string;     // Giờ báo cụ thể (giờ VN) dạng "HH:MM"; rỗng = không ghim giờ
   condition?: string;  // Điều kiện kích hoạt thông báo
   last_value?: string; // Số liệu chính lần quét trước (trigger "thay đổi")
+  muted?: boolean;     // true = vẫn nhận tin trong app nhưng KHÔNG đẩy push/để yên lặng
   is_active: boolean;
   created_at?: string;
 }

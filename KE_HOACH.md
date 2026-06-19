@@ -1,7 +1,7 @@
 # Kế hoạch & Tiến độ — AI Notifier
 
 > File này theo dõi: kiến trúc, việc ĐÃ LÀM, việc CẦN LÀM. Cập nhật sau mỗi task.
-> Cập nhật lần cuối: 2026-06-19 (polish UI/UX rule list + home)
+> Cập nhật lần cuối: 2026-06-20 (mute push/rule, nhóm thông báo theo ngày, empty CTA, AI Insight động, onboarding)
 
 ## Mục tiêu sản phẩm
 Người dùng mô tả bằng ngôn ngữ tự nhiên → AI tạo **rule** → hệ thống **tự quét tin thật nhiều nguồn 24/7** → gửi **thông báo** đúng chủ đề/điều kiện, kèm link bài gốc.
@@ -40,9 +40,16 @@ pg_cron (mỗi 15 phút) → run-monitor (quét nền, lọc rule tới hạn th
 - [x] **Trigger "thay đổi"**: lưu `last_value` mỗi rule; truyền giá trị lần trước vào Gemini để chấm `changed`/`matches_condition`; rule "theo điều kiện" chỉ báo khi số liệu THỰC SỰ đổi so với lần trước (migration 0008).
 - [x] **Tách nhiều rule từ 1 câu**: generate-rule trả về MẢNG `rules` (tách chủ đề độc lập, giữ chung nếu cùng 1 thứ, vẫn hỏi lại khi thiếu); UI hiện nhiều card ("Rule i/N", xóa bớt được) + tạo hàng loạt 1 lượt. Tương thích ngược shape cũ.
 - [x] **Phân quyền run-monitor**: anon key là công khai nên không tin được. Cron gọi bằng service_role → admin (quét tất cả); app gọi kèm JWT → xác thực, lấy userId TỪ token (bỏ qua userId body), chỉ quét rule của mình; ruleId người khác → 403; anon thuần → 401. Không cần thêm secret / sửa SQL (cron đã dùng service_role).
+- [x] **"Để êm" theo rule (mute push)**: nút bật/tắt trong chi tiết rule — rule VẪN chạy & VẪN tạo thông báo (xem trong app), chỉ KHÔNG đẩy push về máy. Server `run-monitor` bỏ qua `sendPush` khi `rule.muted`; thẻ rule hiện nhãn "Để êm" (migration 0010 thêm cột `muted`).
+- [x] **Nhóm thông báo theo ngày** (Hôm nay / Hôm qua / dd/mm) ở tab Thông báo.
+- [x] **Empty state có nút hành động**: Home + Notifications trống → nút tạo rule.
+- [x] **AI Insight động**: thẻ ở Home lấy tóm tắt tin quan trọng/mới nhất THẬT, bấm mở đúng thông báo.
+- [x] **Onboarding lần đầu**: 3 slide giới thiệu khi đăng nhập lần đầu trên thiết bị (cờ `@onboarded`).
+- [x] **Badge tab Alerts**: đã có sẵn; cap hiển thị "99+".
 
 ## ⏳ ĐANG CHỜ NGƯỜI DÙNG (tôi không tự làm được)
 - [ ] **Chạy SQL `0009_notification_related.sql`** trong Supabase SQL Editor (thêm cột `related_notification_id`) — cần để fallback "chưa có thay đổi" link được về thông báo trước.
+- [ ] **Chạy SQL `0010_rule_muted.sql`** trong Supabase SQL Editor (thêm cột `muted`) — cần để nút "Để êm" lưu được trạng thái.
 - [ ] **Chạy SQL** gộp (`run_at` + `push_tokens`) trong Supabase SQL Editor — tôi không có mật khẩu DB.
 - [ ] **Đổi key Gemini** — key cũ đã lộ trong ảnh chụp lúc setup (bảo mật).
 - [ ] **EAS init + dev build** để nhận push thật trên điện thoại (cần tài khoản Expo + thiết bị; build cloud tính phí).

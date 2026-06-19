@@ -55,6 +55,7 @@ interface Rule {
   run_at?: string | null;   // "HH:MM" giờ VN, ghim giờ báo cụ thể
   last_run_at?: string | null;
   last_value?: string | null; // số liệu chính lần quét trước (trigger "thay đổi")
+  muted?: boolean;          // true = vẫn tạo notification nhưng KHÔNG đẩy push (để êm)
   is_active: boolean;
 }
 
@@ -238,7 +239,10 @@ async function insertNotif(supabase: any, rule: Rule, f: NotifFields): Promise<n
   const { data: ins, error } = await supabase.from("notifications")
     .insert([row]).select("id").single();
   if (error || !ins) return 0;
-  await sendPush(supabase, rule.user_id, title, f.ai_summary || f.content || "", ins.id);
+  // Rule "để êm" (muted): vẫn lưu notification để xem trong app, nhưng KHÔNG đẩy push về máy.
+  if (!rule.muted) {
+    await sendPush(supabase, rule.user_id, title, f.ai_summary || f.content || "", ins.id);
+  }
   return 1;
 }
 
