@@ -9,7 +9,8 @@ export interface RuleDraft {
   keyword: string;
   category: string;   // key trong CATEGORIES
   sources: string;
-  frequency: string;  // key trong FREQUENCIES
+  frequency: string;  // "change" | số phút (vd "1440")
+  run_at: string;     // giờ báo "HH:MM" (giờ VN); "" nếu không ghim giờ
   condition: string;
 }
 

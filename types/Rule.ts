@@ -6,7 +6,8 @@ export interface Rule {
   keyword: string;
   category?: string;   // Danh mục: Tài chính, Tin tức, Công nghệ...
   sources?: string;    // Nguồn theo dõi, phân tách bằng dấu phẩy
-  frequency?: string;  // Tần suất: realtime | hourly | daily | weekly
+  frequency?: string;  // "change" (theo điều kiện) | số phút (định kỳ, vd "1440")
+  run_at?: string;     // Giờ báo cụ thể (giờ VN) dạng "HH:MM"; rỗng = không ghim giờ
   condition?: string;  // Điều kiện kích hoạt thông báo
   is_active: boolean;
   created_at?: string;

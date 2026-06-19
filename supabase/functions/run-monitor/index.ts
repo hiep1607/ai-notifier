@@ -36,8 +36,35 @@ interface Rule {
   sources?: string;
   condition?: string;
   frequency?: string;
+  run_at?: string | null;   // "HH:MM" giờ VN, ghim giờ báo cụ thể
   last_run_at?: string | null;
   is_active: boolean;
+}
+
+// Số phút từ 0h theo GIỜ VIỆT NAM (server chạy UTC, VN = UTC+7, không có DST).
+function vnMinutesOfDay(): number {
+  const vn = new Date(Date.now() + 7 * 3600000);
+  return vn.getUTCHours() * 60 + vn.getUTCMinutes();
+}
+
+// Rule đã tới hạn quét chưa? (cron chạy mỗi 15 phút gọi hàm này cho từng rule)
+function isDue(rule: Rule): boolean {
+  const interval = intervalMs(rule.frequency);
+  const last = rule.last_run_at ? Date.parse(rule.last_run_at) : 0;
+  const elapsed = Date.now() - last;
+
+  // Ghim giờ cụ thể (định kỳ, không phải "change"): chỉ chạy trong khung 15 phút quanh giờ đó,
+  // và không lặp lại trong cùng chu kỳ (vd 1 lần/ngày).
+  if (rule.frequency !== "change" && rule.run_at && /^\d{1,2}:\d{2}$/.test(rule.run_at)) {
+    const [h, m] = rule.run_at.split(":").map(Number);
+    const target = h * 60 + m;
+    const now = vnMinutesOfDay();
+    if (now < target || now >= target + 15) return false;
+    return elapsed >= interval - 3600000; // trừ 1h hao để chắc chắn bắt được khung
+  }
+
+  // Không ghim giờ: theo chu kỳ thuần.
+  return elapsed >= interval;
 }
 
 interface NewsItem {
@@ -186,11 +213,8 @@ Deno.serve(async (req) => {
     for (const rule of rules as Rule[]) {
       if (Date.now() > deadline) break;
 
-      // Lịch theo từng rule: chỉ quét khi tới hạn theo frequency (trừ khi gọi thủ công).
-      if (!manual && rule.last_run_at) {
-        const elapsed = Date.now() - Date.parse(rule.last_run_at);
-        if (elapsed < intervalMs(rule.frequency)) continue;
-      }
+      // Lịch theo từng rule: chỉ quét khi tới hạn (trừ khi gọi thủ công "Kiểm tra tin ngay").
+      if (!manual && !isDue(rule)) continue;
 
       checked++;
       try {

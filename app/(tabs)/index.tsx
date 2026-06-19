@@ -82,7 +82,8 @@ export default function HomeScreen() {
     const { data: rulesData } = await supabase
       .from("rules")
       .select("*")
-      .eq("user_id", user.id);
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: true });
 
     if (rulesData) {
       setRules(rulesData as Rule[]);

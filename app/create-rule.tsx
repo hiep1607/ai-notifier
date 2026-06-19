@@ -19,7 +19,7 @@ import { alertMessage } from "../lib/dialog";
 import { chatRule, RuleDraft } from "../lib/claude";
 import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";
-import { findCategory, formatFrequency } from "../lib/ruleOptions";
+import { findCategory, formatSchedule } from "../lib/ruleOptions";
 import { SCREEN, RADIUS, type AppColors } from "../lib/theme";
 import SuggestionChip from "../components/SuggestionChip";
 
@@ -102,6 +102,7 @@ export default function CreateRuleScreen() {
       category: previewRule.category,
       sources: previewRule.sources,
       frequency: previewRule.frequency,
+      run_at: previewRule.run_at,
       condition: previewRule.condition,
       is_active: true,
       user_id: user.id,
@@ -132,7 +133,7 @@ export default function CreateRuleScreen() {
       { icon: "pricetag-outline", label: "Tên", value: r.title },
       { icon: "search-outline", label: "Từ khóa", value: r.keyword },
       { icon: cat.icon, label: "Danh mục", value: cat.label },
-      { icon: "time-outline", label: "Tần suất", value: formatFrequency(r.frequency) },
+      { icon: "time-outline", label: "Tần suất", value: formatSchedule(r.frequency, r.run_at) },
     ];
     if (r.sources) rows.push({ icon: "globe-outline", label: "Nguồn", value: r.sources });
     if (r.condition) rows.push({ icon: "flash-outline", label: "Điều kiện", value: r.condition });

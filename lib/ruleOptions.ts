@@ -68,6 +68,15 @@ export function toFreqKey(freq?: string): string {
   return String(freqMinutes(freq));
 }
 
+// Nhãn lịch đầy đủ: kèm giờ cụ thể nếu có (vd "Hằng ngày lúc 08:00").
+export function formatSchedule(freq?: string, runAt?: string): string {
+  const base = formatFrequency(freq);
+  if (freq !== "change" && runAt && /^\d{1,2}:\d{2}$/.test(runAt)) {
+    return `${base} lúc ${runAt}`;
+  }
+  return base;
+}
+
 export interface SentimentOption {
   key: string;
   label: string;

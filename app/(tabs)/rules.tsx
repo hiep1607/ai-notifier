@@ -60,7 +60,8 @@ export default function RulesScreen() {
     const { data, error } = await supabase
       .from("rules")
       .select("*")
-      .eq("user_id", user.id);
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: true });
 
     if (error) {
       console.log(error);

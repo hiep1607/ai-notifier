@@ -18,7 +18,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import { supabase } from "../lib/supabase";
 import { confirmAsync, alertMessage } from "../lib/dialog";
 import { runMonitorForRule } from "../lib/monitor";
-import { CATEGORIES, FREQUENCIES, findCategory, formatFrequency, toFreqKey } from "../lib/ruleOptions";
+import { CATEGORIES, FREQUENCIES, findCategory, formatSchedule, toFreqKey } from "../lib/ruleOptions";
 import { useTheme } from "../contexts/ThemeContext";
 import { Rule } from "../types/Rule";
 import { Notification } from "../types/Notification";
@@ -332,7 +332,7 @@ export default function RuleDetailScreen() {
         ) : (
           <View style={styles.infoRow}>
             <Text style={styles.label}>Tần suất</Text>
-            <Text style={styles.value}>{formatFrequency(rule.frequency)}</Text>
+            <Text style={styles.value}>{formatSchedule(rule.frequency, rule.run_at)}</Text>
           </View>
         )}
 
