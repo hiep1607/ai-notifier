@@ -63,17 +63,21 @@ function isDue(rule: Rule): boolean {
   const last = rule.last_run_at ? Date.parse(rule.last_run_at) : 0;
   const elapsed = Date.now() - last;
 
-  // Ghim giờ cụ thể (định kỳ, không phải "change"): chỉ chạy trong khung 15 phút quanh giờ đó,
-  // và không lặp lại trong cùng chu kỳ (vd 1 lần/ngày).
+  // Ghim giờ cụ thể (định kỳ, không phải "change"): quét trong khung [target-15, target+15)
+  // — tức ĐÃ tới giờ HOẶC SẮP tới trong 15 phút (cron 15' kế tiếp có thể lỡ) → bắn sát giờ.
+  // Guard chu kỳ (1 lần/ngày...) tránh bắn lặp dù khung rộng 30'.
   if (rule.frequency !== "change" && rule.run_at && /^\d{1,2}:\d{2}$/.test(rule.run_at)) {
     const [h, m] = rule.run_at.split(":").map(Number);
     const target = h * 60 + m;
     const now = vnMinutesOfDay();
-    if (now < target || now >= target + 15) return false;
+    // Số phút TỪ target tới now theo vòng 24h (xử lý cả mốc gần nửa đêm).
+    const diff = (now - target + 1440) % 1440;
+    const inWindow = diff < 15 || diff >= 1440 - 15; // 15' sau target hoặc 15' trước target
+    if (!inWindow) return false;
     return elapsed >= interval - 3600000; // trừ 1h hao để chắc chắn bắt được khung
   }
 
-  // Không ghim giờ: theo chu kỳ thuần.
+  // Không ghim giờ: theo chu kỳ thuần (KHÔNG quét sớm — quét sớm sẽ làm trôi tần suất).
   return elapsed >= interval;
 }
 
