@@ -1,7 +1,7 @@
 # Kế hoạch & Tiến độ — AI Notifier
 
 > File này theo dõi: kiến trúc, việc ĐÃ LÀM, việc CẦN LÀM. Cập nhật sau mỗi task.
-> Cập nhật lần cuối: 2026-06-20 (giờ yên lặng tùy chỉnh; mute push/rule, nhóm thông báo theo ngày, empty CTA, AI Insight động, onboarding)
+> Cập nhật lần cuối: 2026-06-20 (đã chạy SQL 0009/0010/0011; bảng user_settings đã tạo lại sạch — Giờ yên lặng VERIFY chạy được)
 
 ## Mục tiêu sản phẩm
 Người dùng mô tả bằng ngôn ngữ tự nhiên → AI tạo **rule** → hệ thống **tự quét tin thật nhiều nguồn 24/7** → gửi **thông báo** đúng chủ đề/điều kiện, kèm link bài gốc.
@@ -49,9 +49,9 @@ pg_cron (mỗi 15 phút) → run-monitor (quét nền, lọc rule tới hạn th
 - [x] **Giờ yên lặng (tùy chỉnh)**: trong Settings có nút bật/tắt + 2 thanh trượt chọn giờ bắt đầu/kết thúc (vắt qua nửa đêm OK). Trong khung này server `run-monitor` KHÔNG đẩy push (tin vẫn vào app). Lưu trên DB `user_settings` để server đọc (migration 0011); slider dùng `@react-native-community/slider`.
 
 ## ⏳ ĐANG CHỜ NGƯỜI DÙNG (tôi không tự làm được)
-- [ ] **Chạy SQL `0009_notification_related.sql`** trong Supabase SQL Editor (thêm cột `related_notification_id`) — cần để fallback "chưa có thay đổi" link được về thông báo trước.
-- [ ] **Chạy SQL `0010_rule_muted.sql`** trong Supabase SQL Editor (thêm cột `muted`) — cần để nút "Để êm" lưu được trạng thái.
-- [ ] **Chạy SQL `0011_user_settings.sql`** trong Supabase SQL Editor (bảng `user_settings`) — cần để "Giờ yên lặng" lưu & server đọc được.
+- [x] **Chạy SQL `0009_notification_related.sql`** (cột `related_notification_id`) — user xác nhận đã chạy.
+- [x] **Chạy SQL `0010_rule_muted.sql`** (cột `muted`) — user xác nhận đã chạy.
+- [x] **Chạy SQL `0011_user_settings.sql`** (bảng `user_settings`) — đã phải DROP + tạo lại bảng sạch (bảng cũ trùng tên có FK sai → 23503); "Giờ yên lặng" đã lưu OK.
 - [ ] **Chạy SQL** gộp (`run_at` + `push_tokens`) trong Supabase SQL Editor — tôi không có mật khẩu DB.
 - [ ] **Đổi key Gemini** — key cũ đã lộ trong ảnh chụp lúc setup (bảo mật).
 - [ ] **EAS init + dev build** để nhận push thật trên điện thoại (cần tài khoản Expo + thiết bị; build cloud tính phí).
@@ -75,6 +75,8 @@ Giải thích chi tiết từng lỗi (hệ thống, ảnh hưởng mọi rule) 
 ---
 
 ## Nhật ký thay đổi
+- 2026-06-20: Giờ yên lặng (tùy chỉnh) — Settings có toggle + 2 slider chọn giờ; server `run-monitor` bỏ qua push trong khung (vắt nửa đêm OK), tin vẫn vào app. Lưu DB `user_settings`. LƯU Ý: bảng `user_settings` cũ trùng tên đã tồn tại sẵn với FK sai (trỏ sai bảng) gây loạt lỗi PGRST204 → 42P10 → 23503; đã DROP + tạo lại sạch (`user_id` PK → auth.users). Client dùng update→insert (không upsert onConflict) cho an toàn ràng buộc. Verify lưu OK.
+- 2026-06-20: "Để êm" theo rule (mute push, cột `muted`, migration 0010); nhóm thông báo theo ngày; empty state có nút CTA; AI Insight động (tin thật); onboarding 3 slide lần đầu; badge tab cap "99+".
 - 2026-06-19: Nút "+" tạo rule (màn Rules) giờ KÉO THẢ tự do được (Gesture.Pan + reanimated), vẫn bấm để mở menu (Gesture.Tap, Race); nhớ vị trí qua AsyncStorage @fab_pos. Chạy cả web lẫn native.
 - 2026-06-19: FIX mobile — (1) cuộn không tới cuối ở màn chi tiết (nút dưới bị thanh điều hướng Android che): thêm SafeAreaProvider + paddingBottom theo insets.bottom cho notification-detail & rule-detail. (2) Công tắc bật/tắt rule giờ BẤM được (bọc TouchableOpacity + Switch pointerEvents none + hitSlop) ở rule-detail & danh sách Rules.
 - 2026-06-19: FIX crash/màn trắng trên Expo Go (native) — Reanimated 4 nhưng babel còn dùng plugin cũ `react-native-reanimated/plugin` → worklet không biên dịch → crash native (web vẫn chạy). Đổi sang `react-native-worklets/plugin`. Bọc app bằng `GestureHandlerRootView` (cần cho vuốt-xóa trên native). CẦN restart `npx expo start -c` (xóa cache) để babel ăn.
