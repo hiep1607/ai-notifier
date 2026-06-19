@@ -16,7 +16,7 @@ export interface RuleDraft {
 
 export type RuleAIResult =
   | { status: "need_info"; message: string }
-  | { status: "ready"; message: string; rule: RuleDraft };
+  | { status: "ready"; message: string; rules: RuleDraft[] };
 
 interface ChatTurn {
   role: "user" | "assistant";
@@ -31,8 +31,15 @@ export async function chatRule(history: ChatTurn[]): Promise<RuleAIResult> {
   if (error) throw new Error(error.message);
   if (data?.error) throw new Error(data.error);
 
-  if (data?.status === "ready" && data.rule) {
-    return { status: "ready", message: data.message, rule: data.rule as RuleDraft };
+  // Tương thích cả "rules" (mảng, mới) lẫn "rule" (đơn, cũ).
+  const rules: RuleDraft[] = Array.isArray(data?.rules)
+    ? (data.rules as RuleDraft[])
+    : data?.rule
+      ? [data.rule as RuleDraft]
+      : [];
+
+  if (data?.status === "ready" && rules.length > 0) {
+    return { status: "ready", message: data.message, rules };
   }
   return {
     status: "need_info",

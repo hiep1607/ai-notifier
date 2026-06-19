@@ -43,7 +43,7 @@ export default function CreateRuleScreen() {
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const historyRef = useRef<{ role: "user" | "assistant"; content: string }[]>([]);
-  const [previewRule, setPreviewRule] = useState<RuleDraft | null>(null);
+  const [previewRules, setPreviewRules] = useState<RuleDraft[]>([]);
   const [loading, setLoading] = useState(false);
   const [confirming, setConfirming] = useState(false);
 
@@ -61,7 +61,7 @@ export default function CreateRuleScreen() {
     setMessages((prev) => [...prev, { role: "user", text }]);
     historyRef.current.push({ role: "user", content: text });
     setInput("");
-    setPreviewRule(null);
+    setPreviewRules([]);
     setLoading(true);
     scrollToBottom();
 
@@ -76,13 +76,13 @@ export default function CreateRuleScreen() {
         return;
       }
 
-      const rule = result.rule;
+      const rules = result.rules;
       historyRef.current.push({
         role: "assistant",
-        content: JSON.stringify({ status: "ready", rule }),
+        content: JSON.stringify({ status: "ready", rules }),
       });
       setMessages((prev) => [...prev, { role: "ai", text: result.message }]);
-      setPreviewRule(rule);
+      setPreviewRules(rules);
       scrollToBottom();
     } catch (err: any) {
       setLoading(false);
@@ -92,21 +92,23 @@ export default function CreateRuleScreen() {
   };
 
   const handleConfirm = async () => {
-    if (!previewRule || !user) return;
+    if (previewRules.length === 0 || !user) return;
     setConfirming(true);
 
-    const { error } = await supabase.from("rules").insert([{
-      title: previewRule.title,
-      description: previewRule.description,
-      keyword: previewRule.keyword,
-      category: previewRule.category,
-      sources: previewRule.sources,
-      frequency: previewRule.frequency,
-      run_at: previewRule.run_at,
-      condition: previewRule.condition,
-      is_active: true,
-      user_id: user.id,
-    }]);
+    const { error } = await supabase.from("rules").insert(
+      previewRules.map((r) => ({
+        title: r.title,
+        description: r.description,
+        keyword: r.keyword,
+        category: r.category,
+        sources: r.sources,
+        frequency: r.frequency,
+        run_at: r.run_at,
+        condition: r.condition,
+        is_active: true,
+        user_id: user.id,
+      }))
+    );
 
     setConfirming(false);
 
@@ -119,15 +121,20 @@ export default function CreateRuleScreen() {
   };
 
   const handleDiscard = () => {
-    setPreviewRule(null);
+    setPreviewRules([]);
     setMessages((prev) => [
       ...prev,
-      { role: "ai", text: "Đã bỏ rule đó. Bạn muốn chỉnh gì hoặc mô tả lại nhé!" },
+      { role: "ai", text: "Đã bỏ các rule đó. Bạn muốn chỉnh gì hoặc mô tả lại nhé!" },
     ]);
     scrollToBottom();
   };
 
-  const renderRuleCard = (r: RuleDraft) => {
+  // Bỏ 1 rule khỏi danh sách preview trước khi tạo (khi tách ra nhiều rule).
+  const removePreviewAt = (idx: number) => {
+    setPreviewRules((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  const renderRuleCard = (r: RuleDraft, idx: number, total: number) => {
     const cat = findCategory(r.category);
     const rows: { icon: keyof typeof Ionicons.glyphMap; label: string; value: string }[] = [
       { icon: "pricetag-outline", label: "Tên", value: r.title },
@@ -139,7 +146,15 @@ export default function CreateRuleScreen() {
     if (r.condition) rows.push({ icon: "flash-outline", label: "Điều kiện", value: r.condition });
 
     return (
-      <View style={styles.ruleCard}>
+      <View key={idx} style={styles.ruleCard}>
+        {total > 1 && (
+          <View style={styles.ruleCardHeader}>
+            <Text style={styles.ruleCardHeaderText}>Rule {idx + 1}/{total}</Text>
+            <TouchableOpacity onPress={() => removePreviewAt(idx)} disabled={confirming} hitSlop={8}>
+              <Ionicons name="close-circle" size={20} color={colors.subText} />
+            </TouchableOpacity>
+          </View>
+        )}
         {rows.map((row, i) => (
           <View key={i} style={[styles.ruleRow, i < rows.length - 1 && styles.ruleRowDivider]}>
             <Ionicons name={row.icon} size={16} color={colors.primary} />
@@ -225,9 +240,9 @@ export default function CreateRuleScreen() {
         )}
 
         {/* Card tóm tắt rule + nút */}
-        {previewRule && !loading && (
+        {previewRules.length > 0 && !loading && (
           <>
-            {renderRuleCard(previewRule)}
+            {previewRules.map((r, i) => renderRuleCard(r, i, previewRules.length))}
             <View style={styles.actionRow}>
               <TouchableOpacity
                 style={[styles.actionBtn, styles.confirmBtn, confirming && { opacity: 0.6 }]}
@@ -239,7 +254,13 @@ export default function CreateRuleScreen() {
                 ) : (
                   <Ionicons name="checkmark-circle-outline" size={20} color="white" />
                 )}
-                <Text style={styles.actionBtnText}>{confirming ? "Đang tạo..." : "Tạo rule"}</Text>
+                <Text style={styles.actionBtnText}>
+                  {confirming
+                    ? "Đang tạo..."
+                    : previewRules.length > 1
+                      ? `Tạo ${previewRules.length} rule`
+                      : "Tạo rule"}
+                </Text>
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -373,6 +394,21 @@ function createStyles(C: AppColors) {
       borderColor: C.primary + "44",
       padding: 6,
       marginBottom: 14,
+    },
+    ruleCardHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      paddingHorizontal: 10,
+      paddingTop: 8,
+      paddingBottom: 4,
+    },
+    ruleCardHeaderText: {
+      color: C.primary,
+      fontSize: 12,
+      fontWeight: "700",
+      textTransform: "uppercase",
+      letterSpacing: 0.5,
     },
     ruleRow: {
       flexDirection: "row",

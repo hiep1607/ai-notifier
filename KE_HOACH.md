@@ -1,7 +1,7 @@
 # Kế hoạch & Tiến độ — AI Notifier
 
 > File này theo dõi: kiến trúc, việc ĐÃ LÀM, việc CẦN LÀM. Cập nhật sau mỗi task.
-> Cập nhật lần cuối: 2026-06-19 (trigger "thay đổi")
+> Cập nhật lần cuối: 2026-06-19 (tách nhiều rule từ 1 câu)
 
 ## Mục tiêu sản phẩm
 Người dùng mô tả bằng ngôn ngữ tự nhiên → AI tạo **rule** → hệ thống **tự quét tin thật nhiều nguồn 24/7** → gửi **thông báo** đúng chủ đề/điều kiện, kèm link bài gốc.
@@ -38,6 +38,7 @@ pg_cron (mỗi 15 phút) → run-monitor (quét nền, lọc rule tới hạn th
 - [x] Deploy generate-rule + run-monitor; cron đã bật.
 - [x] **Tối ưu quota Gemini**: cron là bộ lập lịch DUY NHẤT (lọc `isDue` theo `last_run_at`+tần suất); Home không quét trùng nữa (chỉ đọc tin); refresh thủ công throttle 5'; client retry lỗi tạm (không retry 429); server gặp 429/503 thì DỪNG sớm (giữ `last_run_at` để quét lại) + trần 8 rule/lần.
 - [x] **Trigger "thay đổi"**: lưu `last_value` mỗi rule; truyền giá trị lần trước vào Gemini để chấm `changed`/`matches_condition`; rule "theo điều kiện" chỉ báo khi số liệu THỰC SỰ đổi so với lần trước (migration 0008).
+- [x] **Tách nhiều rule từ 1 câu**: generate-rule trả về MẢNG `rules` (tách chủ đề độc lập, giữ chung nếu cùng 1 thứ, vẫn hỏi lại khi thiếu); UI hiện nhiều card ("Rule i/N", xóa bớt được) + tạo hàng loạt 1 lượt. Tương thích ngược shape cũ.
 
 ## ⏳ ĐANG CHỜ NGƯỜI DÙNG (tôi không tự làm được)
 - [ ] **Chạy SQL** gộp (`run_at` + `push_tokens`) trong Supabase SQL Editor — tôi không có mật khẩu DB.
@@ -46,12 +47,12 @@ pg_cron (mỗi 15 phút) → run-monitor (quét nền, lọc rule tới hạn th
 
 ## 📋 CẦN LÀM TIẾP (backlog, ưu tiên trên xuống)
 - [ ] **Phân quyền run-monitor theo user** (hiện ai đăng nhập cũng kích hoạt được).
-- [ ] **Tách nhiều rule từ 1 câu** ("theo dõi vàng và bitcoin" → 2 rule).
 - [ ] **Polish UI/UX**: lọc/tìm thông báo, trạng thái rỗng, hiển thị điều kiện/lịch rõ hơn.
 
 ---
 
 ## Nhật ký thay đổi
+- 2026-06-19: Tách nhiều rule từ 1 câu — generate-rule trả mảng rules, UI nhiều card + tạo hàng loạt. Deploy lại generate-rule.
 - 2026-06-19: Trigger "thay đổi" — lưu last_value, so sánh với lần trước để chỉ báo khi số liệu thực sự đổi (migration 0008). Deploy lại run-monitor.
 - 2026-06-19: Tối ưu quota Gemini — bỏ quét trùng ở Home (cron là lịch duy nhất), client retry lỗi tạm, server dừng sớm khi 429 + trần 8 rule/lần. Deploy lại run-monitor.
 - 2026-06-19: Tạo file kế hoạch. Hoàn tất push notification (code) + deploy 2 function.
