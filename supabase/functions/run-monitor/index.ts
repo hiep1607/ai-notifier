@@ -11,7 +11,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, json } from "../_shared/cors.ts";
 import { geminiGenerate, parseJsonLoose, GeminiSource } from "../_shared/gemini.ts";
 
-const MAX_PER_RUN = 1; // mỗi lần quét 1 rule chỉ tạo 1 thông báo (tin mới/đáng chú ý nhất)
+// Mỗi lần quét 1 rule chỉ tạo 1 thông báo (tin mới/đáng chú ý nhất, hoặc 1 tb fallback).
 const MAX_RULES_PER_RUN = 8; // trần số rule gọi Gemini trong 1 lần (giữ quota + tránh timeout)
 
 // Lỗi hết quota / quá tải tạm thời từ Gemini → nên DỪNG sớm thay vì đốt thêm request.
@@ -63,17 +63,16 @@ function isDue(rule: Rule): boolean {
   const last = rule.last_run_at ? Date.parse(rule.last_run_at) : 0;
   const elapsed = Date.now() - last;
 
-  // Ghim giờ cụ thể (định kỳ, không phải "change"): quét trong khung [target-15, target+15)
-  // — tức ĐÃ tới giờ HOẶC SẮP tới trong 15 phút (cron 15' kế tiếp có thể lỡ) → bắn sát giờ.
-  // Guard chu kỳ (1 lần/ngày...) tránh bắn lặp dù khung rộng 30'.
+  // Ghim giờ cụ thể (định kỳ, không phải "change"): gửi ĐÚNG GIỜ, không sớm.
+  // Khung [target, target+15): bắn ngay từ mốc giờ, trễ tối đa 15' (do cron 15'/lần).
+  // Guard chu kỳ (1 lần/ngày...) tránh bắn lặp trong cùng ngày.
   if (rule.frequency !== "change" && rule.run_at && /^\d{1,2}:\d{2}$/.test(rule.run_at)) {
     const [h, m] = rule.run_at.split(":").map(Number);
     const target = h * 60 + m;
     const now = vnMinutesOfDay();
     // Số phút TỪ target tới now theo vòng 24h (xử lý cả mốc gần nửa đêm).
     const diff = (now - target + 1440) % 1440;
-    const inWindow = diff < 15 || diff >= 1440 - 15; // 15' sau target hoặc 15' trước target
-    if (!inWindow) return false;
+    if (diff >= 15) return false; // chỉ trong 15' kể từ giờ hẹn
     return elapsed >= interval - 3600000; // trừ 1h hao để chắc chắn bắt được khung
   }
 
@@ -122,7 +121,7 @@ Chọn DUY NHẤT 1 bài mới và đáng chú ý NHẤT. Trả về JSON THUẦ
   "changed": ${prev ? `true nếu "value" mới KHÁC ĐÁNG KỂ so với "${prev}" (đổi giá/đổi mức theo hướng người dùng quan tâm), false nếu gần như không đổi` : "true"},
   "matches_condition": ${hasCond ? `true nếu bài THẬT SỰ cho thấy điều kiện "${rule.condition}" đã xảy ra (xét cả mức thay đổi so với lần trước nếu điều kiện nói về tăng/giảm), ngược lại false` : "true"}
 }
-Nếu không tìm thấy tin liên quan, trả về mảng rỗng []. Chỉ trả JSON, không giải thích.`;
+QUAN TRỌNG: Nếu KHÔNG có bài khớp hoàn toàn yêu cầu/điều kiện, VẪN trả về bài LIÊN QUAN nhất và MỚI NHẤT (ngày phát hành gần nhất) tìm được, và đặt "matches_condition": false (đừng tự ý đặt true). Chỉ trả về mảng rỗng [] khi hoàn toàn không có bất kỳ thông tin nào về chủ đề. Chỉ trả JSON, không giải thích.`;
 }
 
 function normSentiment(v: unknown): string {
@@ -183,84 +182,151 @@ interface MonitorRuleResult {
   value?: string; // số liệu mới để lưu làm baseline cho lần sau
 }
 
+interface NotifFields {
+  title: string;
+  content: string;
+  details: string;
+  ai_summary: string;
+  source: string;
+  source_url: string;
+  sentiment: string;
+  is_important: boolean;
+}
+
+// Chèn 1 notification + đẩy push. Trả 1 nếu thành công, 0 nếu lỗi.
+// deno-lint-ignore no-explicit-any
+async function insertNotif(supabase: any, rule: Rule, f: NotifFields): Promise<number> {
+  const title = (f.title || "Tin mới").slice(0, 300);
+  const { data: ins, error } = await supabase.from("notifications").insert([{
+    rule_id: rule.id,
+    title,
+    content: f.content ?? "",
+    details: f.details ?? "",
+    ai_summary: f.ai_summary ?? "",
+    source: f.source || "Web",
+    source_url: f.source_url ?? "",
+    category: rule.category ?? "news",
+    sentiment: f.sentiment || "neutral",
+    is_important: Boolean(f.is_important),
+    is_read: false,
+  }]).select("id").single();
+  if (error || !ins) return 0;
+  await sendPush(supabase, rule.user_id, title, f.ai_summary || f.content || "", ins.id);
+  return 1;
+}
+
 // deno-lint-ignore no-explicit-any
 async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult> {
+  const hasCond = Boolean(rule.condition && rule.condition.trim());
+  // KHÔNG có điều kiện (định kỳ / đặt giờ) → LUÔN gửi 1 tb khi tới hạn, kể cả khi
+  // không tìm thấy tin mới. CÓ điều kiện ("theo đk") → chỉ gửi khi thỏa, không thì im.
+  const forceSend = !hasCond;
+  // Rule "theo điều kiện" + đã có giá trị nền → chỉ báo khi giá trị THỰC SỰ đổi.
+  const changeGate = rule.frequency === "change" && Boolean(rule.last_value && rule.last_value.trim());
+  const normVal = (s: string) => s.toLowerCase().replace(/\s+/g, "");
+  const lastValNorm = normVal(String(rule.last_value ?? ""));
+
+  // Gọi Gemini (lỗi mạng/quota sẽ THROW → caller xử lý; chỉ nuốt lỗi parse).
   const { text, sources } = await geminiGenerate({
     system: SEARCH_SYSTEM,
     user: buildPrompt(rule),
     grounding: true,
     temperature: 0.2,
   });
-
-  let items: NewsItem[];
-  try {
-    items = parseJsonLoose<NewsItem[]>(text);
-  } catch {
-    return { inserted: 0 }; // model không trả JSON hợp lệ → bỏ qua lần này
-  }
-  if (!Array.isArray(items) || items.length === 0) return { inserted: 0 };
-
-  // URL grounding thật để vá những item model bỏ trống/bịa source_url.
   const pool: GeminiSource[] = [...sources];
-  const hasCond = Boolean(rule.condition && rule.condition.trim());
-  // Rule "theo điều kiện" + đã có giá trị nền → chỉ báo khi giá trị THỰC SỰ đổi.
-  const changeGate = rule.frequency === "change" && Boolean(rule.last_value && rule.last_value.trim());
-  // So sánh số liệu lỏng (bỏ khoảng trắng + thường hóa) để biết có đổi so với lần trước không.
-  const normVal = (s: string) => s.toLowerCase().replace(/\s+/g, "");
-  const lastValNorm = normVal(String(rule.last_value ?? ""));
+  let items: NewsItem[] = [];
+  try {
+    const parsed = parseJsonLoose<NewsItem[]>(text);
+    if (Array.isArray(parsed)) items = parsed;
+  } catch { /* model không trả JSON → coi như không tìm thấy */ }
 
-  // Lấy URL đã có để chống trùng.
+  // URL đã có (chống trùng) + thông báo gần nhất (để link "trỏ về tb trước").
   const { data: existing } = await supabase
     .from("notifications")
-    .select("source_url")
+    .select("source_url, created_at")
     .eq("rule_id", rule.id);
   const seen = new Set<string>(
     (existing ?? []).map((n: { source_url: string }) => n.source_url).filter(Boolean)
   );
+  const { data: prevRows } = await supabase
+    .from("notifications")
+    .select("title, source, source_url")
+    .eq("rule_id", rule.id)
+    .order("created_at", { ascending: false })
+    .limit(1);
+  const prev = prevRows?.[0] as { title?: string; source?: string; source_url?: string } | undefined;
 
-  let inserted = 0;
+  const top = items[0];
   let value: string | undefined;
-  for (const it of items.slice(0, MAX_PER_RUN)) {
-    // Ghi nhận số liệu mới (kể cả khi không báo) để cập nhật baseline.
-    const v = String(it.value ?? "").trim();
+  let inserted = 0;
+
+  // 1) Có tin và VƯỢT các cổng (điều kiện / thay đổi / chống trùng) → gửi tin THẬT.
+  if (top) {
+    const v = String(top.value ?? "").trim();
     if (v) value = v.slice(0, 200);
 
-    // Bỏ tin không thỏa điều kiện (trigger "match").
-    if (hasCond && !toBool(it.matches_condition)) continue;
-    // Bỏ tin không có thay đổi đáng kể so với lần trước (trigger "thay đổi").
-    if (changeGate && !toBool(it.changed)) continue;
-
-    let url = isUrl(it.source_url) ? it.source_url : "";
-    if (!url && pool.length > 0) url = pool.shift()!.uri; // vá bằng nguồn grounding
-    if (!url) continue; // không có nguồn → bỏ
-    // Chống trùng: bỏ qua khi CÙNG URL mà số liệu KHÔNG đổi (không có gì mới để báo).
-    // Chủ đề kiểu giá-trị (thời tiết/giá): URL nguồn đứng yên nhưng số đổi → vẫn báo.
-    // CHỈ coi là "đã đổi" khi CÓ mốc cũ (lastValNorm) để so; không có mốc thì không tự
-    // nhận đã đổi (tránh báo lặp mỗi phiên khi chưa có cột last_value) → để điều kiện rule
-    // và dedup theo URL quyết định.
+    const condOk = !hasCond || toBool(top.matches_condition);
+    const changeOk = !changeGate || toBool(top.changed);
+    let url = isUrl(top.source_url) ? top.source_url : "";
+    if (!url && pool.length > 0) url = pool.shift()!.uri;
     const valueChanged = v !== "" && lastValNorm !== "" && normVal(v) !== lastValNorm;
-    if (seen.has(url) && !valueChanged) continue;
-    seen.add(url);
+    const fresh = Boolean(url) && (!seen.has(url) || valueChanged);
 
-    const title = String(it.title ?? "").slice(0, 300) || "Tin mới";
-    const { data: ins, error } = await supabase.from("notifications").insert([{
-      rule_id: rule.id,
-      title,
-      content: String(it.content ?? ""),
-      details: String(it.details ?? ""),
-      ai_summary: String(it.ai_summary ?? ""),
-      source: String(it.source ?? "Web"),
-      source_url: url,
-      category: rule.category ?? "news",
-      sentiment: normSentiment(it.sentiment),
-      is_important: toBool(it.is_important),
-      is_read: false,
-    }]).select("id").single();
+    if (condOk && changeOk && fresh) {
+      inserted += await insertNotif(supabase, rule, {
+        title: String(top.title ?? ""),
+        content: String(top.content ?? ""),
+        details: String(top.details ?? ""),
+        ai_summary: String(top.ai_summary ?? ""),
+        source: String(top.source ?? "Web"),
+        source_url: url,
+        sentiment: normSentiment(top.sentiment),
+        is_important: toBool(top.is_important),
+      });
+    }
+  }
 
-    if (!error && ins) {
-      inserted++;
-      // Báo đẩy tới thiết bị của chủ rule (nếu đã đăng ký push).
-      await sendPush(supabase, rule.user_id, title, String(it.ai_summary ?? it.content ?? ""), ins.id);
+  // 2) Rule định kỳ/đặt giờ mà CHƯA gửi được tin thật → vẫn PHẢI gửi 1 tb.
+  if (inserted === 0 && forceSend) {
+    const topic = (rule.keyword || rule.title || "thông tin").slice(0, 60);
+    if (prev) {
+      // Có tb trước → "tạm thời chưa có thay đổi", link trỏ về tb trước.
+      inserted += await insertNotif(supabase, rule, {
+        title: `Chưa có thay đổi mới: ${topic}`,
+        content: "Tạm thời chưa tìm thấy thông tin mới theo yêu cầu — chưa có thay đổi so với thông báo trước. Bạn có thể xem lại bài gần nhất ở liên kết bên dưới.",
+        details: "",
+        ai_summary: "Chưa có thay đổi so với lần trước.",
+        source: prev.source || "Web",
+        source_url: prev.source_url || "",
+        sentiment: "neutral",
+        is_important: false,
+      });
+    } else if (top) {
+      // Chưa có tb nào, nhưng tìm được tin liên quan/gần nhất → gửi như đề xuất.
+      let url = isUrl(top.source_url) ? top.source_url : "";
+      if (!url && pool.length > 0) url = pool[0].uri;
+      inserted += await insertNotif(supabase, rule, {
+        title: `Gợi ý liên quan: ${String(top.title ?? topic).slice(0, 120)}`,
+        content: `Chưa tìm thấy thông tin đúng yêu cầu của bạn. Đây là thông tin liên quan/mới nhất tìm được:\n${String(top.content ?? "")}`,
+        details: String(top.details ?? ""),
+        ai_summary: String(top.ai_summary ?? "Thông tin liên quan gần nhất."),
+        source: String(top.source ?? "Web"),
+        source_url: url,
+        sentiment: normSentiment(top.sentiment),
+        is_important: false,
+      });
+    } else {
+      // Hoàn toàn không có gì.
+      inserted += await insertNotif(supabase, rule, {
+        title: `Chưa tìm thấy thông tin: ${topic}`,
+        content: "Hiện chưa tìm thấy thông tin nào theo yêu cầu của bạn. Hệ thống sẽ tiếp tục theo dõi và cập nhật ở lần quét kế tiếp.",
+        details: "",
+        ai_summary: "Chưa tìm thấy thông tin theo yêu cầu.",
+        source: "Web",
+        source_url: "",
+        sentiment: "neutral",
+        is_important: false,
+      });
     }
   }
 

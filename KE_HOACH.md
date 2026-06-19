@@ -52,6 +52,7 @@ pg_cron (mỗi 15 phút) → run-monitor (quét nền, lọc rule tới hạn th
 ---
 
 ## Nhật ký thay đổi
+- 2026-06-19: Luôn-gửi cho rule định kỳ/đặt giờ — không tìm thấy tin vẫn gửi tb: có tb trước → "chưa thay đổi" + link trỏ tb trước; chưa có → "chưa tìm thấy" + tin liên quan gần nhất; tuyệt đối không im. Rule "theo điều kiện" giữ im khi chưa thỏa. Rule đặt giờ gửi đúng giờ [target, target+15). Deploy lại run-monitor.
 - 2026-06-19: Bỏ phụ thuộc cột last_value cho #8 — khi chưa có mốc cũ thì KHÔNG tự nhận "đã đổi" (hết báo lặp mỗi phiên); cơ chế chính = AI chấm điều kiện rule mỗi phiên + dedup URL. Deploy lại run-monitor.
 - 2026-06-19: Quét sớm cho rule ĐẶT GIỜ — khung [target-15, target+15): bắn sát giờ kể cả cron lỡ nhịp; xử lý mốc gần nửa đêm (vòng 24h). KHÔNG áp cho định kỳ thuần (tránh trôi tần suất). Deploy lại run-monitor.
 - 2026-06-19: Soát hệ thống — sửa lỗi "bỏ đói" rule khi >8 rule (cron giờ sắp theo last_run_at tăng dần, xoay vòng công bằng, rule đặt giờ không bị chen). Deploy lại run-monitor.
