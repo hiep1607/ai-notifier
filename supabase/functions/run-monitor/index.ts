@@ -235,7 +235,10 @@ async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult
     if (!url) continue; // không có nguồn → bỏ
     // Chống trùng: bỏ qua khi CÙNG URL mà số liệu KHÔNG đổi (không có gì mới để báo).
     // Chủ đề kiểu giá-trị (thời tiết/giá): URL nguồn đứng yên nhưng số đổi → vẫn báo.
-    const valueChanged = v !== "" && normVal(v) !== lastValNorm;
+    // CHỈ coi là "đã đổi" khi CÓ mốc cũ (lastValNorm) để so; không có mốc thì không tự
+    // nhận đã đổi (tránh báo lặp mỗi phiên khi chưa có cột last_value) → để điều kiện rule
+    // và dedup theo URL quyết định.
+    const valueChanged = v !== "" && lastValNorm !== "" && normVal(v) !== lastValNorm;
     if (seen.has(url) && !valueChanged) continue;
     seen.add(url);
 
