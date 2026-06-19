@@ -154,8 +154,14 @@ Deno.serve(async (req) => {
     if (error) return json({ error: error.message }, 500);
     if (!rules || rules.length === 0) return json({ inserted: 0, checked: 0 });
 
+    // Ngân sách thời gian: quét tới ~70s thì dừng và trả phần đã làm, tránh nền tảng
+    // kill tiến trình (timeout) khi có nhiều rule. Cron/Home gọi lại sẽ quét tiếp.
+    const deadline = Date.now() + 70000;
     let inserted = 0;
+    let checked = 0;
     for (const rule of rules as Rule[]) {
+      if (Date.now() > deadline) break;
+      checked++;
       try {
         inserted += await monitorRule(supabase, rule);
       } catch (e) {
@@ -163,7 +169,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    return json({ inserted, checked: rules.length });
+    return json({ inserted, checked });
   } catch (err) {
     return json({ error: (err as Error).message }, 500);
   }

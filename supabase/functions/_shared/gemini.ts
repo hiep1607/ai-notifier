@@ -27,6 +27,7 @@ interface GeminiOpts {
   json?: boolean;
   grounding?: boolean;
   temperature?: number;
+  timeoutMs?: number;
 }
 
 export async function geminiGenerate(opts: GeminiOpts): Promise<GeminiResult> {
@@ -49,11 +50,20 @@ export async function geminiGenerate(opts: GeminiOpts): Promise<GeminiResult> {
     body.tools = [{ google_search: {} }];
   }
 
-  const res = await fetch(ENDPOINT(MODEL, key), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  // Timeout cho 1 lượt gọi Gemini — tránh 1 request chậm treo cả hàm tới mức nền tảng kill.
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), opts.timeoutMs ?? 60000);
+  let res: Response;
+  try {
+    res = await fetch(ENDPOINT(MODEL, key), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    });
+  } finally {
+    clearTimeout(t);
+  }
 
   if (!res.ok) {
     const err = await res.text();
