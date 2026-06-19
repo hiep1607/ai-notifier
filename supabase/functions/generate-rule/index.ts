@@ -14,15 +14,17 @@ Một rule hoàn chỉnh gồm các trường:
 - keyword: từ khóa tìm kiếm chính (1-5 từ)
 - category: PHẢI là 1 trong: finance, news, tech, sports, weather, health, other
 - sources: 1 CHUỖI text các nguồn cách nhau dấu phẩy, vd "VnExpress, CafeF". KHÔNG dùng mảng. Để "" nếu không rõ.
-- frequency: PHẢI là 1 trong: change, m30, hourly, daily, weekly
-    * TUYỆT ĐỐI KHÔNG dùng "liên tục"/"realtime". Tần suất dày nhất cho tin thường là "m30" (30 phút).
-    * Dùng "change" (15 phút) CHỈ KHI rule theo dõi SỰ THAY ĐỔI cần phát hiện nhanh: giá tăng/giảm, biến động, vượt ngưỡng, có cập nhật/diễn biến mới.
-    * Tin tức theo dõi bình thường: chọn "m30", "hourly", "daily" hoặc "weekly" tùy mức độ gấp.
+- frequency:
+    * Theo dõi ĐỊNH KỲ → là SỐ PHÚT giữa 2 lần (dạng chuỗi số), TỐI THIỂU 30. Nhận giá trị BẤT KỲ ≥ 30, không bó vào mốc cố định.
+      Quy đổi: "30 phút"→"30", "mỗi giờ"→"60", "mỗi 8 tiếng"→"480", "hằng ngày"→"1440", "hằng tuần"→"10080".
+    * Theo dõi THEO ĐIỀU KIỆN → đúng chữ "change". (KHÔNG nhắc tới con số phút quét nội bộ cho người dùng.)
+    * TUYỆT ĐỐI KHÔNG dùng "liên tục"/"realtime".
 - condition: điều kiện để gửi thông báo, vd "khi giá vượt 80 triệu". Để "" nếu chỉ cần tin mới định kỳ.
 
 HAI KIỂU THEO DÕI — phải xác định rõ người dùng muốn kiểu nào:
-  (1) ĐỊNH KỲ: báo tin mới đều đặn. → frequency là m30/hourly/daily/weekly (tối thiểu 30 phút), condition = "".
-  (2) THEO ĐIỀU KIỆN: chỉ báo KHI chạm yêu cầu (ngưỡng/biến động). → frequency = "change" (hệ thống quét mỗi 15 phút, chỉ báo khi thỏa), condition = mô tả điều kiện cụ thể.
+  (1) ĐỊNH KỲ: báo tin mới đều đặn. → frequency = số phút (≥30), condition = "".
+  (2) THEO ĐIỀU KIỆN: chỉ báo KHI chạm yêu cầu (ngưỡng/biến động). → frequency = "change", condition = mô tả điều kiện cụ thể.
+      (Hệ thống tự lo việc quét đủ thường xuyên — KHÔNG nói số phút quét ra cho người dùng.)
 
 QUY TẮC HỎI LẠI (RẤT QUAN TRỌNG — đừng tự bịa):
 - Nếu CHƯA RÕ CHỦ ĐỀ cụ thể → hỏi lại.
@@ -31,7 +33,7 @@ QUY TẮC HỎI LẠI (RẤT QUAN TRỌNG — đừng tự bịa):
 - Chỉ trả "ready" khi đã rõ: keyword cụ thể + category + (tần suất hợp lệ HOẶC điều kiện cụ thể).
 
 YÊU CẦU KHÔNG HỢP LỆ → trả "need_info" và GIẢI THÍCH VÌ SAO, gợi ý cách sửa:
-- Tần suất nhanh hơn 30 phút cho theo dõi định kỳ (vd "mỗi 5 phút", "mỗi giây", "liên tục") → giải thích tối thiểu là 30 phút/lần; nếu cần phản ứng nhanh thì nên dùng kiểu THEO ĐIỀU KIỆN (quét mỗi 15 phút). Hỏi người dùng chọn lại.
+- Tần suất định kỳ nhanh hơn 30 phút (vd "mỗi 5 phút", "mỗi giây", "liên tục") → giải thích theo dõi định kỳ tối thiểu 30 phút/lần; nếu cần phản ứng nhanh thì nên đặt theo ĐIỀU KIỆN (chỉ báo khi chạm yêu cầu). Hỏi người dùng chọn lại. (Đừng nêu con số phút quét nội bộ.)
 - Chủ đề không theo dõi được bằng tin tức/web → nói thẳng lý do, gợi ý chủ đề khả thi.
 
 Hỏi ngắn gọn, thân thiện, tiếng Việt, mỗi lần 1-2 câu.
@@ -45,9 +47,13 @@ VÍ DỤ A — thiếu thông tin, phải HỎI:
 User: "theo dõi giá ETH"
 → { "status": "need_info", "message": "Bạn muốn theo dõi giá ETH kiểu nào: báo định kỳ (vd mỗi 30 phút, hằng ngày...) hay chỉ báo khi giá chạm mức/biến động nhất định (vd giảm hơn 5%)?" }
 
-VÍ DỤ B — yêu cầu vô lý, GIẢI THÍCH:
+VÍ DỤ B1 — định kỳ tự do (8 tiếng hợp lệ):
+User: "báo giá ETH mỗi 8 tiếng"
+→ { "status": "ready", "message": "Đã tạo rule theo dõi giá ETH:", "rule": { "title": "Theo dõi giá ETH", "description": "Cập nhật giá ETH mỗi 8 tiếng.", "keyword": "giá ETH Ethereum", "category": "finance", "sources": "", "frequency": "480", "condition": "" } }
+
+VÍ DỤ B2 — yêu cầu vô lý, GIẢI THÍCH:
 User: "báo giá vàng mỗi 5 phút"
-→ { "status": "need_info", "message": "Hệ thống quét định kỳ tối thiểu 30 phút/lần nên không đặt 5 phút được. Bạn muốn để 30 phút/lần, hay theo dõi theo điều kiện (vd báo khi vàng biến động mạnh) — kiểu này sẽ quét mỗi 15 phút và chỉ báo khi chạm điều kiện?" }
+→ { "status": "need_info", "message": "Theo dõi định kỳ tối thiểu 30 phút/lần nên không đặt 5 phút được. Bạn muốn để 30 phút/lần, hay theo dõi theo điều kiện (chỉ báo khi vàng biến động mạnh/chạm mức bạn muốn)?" }
 
 VÍ DỤ C — đủ thông tin, kiểu ĐIỀU KIỆN:
 User: "báo khi giá bitcoin giảm hơn 5%"
@@ -55,7 +61,7 @@ User: "báo khi giá bitcoin giảm hơn 5%"
 
 VÍ DỤ D — đủ thông tin, kiểu ĐỊNH KỲ:
 User: "theo dõi tin công nghệ AI mỗi ngày"
-→ { "status": "ready", "message": "Đã tạo rule theo dõi tin AI:", "rule": { "title": "Tin AI mới nhất", "description": "Cập nhật tin tức công nghệ AI hằng ngày.", "keyword": "trí tuệ nhân tạo AI", "category": "tech", "sources": "", "frequency": "daily", "condition": "" } }`;
+→ { "status": "ready", "message": "Đã tạo rule theo dõi tin AI:", "rule": { "title": "Tin AI mới nhất", "description": "Cập nhật tin tức công nghệ AI hằng ngày.", "keyword": "trí tuệ nhân tạo AI", "category": "tech", "sources": "", "frequency": "1440", "condition": "" } }`;
 
 function asText(v: unknown): string {
   if (Array.isArray(v)) return v.join(", ");
@@ -99,7 +105,7 @@ Deno.serve(async (req) => {
           keyword: asText(r.keyword),
           category: asText(r.category) || "other",
           sources: asText(r.sources),
-          frequency: asText(r.frequency) || "daily",
+          frequency: asText(r.frequency) || "1440",
           condition: asText(r.condition),
         },
       });

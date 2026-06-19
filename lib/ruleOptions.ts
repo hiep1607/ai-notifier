@@ -26,24 +26,47 @@ export interface FrequencyOption {
   label: string;
 }
 
-// Tối thiểu 30 phút/lần. Riêng rule theo dõi SỰ THAY ĐỔI quét dày hơn (15 phút).
+// frequency lưu dạng: "change" (theo điều kiện) HOẶC số phút (chuỗi) cho theo dõi định kỳ.
+// Định kỳ tối thiểu 30 phút; theo điều kiện hệ thống tự quét 15 phút (không hiện ra).
+// Các mốc dưới chỉ là gợi ý chọn nhanh khi chỉnh tay — vẫn nhận số phút bất kỳ ≥30.
 export const FREQUENCIES: FrequencyOption[] = [
-  { key: "change", label: "Theo dõi thay đổi (15 phút)" },
-  { key: "m30", label: "Mỗi 30 phút" },
-  { key: "hourly", label: "Mỗi giờ" },
-  { key: "daily", label: "Hằng ngày" },
-  { key: "weekly", label: "Hằng tuần" },
+  { key: "change", label: "Theo điều kiện" },
+  { key: "30", label: "Mỗi 30 phút" },
+  { key: "60", label: "Mỗi giờ" },
+  { key: "480", label: "Mỗi 8 giờ" },
+  { key: "1440", label: "Hằng ngày" },
+  { key: "10080", label: "Hằng tuần" },
 ];
 
-// Tần suất → số phút giữa 2 lần quét (dùng cả ở Edge Function run-monitor).
-// Legacy/không rõ → 30 phút (mức tối thiểu).
-export const FREQUENCY_MINUTES: Record<string, number> = {
-  change: 15,
-  m30: 30,
-  hourly: 60,
-  daily: 1440,
-  weekly: 10080,
+// Khóa cũ (enum) → số phút, để tương thích rule đã tạo trước đây.
+const LEGACY_FREQ: Record<string, number> = {
+  m30: 30, hourly: 60, daily: 1440, weekly: 10080, realtime: 30,
 };
+
+// frequency → số phút giữa 2 lần quét. "change" = 15 (nội bộ). Không rõ/định kỳ < 30 → 30.
+export function freqMinutes(freq?: string): number {
+  if (!freq) return 30;
+  if (freq === "change") return 15;
+  if (freq in LEGACY_FREQ) return LEGACY_FREQ[freq];
+  const n = parseInt(freq, 10);
+  return Number.isFinite(n) && n >= 30 ? n : 30;
+}
+
+// frequency → nhãn hiển thị thân thiện. Theo điều kiện KHÔNG lộ "15 phút".
+export function formatFrequency(freq?: string): string {
+  if (freq === "change") return "Theo điều kiện";
+  const m = freqMinutes(freq);
+  if (m % 10080 === 0) return m === 10080 ? "Hằng tuần" : `Mỗi ${m / 10080} tuần`;
+  if (m % 1440 === 0) return m === 1440 ? "Hằng ngày" : `Mỗi ${m / 1440} ngày`;
+  if (m % 60 === 0) return `Mỗi ${m / 60} giờ`;
+  return `Mỗi ${m} phút`;
+}
+
+// Chuẩn hóa frequency của 1 rule về "khóa" để highlight chip khi chỉnh tay.
+export function toFreqKey(freq?: string): string {
+  if (freq === "change") return "change";
+  return String(freqMinutes(freq));
+}
 
 export interface SentimentOption {
   key: string;

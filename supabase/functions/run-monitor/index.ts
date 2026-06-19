@@ -13,16 +13,20 @@ import { geminiGenerate, parseJsonLoose, GeminiSource } from "../_shared/gemini.
 
 const MAX_PER_RUN = 1; // mỗi lần quét 1 rule chỉ tạo 1 thông báo (tin mới/đáng chú ý nhất)
 
-// Tần suất → số phút giữa 2 lần quét. Legacy/không rõ → 30 phút (mức tối thiểu).
-const FREQ_MINUTES: Record<string, number> = {
-  change: 15,
-  m30: 30,
-  hourly: 60,
-  daily: 1440,
-  weekly: 10080,
+// frequency lưu dạng "change" (theo điều kiện → quét 15 phút) HOẶC số phút (định kỳ, tối thiểu 30).
+// Khóa cũ (enum) vẫn được map để tương thích rule tạo trước đây.
+const LEGACY_FREQ: Record<string, number> = {
+  m30: 30, hourly: 60, daily: 1440, weekly: 10080, realtime: 30,
 };
 function intervalMs(freq?: string): number {
-  return (FREQ_MINUTES[freq ?? ""] ?? 30) * 60000;
+  let mins = 30;
+  if (freq === "change") mins = 15;
+  else if (freq && freq in LEGACY_FREQ) mins = LEGACY_FREQ[freq];
+  else {
+    const n = parseInt(freq ?? "", 10);
+    if (Number.isFinite(n) && n >= 30) mins = n;
+  }
+  return mins * 60000;
 }
 
 interface Rule {

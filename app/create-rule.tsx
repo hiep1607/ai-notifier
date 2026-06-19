@@ -19,7 +19,7 @@ import { alertMessage } from "../lib/dialog";
 import { chatRule, RuleDraft } from "../lib/claude";
 import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";
-import { findCategory, findFrequency } from "../lib/ruleOptions";
+import { findCategory, formatFrequency } from "../lib/ruleOptions";
 import { SCREEN, RADIUS, type AppColors } from "../lib/theme";
 import SuggestionChip from "../components/SuggestionChip";
 
@@ -128,12 +128,11 @@ export default function CreateRuleScreen() {
 
   const renderRuleCard = (r: RuleDraft) => {
     const cat = findCategory(r.category);
-    const freq = findFrequency(r.frequency);
     const rows: { icon: keyof typeof Ionicons.glyphMap; label: string; value: string }[] = [
       { icon: "pricetag-outline", label: "Tên", value: r.title },
       { icon: "search-outline", label: "Từ khóa", value: r.keyword },
       { icon: cat.icon, label: "Danh mục", value: cat.label },
-      { icon: "time-outline", label: "Tần suất", value: freq?.label ?? r.frequency },
+      { icon: "time-outline", label: "Tần suất", value: formatFrequency(r.frequency) },
     ];
     if (r.sources) rows.push({ icon: "globe-outline", label: "Nguồn", value: r.sources });
     if (r.condition) rows.push({ icon: "flash-outline", label: "Điều kiện", value: r.condition });

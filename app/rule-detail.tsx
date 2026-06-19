@@ -18,7 +18,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import { supabase } from "../lib/supabase";
 import { confirmAsync, alertMessage } from "../lib/dialog";
 import { runMonitorForRule } from "../lib/monitor";
-import { CATEGORIES, FREQUENCIES, findCategory, findFrequency } from "../lib/ruleOptions";
+import { CATEGORIES, FREQUENCIES, findCategory, formatFrequency, toFreqKey } from "../lib/ruleOptions";
 import { useTheme } from "../contexts/ThemeContext";
 import { Rule } from "../types/Rule";
 import { Notification } from "../types/Notification";
@@ -94,7 +94,7 @@ export default function RuleDetailScreen() {
     setEditKeyword(rule.keyword);
     setEditCategory(rule.category ?? "news");
     setEditSources(rule.sources ?? "");
-    setEditFrequency(rule.frequency ?? "daily");
+    setEditFrequency(toFreqKey(rule.frequency));
     setEditCondition(rule.condition ?? "");
     setIsEditing(true);
   };
@@ -202,7 +202,6 @@ export default function RuleDetailScreen() {
   }
 
   const cat = findCategory(rule.category);
-  const freq = findFrequency(rule.frequency);
 
   return (
     <ScrollView style={styles.container} showsVerticalScrollIndicator={false}>
@@ -333,7 +332,7 @@ export default function RuleDetailScreen() {
         ) : (
           <View style={styles.infoRow}>
             <Text style={styles.label}>Tần suất</Text>
-            <Text style={styles.value}>{freq?.label ?? "Hằng ngày"}</Text>
+            <Text style={styles.value}>{formatFrequency(rule.frequency)}</Text>
           </View>
         )}
 
