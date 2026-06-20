@@ -276,6 +276,7 @@ async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult
   // Rule "theo điều kiện" + đã có giá trị nền → chỉ báo khi giá trị THỰC SỰ đổi.
   const changeGate = rule.frequency === "change" && Boolean(rule.last_value && rule.last_value.trim());
   const normVal = (s: string) => s.toLowerCase().replace(/\s+/g, "");
+  const normTitle = (t: string) => t.toLowerCase().replace(/\s+/g, " ").trim();
   const lastValNorm = normVal(String(rule.last_value ?? ""));
 
   // Gọi Gemini (lỗi mạng/quota sẽ THROW → caller xử lý; chỉ nuốt lỗi parse).
@@ -292,13 +293,13 @@ async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult
     if (Array.isArray(parsed)) items = parsed;
   } catch { /* model không trả JSON → coi như không tìm thấy */ }
 
-  // URL đã có (chống trùng) + thông báo gần nhất (để link "trỏ về tb trước").
+  // Chống trùng THEO TIÊU ĐỀ (URL grounding hay đổi mỗi lần gọi nên không dùng để dedup).
   const { data: existing } = await supabase
     .from("notifications")
-    .select("source_url, created_at")
+    .select("title, created_at")
     .eq("rule_id", rule.id);
-  const seen = new Set<string>(
-    (existing ?? []).map((n: { source_url: string }) => n.source_url).filter(Boolean)
+  const seenTitles = new Set<string>(
+    (existing ?? []).map((n: { title: string }) => normTitle(String(n.title ?? ""))).filter(Boolean)
   );
   const { data: prevRows } = await supabase
     .from("notifications")
@@ -320,10 +321,11 @@ async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult
 
     const condOk = !hasCond || toBool(top.matches_condition);
     const changeOk = !changeGate || toBool(top.changed);
-    let url = isUrl(top.source_url) ? top.source_url : "";
-    if (!url && pool.length > 0) url = pool.shift()!.uri;
+    // Link: ưu tiên URL nguồn THẬT từ grounding (top.source_url do AI tự ghi, hay bị bịa/sai bài).
+    const url = pool.length > 0 ? pool[0].uri : (isUrl(top.source_url) ? top.source_url : "");
     const valueChanged = v !== "" && lastValNorm !== "" && normVal(v) !== lastValNorm;
-    const fresh = Boolean(url) && (!seen.has(url) || valueChanged);
+    const titleNorm = normTitle(String(top.title ?? ""));
+    const fresh = titleNorm !== "" && (!seenTitles.has(titleNorm) || valueChanged);
 
     if (condOk && changeOk && fresh) {
       inserted += await insertNotif(supabase, rule, {
@@ -358,8 +360,7 @@ async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult
       });
     } else if (top) {
       // Chưa có tb nào, nhưng tìm được tin liên quan/gần nhất → gửi như đề xuất.
-      let url = isUrl(top.source_url) ? top.source_url : "";
-      if (!url && pool.length > 0) url = pool[0].uri;
+      const url = pool.length > 0 ? pool[0].uri : (isUrl(top.source_url) ? top.source_url : "");
       inserted += await insertNotif(supabase, rule, {
         title: `Gợi ý liên quan: ${String(top.title ?? topic).slice(0, 120)}`,
         content: `Chưa tìm thấy thông tin đúng yêu cầu của bạn. Đây là thông tin liên quan/mới nhất tìm được:\n${String(top.content ?? "")}`,
