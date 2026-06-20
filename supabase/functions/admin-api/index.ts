@@ -100,6 +100,151 @@ Deno.serve(async (req) => {
       return json({ ok: res.ok, result: out }, res.ok ? 200 : 502);
     }
 
+    // ===== USERS (danh sách + thống kê) =====
+    if (action === "users") {
+      const { data: usersList } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
+      const users = usersList?.users ?? [];
+      const { data: rules } = await supabase.from("rules").select("id,user_id");
+      const { data: notifs } = await supabase.from("notifications").select("rule_id,created_at");
+      const ruleToUser = new Map((rules ?? []).map((r) => [r.id, r.user_id]));
+      const ruleCount = new Map<string, number>();
+      for (const r of rules ?? []) ruleCount.set(r.user_id, (ruleCount.get(r.user_id) ?? 0) + 1);
+      const notifCount = new Map<string, number>();
+      const lastAct = new Map<string, string>();
+      for (const n of notifs ?? []) {
+        const uid = ruleToUser.get(n.rule_id);
+        if (!uid) continue;
+        notifCount.set(uid, (notifCount.get(uid) ?? 0) + 1);
+        const prev = lastAct.get(uid);
+        if (!prev || n.created_at > prev) lastAct.set(uid, n.created_at);
+      }
+      const out = users.map((u) => ({
+        id: u.id,
+        email: u.email ?? "?",
+        created_at: u.created_at,
+        last_sign_in_at: u.last_sign_in_at ?? null,
+        rules: ruleCount.get(u.id) ?? 0,
+        notifications: notifCount.get(u.id) ?? 0,
+        last_activity: lastAct.get(u.id) ?? null,
+      })).sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""));
+      return json({ users: out });
+    }
+
+    // ===== USER DETAIL =====
+    if (action === "user_detail") {
+      const userId = body.userId as string | undefined;
+      if (!userId) return json({ error: "Thiếu userId." }, 400);
+      const { data: ures } = await supabase.auth.admin.getUserById(userId);
+      const { data: rules } = await supabase.from("rules").select("*")
+        .eq("user_id", userId).order("created_at", { ascending: true });
+      const ruleIds = (rules ?? []).map((r) => r.id);
+      let notifs: unknown[] = [];
+      if (ruleIds.length) {
+        const { data } = await supabase.from("notifications")
+          .select("id,rule_id,title,ai_summary,category,sentiment,created_at")
+          .in("rule_id", ruleIds).order("created_at", { ascending: false }).limit(30);
+        notifs = data ?? [];
+      }
+      const { data: tokens } = await supabase.from("push_tokens")
+        .select("token,platform,created_at").eq("user_id", userId);
+      const { data: settings } = await supabase.from("user_settings")
+        .select("*").eq("user_id", userId).maybeSingle();
+      const usr = ures?.user;
+      return json({
+        user: usr
+          ? { id: usr.id, email: usr.email, created_at: usr.created_at, last_sign_in_at: usr.last_sign_in_at }
+          : null,
+        rules: rules ?? [],
+        notifications: notifs,
+        tokens: tokens ?? [],
+        settings: settings ?? null,
+      });
+    }
+
+    // ===== NOTIFICATIONS (stream toàn hệ thống + lọc) =====
+    if (action === "notifications") {
+      const category = body.category as string | undefined;
+      const sentiment = body.sentiment as string | undefined;
+      let q = supabase.from("notifications")
+        .select("id,rule_id,title,ai_summary,source,source_url,category,sentiment,is_important,created_at")
+        .order("created_at", { ascending: false }).limit(80);
+      if (category) q = q.eq("category", category);
+      if (sentiment) q = q.eq("sentiment", sentiment);
+      const { data: notifs } = await q;
+      const ruleIds = [...new Set((notifs ?? []).map((n) => n.rule_id).filter(Boolean))];
+      const ruleMap = new Map<string, { keyword: string; user_id: string }>();
+      if (ruleIds.length) {
+        const { data: rules } = await supabase.from("rules").select("id,keyword,user_id").in("id", ruleIds);
+        for (const r of rules ?? []) ruleMap.set(r.id, { keyword: r.keyword, user_id: r.user_id });
+      }
+      const { data: usersList } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
+      const emailMap = new Map((usersList?.users ?? []).map((x) => [x.id, x.email ?? "?"]));
+      const enriched = (notifs ?? []).map((n) => {
+        const r = ruleMap.get(n.rule_id);
+        return { ...n, keyword: r?.keyword ?? "?", email: r ? (emailMap.get(r.user_id) ?? "?") : "?" };
+      });
+      return json({ notifications: enriched });
+    }
+
+    // ===== USAGE (quota Gemini 7 ngày) =====
+    if (action === "usage") {
+      try {
+        const since = new Date(Date.now() - 7 * 86400000).toISOString();
+        const { data, error } = await supabase.from("usage_logs")
+          .select("created_at,ok").gte("created_at", since);
+        if (error) throw error;
+        const byDay = new Map<string, { total: number; errors: number }>();
+        for (const r of data ?? []) {
+          const d = new Date(Date.parse(r.created_at) + 7 * 3600000).toISOString().slice(0, 10);
+          const cur = byDay.get(d) ?? { total: 0, errors: 0 };
+          cur.total++;
+          if (!r.ok) cur.errors++;
+          byDay.set(d, cur);
+        }
+        const todayKey = new Date(Date.now() + 7 * 3600000).toISOString().slice(0, 10);
+        const today = byDay.get(todayKey) ?? { total: 0, errors: 0 };
+        const days = [...byDay.entries()].map(([date, v]) => ({ date, ...v }))
+          .sort((a, b) => a.date.localeCompare(b.date));
+        return json({ available: true, today: today.total, todayErrors: today.errors, limit: 1500, days });
+      } catch {
+        return json({ available: false }); // bảng usage_logs chưa tạo
+      }
+    }
+
+    // ===== CRON RUNS (sức khỏe nền) =====
+    if (action === "cron_runs") {
+      try {
+        const { data, error } = await supabase.from("cron_runs")
+          .select("*").order("created_at", { ascending: false }).limit(40);
+        if (error) throw error;
+        return json({ available: true, runs: data ?? [] });
+      } catch {
+        return json({ available: false, runs: [] }); // bảng cron_runs chưa tạo
+      }
+    }
+
+    // ===== PUSH TEST =====
+    if (action === "push_test") {
+      const userId = body.userId as string | undefined;
+      if (!userId) return json({ error: "Thiếu userId." }, 400);
+      const { data: toks } = await supabase.from("push_tokens").select("token").eq("user_id", userId);
+      const tokens = (toks ?? []).map((t) => t.token).filter(Boolean);
+      if (!tokens.length) return json({ ok: false, message: "User này chưa có push token." });
+      const messages = tokens.map((to: string) => ({
+        to,
+        title: "Thông báo thử (admin)",
+        body: "Đây là push test gửi từ trang quản trị.",
+        sound: "default",
+      }));
+      const res = await fetch("https://exp.host/--/api/v2/push/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(messages),
+      });
+      const out = await res.json().catch(() => ({}));
+      return json({ ok: res.ok, sent: tokens.length, result: out });
+    }
+
     return json({ error: "Hành động không hỗ trợ." }, 400);
   } catch (e) {
     return json({ error: e instanceof Error ? e.message : String(e) }, 500);

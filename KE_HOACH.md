@@ -55,11 +55,12 @@ pg_cron (mỗi 15 phút) → run-monitor (quét nền, lọc rule tới hạn th
 - [ ] **Chạy SQL** gộp (`run_at` + `push_tokens`) trong Supabase SQL Editor — tôi không có mật khẩu DB.
 - [ ] **Đổi key Gemini** — key cũ đã lộ trong ảnh chụp lúc setup (bảo mật).
 - [ ] **EAS init + dev build** để nhận push thật trên điện thoại (cần tài khoản Expo + thiết bị; build cloud tính phí).
+- [ ] **Chạy SQL `0012_admin_logs.sql`** (bảng `usage_logs` + `cron_runs`) — để trang Quản trị hiện được Quota Gemini + Lịch sử cron. KHÔNG chạy thì 2 mục đó báo "chưa bật log"; phần còn lại của trang vẫn chạy bình thường.
 
 ## 📋 CẦN LÀM TIẾP (backlog, ưu tiên trên xuống)
 - [x] **Polish UI/UX**: tìm rule (header search), hiện lịch + điều kiện trên thẻ rule (Rules + Home), trạng thái rỗng theo ngữ cảnh; notifications đã có sẵn search/filter/empty/swipe-delete.
 - [ ] (mở rộng nếu cần) lọc thông báo theo rule/danh mục; badge unread trên tab; ẩn nút "Đọc bài gốc" đã xong (chuyển thành "Xem thông báo trước").
-- [~] **Trang quản trị (Admin Dashboard) — CHỈ ADMIN** — Pha 1 XONG (xem kế hoạch bên dưới); Pha 2/3 còn lại.
+- [x] **Trang quản trị (Admin Dashboard) — CHỈ ADMIN** — Pha 1/2/3 XONG (xem kế hoạch bên dưới). Còn chờ user chạy SQL 0012 để bật Quota/Cron.
 
 ---
 
@@ -98,8 +99,8 @@ admins + admin-api (service_role) → route `/admin` gate → Pha 1 (overview + 
 
 ### Tiến độ
 - [x] **Pha 1 (2026-06-20)**: Edge Function `admin-api` (service_role + gate admin theo secret `ADMIN_EMAILS`, hiện = tonghiep1607@gmail.com); `lib/admin.ts`; màn `app/admin.tsx` (overview + danh sách mọi rule + nút "Chạy thử"); lối vào trong Settings (chỉ admin); route đăng ký ở `_layout.tsx`. Smoke test gọi không auth → 401. Đổi danh sách admin = `npx supabase secrets set ADMIN_EMAILS="a@x,b@y" --project-ref idtibfiyfywcugdvlqal` (KHÔNG cần đổi code).
-- [ ] **Pha 2**: danh sách user + chi tiết; stream thông báo toàn hệ thống (lọc category/sentiment).
-- [ ] **Pha 3**: log quota Gemini + cảnh báo (cần bảng `usage_logs`); log cron run (bảng `cron_runs`); push test; quản lý admin trong UI.
+- [x] **Pha 2 (2026-06-20)**: admin-api actions `users`/`user_detail`/`notifications`; màn `app/admin-users.tsx` (danh sách + thống kê), `app/admin-user-detail.tsx` (info + rule + tb + token + giờ yên lặng + nút push test), `app/admin-notifications.tsx` (stream toàn hệ thống + lọc sentiment). Nút điều hướng Người dùng/Thông báo trên trang admin.
+- [x] **Pha 3 (2026-06-20)**: migration `0012_admin_logs.sql` (usage_logs + cron_runs, RLS no-policy → chỉ service_role). run-monitor ghi `usage_logs` mỗi call Gemini + `cron_runs` mỗi lần chạy (best-effort, bảng chưa có thì nuốt lỗi). admin-api actions `usage` (quota 7 ngày, ngưỡng 1.500), `cron_runs` (40 lần gần nhất), `push_test`. Trang admin hiện thanh Quota + lịch sử cron; chờ user chạy SQL 0012 để có số liệu.
 
 ---
 

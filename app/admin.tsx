@@ -23,6 +23,8 @@ import {
   isAdminEmail,
   type AdminOverview,
   type AdminRule,
+  type AdminUsage,
+  type AdminCronRun,
 } from "../lib/admin";
 
 function fmtFreq(f?: string | null): string {
@@ -58,6 +60,8 @@ export default function AdminScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [rules, setRules] = useState<AdminRule[]>([]);
+  const [usage, setUsage] = useState<AdminUsage | null>(null);
+  const [cronRuns, setCronRuns] = useState<AdminCronRun[]>([]);
   const [runningId, setRunningId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -66,12 +70,16 @@ export default function AdminScreen() {
   const load = useCallback(async () => {
     try {
       setError(null);
-      const [ov, rl] = await Promise.all([
+      const [ov, rl, us, cr] = await Promise.all([
         adminCall<AdminOverview>("overview"),
         adminCall<{ rules: AdminRule[] }>("rules"),
+        adminCall<AdminUsage>("usage"),
+        adminCall<{ available: boolean; runs: AdminCronRun[] }>("cron_runs"),
       ]);
       setOverview(ov);
       setRules(rl.rules ?? []);
+      setUsage(us);
+      setCronRuns(cr.runs ?? []);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -174,6 +182,78 @@ export default function AdminScreen() {
             ))}
           </View>
 
+          {/* ĐIỀU HƯỚNG */}
+          <View style={styles.navRow}>
+            <Pressable style={styles.navBtn} onPress={() => router.push("/admin-users" as never)}>
+              <Ionicons name="people-outline" size={20} color={colors.primary} />
+              <Text style={styles.navBtnText}>Người dùng</Text>
+              <Ionicons name="chevron-forward" size={16} color={colors.muted} />
+            </Pressable>
+            <Pressable style={styles.navBtn} onPress={() => router.push("/admin-notifications" as never)}>
+              <Ionicons name="mail-outline" size={20} color={colors.accent} />
+              <Text style={styles.navBtnText}>Thông báo</Text>
+              <Ionicons name="chevron-forward" size={16} color={colors.muted} />
+            </Pressable>
+          </View>
+
+          {/* QUOTA GEMINI */}
+          <Text style={styles.sectionLabel}>Quota Gemini hôm nay</Text>
+          <View style={styles.card}>
+            {usage?.available ? (
+              <>
+                <View style={styles.quotaRow}>
+                  <Text style={styles.quotaNum}>{usage.today ?? 0}</Text>
+                  <Text style={styles.quotaLimit}>/ {usage.limit ?? 1500} lượt gọi</Text>
+                  {(usage.todayErrors ?? 0) > 0 && (
+                    <Text style={styles.quotaErr}>· {usage.todayErrors} lỗi/quota</Text>
+                  )}
+                </View>
+                <View style={styles.barTrack}>
+                  <View
+                    style={[
+                      styles.barFill,
+                      {
+                        width: `${Math.min(100, ((usage.today ?? 0) / (usage.limit || 1500)) * 100)}%`,
+                        backgroundColor:
+                          (usage.today ?? 0) > (usage.limit ?? 1500) * 0.8 ? colors.warning : colors.success,
+                      },
+                    ]}
+                  />
+                </View>
+                {(usage.days?.length ?? 0) > 1 && (
+                  <Text style={styles.quotaSub}>
+                    7 ngày: {usage.days!.map((d) => d.total).join(" · ")}
+                  </Text>
+                )}
+              </>
+            ) : (
+              <Text style={styles.muted}>
+                Chưa bật log quota — chạy migration 0012 (usage_logs) để xem.
+              </Text>
+            )}
+          </View>
+
+          {/* LỊCH SỬ CRON */}
+          <Text style={styles.sectionLabel}>Lịch sử quét nền (cron)</Text>
+          <View style={styles.card}>
+            {cronRuns.length === 0 ? (
+              <Text style={styles.muted}>
+                Chưa có dữ liệu — chạy migration 0012 (cron_runs); log sẽ xuất hiện ở lần quét kế tiếp.
+              </Text>
+            ) : (
+              cronRuns.slice(0, 10).map((c, i) => (
+                <View key={c.id} style={[styles.cronRow, i === 0 && { borderTopWidth: 0 }]}>
+                  <Text style={styles.cronTime}>{fmtAgo(c.created_at)}</Text>
+                  <Text style={styles.cronMeta}>{c.trigger}</Text>
+                  <Text style={styles.cronMeta}>quét {c.rules_scanned}</Text>
+                  <Text style={styles.cronMeta}>+{c.inserted} tb</Text>
+                  {c.quota_hit && <Ionicons name="warning" size={13} color={colors.warning} />}
+                  <Text style={styles.cronDur}>{(c.duration_ms / 1000).toFixed(1)}s</Text>
+                </View>
+              ))
+            )}
+          </View>
+
           {/* DANH SÁCH RULE */}
           <Text style={styles.sectionLabel}>Tất cả rule ({rules.length})</Text>
           {rules.map((r) => (
@@ -250,6 +330,37 @@ function createStyles(C: AppColors) {
     },
     statValue: { color: C.text, fontSize: 24, fontWeight: "800" },
     statLabel: { color: C.subText, fontSize: 12.5 },
+    card: { backgroundColor: C.card, borderRadius: RADIUS.md, padding: 14, marginBottom: 26 },
+    navRow: { flexDirection: "row", gap: 10, marginBottom: 26 },
+    navBtn: {
+      flex: 1,
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      backgroundColor: C.card,
+      borderRadius: RADIUS.md,
+      paddingVertical: 16,
+      paddingHorizontal: 14,
+    },
+    navBtnText: { color: C.text, fontSize: 14.5, fontWeight: "700", flex: 1 },
+    quotaRow: { flexDirection: "row", alignItems: "baseline", gap: 6, marginBottom: 10 },
+    quotaNum: { color: C.text, fontSize: 26, fontWeight: "800" },
+    quotaLimit: { color: C.subText, fontSize: 13 },
+    quotaErr: { color: C.warning, fontSize: 12.5 },
+    barTrack: { height: 8, borderRadius: 4, backgroundColor: C.border, overflow: "hidden" },
+    barFill: { height: 8, borderRadius: 4 },
+    quotaSub: { color: C.muted, fontSize: 12, marginTop: 10 },
+    cronRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      paddingVertical: 9,
+      borderTopWidth: 1,
+      borderTopColor: C.border,
+    },
+    cronTime: { color: C.text, fontSize: 12.5, width: 86 },
+    cronMeta: { color: C.subText, fontSize: 12 },
+    cronDur: { color: C.muted, fontSize: 12, marginLeft: "auto" },
     sectionLabel: {
       color: C.muted,
       fontSize: 13,

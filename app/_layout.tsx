@@ -153,6 +153,21 @@ function RootNavigator() {
           options={{ headerShown: false }}
         />
 
+        <Stack.Screen
+          name="admin-users"
+          options={{ headerShown: false }}
+        />
+
+        <Stack.Screen
+          name="admin-user-detail"
+          options={{ headerShown: false }}
+        />
+
+        <Stack.Screen
+          name="admin-notifications"
+          options={{ headerShown: false }}
+        />
+
 
       </Stack>
 

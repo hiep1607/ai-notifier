@@ -47,3 +47,57 @@ export interface AdminRule {
   is_active?: boolean | null;
   created_at?: string | null;
 }
+
+export interface AdminUser {
+  id: string;
+  email: string;
+  created_at?: string | null;
+  last_sign_in_at?: string | null;
+  rules: number;
+  notifications: number;
+  last_activity?: string | null;
+}
+
+export interface AdminNotification {
+  id: string;
+  rule_id: string;
+  keyword: string;
+  email: string;
+  title: string;
+  ai_summary?: string | null;
+  source?: string | null;
+  source_url?: string | null;
+  category?: string | null;
+  sentiment?: string | null;
+  is_important?: boolean | null;
+  created_at?: string | null;
+}
+
+export interface AdminUserDetail {
+  user: { id: string; email?: string; created_at?: string; last_sign_in_at?: string } | null;
+  rules: AdminRule[];
+  notifications: {
+    id: string; rule_id: string; title: string; ai_summary?: string | null;
+    category?: string | null; sentiment?: string | null; created_at?: string | null;
+  }[];
+  tokens: { token: string; platform?: string | null; created_at?: string | null }[];
+  settings: { quiet_enabled?: boolean; quiet_start?: number; quiet_end?: number } | null;
+}
+
+export interface AdminUsage {
+  available: boolean;
+  today?: number;
+  todayErrors?: number;
+  limit?: number;
+  days?: { date: string; total: number; errors: number }[];
+}
+
+export interface AdminCronRun {
+  id: number;
+  created_at: string;
+  trigger: string;
+  rules_scanned: number;
+  inserted: number;
+  quota_hit: boolean;
+  duration_ms: number;
+}

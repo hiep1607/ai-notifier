@@ -271,6 +271,35 @@ async function insertNotif(supabase: any, rule: Rule, f: NotifFields): Promise<n
   return 1;
 }
 
+// Ghi log 1 lần gọi Gemini (theo dõi quota). Best-effort: bảng có thể chưa tạo → nuốt lỗi.
+// deno-lint-ignore no-explicit-any
+async function logUsage(supabase: any, ruleId: string, ok: boolean, error?: string) {
+  try {
+    await supabase.from("usage_logs").insert({ kind: "gemini", rule_id: ruleId, ok, error: error ?? null });
+  } catch { /* bảng usage_logs chưa có → bỏ qua */ }
+}
+
+// Ghi log 1 lần run-monitor chạy (sức khỏe cron). Best-effort.
+// deno-lint-ignore no-explicit-any
+async function logCronRun(
+  supabase: any,
+  trigger: string,
+  rulesScanned: number,
+  inserted: number,
+  quotaHit: boolean,
+  durationMs: number,
+) {
+  try {
+    await supabase.from("cron_runs").insert({
+      trigger,
+      rules_scanned: rulesScanned,
+      inserted,
+      quota_hit: quotaHit,
+      duration_ms: durationMs,
+    });
+  } catch { /* bảng cron_runs chưa có → bỏ qua */ }
+}
+
 // deno-lint-ignore no-explicit-any
 async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult> {
   const hasCond = Boolean(rule.condition && rule.condition.trim());
@@ -284,12 +313,22 @@ async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult
   const lastValNorm = normVal(String(rule.last_value ?? ""));
 
   // Gọi Gemini (lỗi mạng/quota sẽ THROW → caller xử lý; chỉ nuốt lỗi parse).
-  const { text, sources } = await geminiGenerate({
-    system: SEARCH_SYSTEM,
-    user: buildPrompt(rule),
-    grounding: true,
-    temperature: 0.2,
-  });
+  // Log mỗi call vào usage_logs để theo dõi quota (kể cả khi lỗi).
+  let text: string, sources: GeminiSource[];
+  try {
+    const gen = await geminiGenerate({
+      system: SEARCH_SYSTEM,
+      user: buildPrompt(rule),
+      grounding: true,
+      temperature: 0.2,
+    });
+    text = gen.text;
+    sources = gen.sources;
+    await logUsage(supabase, rule.id, true);
+  } catch (e) {
+    await logUsage(supabase, rule.id, false, (e as Error).message);
+    throw e;
+  }
   const pool: GeminiSource[] = [...sources];
   let items: NewsItem[] = [];
   try {
@@ -396,6 +435,7 @@ async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
+  const startedAt = Date.now();
   try {
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(Deno.env.get("SUPABASE_URL")!, serviceKey);
@@ -423,6 +463,7 @@ Deno.serve(async (req) => {
 
     // manual = bấm "Kiểm tra tin ngay" cho 1 rule → bỏ qua lịch, quét luôn.
     const manual = Boolean(ruleId);
+    const trigger = manual ? "manual" : (isAdmin ? "cron" : "user");
 
     // Chọn tập rule cần quét. Sắp theo last_run_at TĂNG DẦN (lâu chưa quét / chưa quét
     // lần nào lên trước) để khi nhiều rule + trần MAX_RULES_PER_RUN, mọi rule đều tới
@@ -445,7 +486,10 @@ Deno.serve(async (req) => {
 
     const { data: rules, error } = await query;
     if (error) return json({ error: error.message }, 500);
-    if (!rules || rules.length === 0) return json({ inserted: 0, checked: 0 });
+    if (!rules || rules.length === 0) {
+      await logCronRun(supabase, trigger, 0, 0, false, Date.now() - startedAt);
+      return json({ inserted: 0, checked: 0 });
+    }
 
     // User thường chỉ được đụng vào rule của mình (chặn ruleId của người khác → 403).
     if (!isAdmin) {
@@ -491,6 +535,7 @@ Deno.serve(async (req) => {
       await supabase.from("rules").update(upd).eq("id", rule.id);
     }
 
+    await logCronRun(supabase, trigger, checked, inserted, quotaHit, Date.now() - startedAt);
     return json({ inserted, checked, quotaHit });
   } catch (err) {
     return json({ error: (err as Error).message }, 500);
