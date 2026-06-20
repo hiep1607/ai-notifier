@@ -15,6 +15,7 @@
     },
     "android": {
       "package": "com.hiep1607.ainotifiernew",
+      "googleServicesFile": "./google-services.json",
       "softwareKeyboardLayoutMode": "resize",
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,

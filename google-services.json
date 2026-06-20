@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "179581001888",
+    "project_id": "ai-notifier-52174",
+    "storage_bucket": "ai-notifier-52174.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:179581001888:android:a2e4cd366ab87423b0a9c5",
+        "android_client_info": {
+          "package_name": "com.hiep1607.ainotifiernew"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDGT27wl5-QQocTydveTmayNPAx_vkqDEY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
