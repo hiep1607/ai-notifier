@@ -159,9 +159,14 @@ export default function RuleDetailScreen() {
     setMonitoring(true);
 
     try {
-      const { inserted, checked } = await runMonitorForRule(rule);
+      const { inserted, checked, quotaHit } = await runMonitorForRule(rule);
 
-      if (checked === 0) {
+      if (quotaHit && inserted === 0) {
+        alertMessage(
+          "AI đang quá tải",
+          "Hệ thống AI tạm hết lượt (giới hạn miễn phí). Bạn thử lại sau ít phút nhé — tin vẫn được quét tự động ở nền."
+        );
+      } else if (checked === 0) {
         alertMessage("Không có tin", "Chưa tìm thấy bài viết nào cho từ khóa này.");
       } else if (inserted === 0) {
         alertMessage("Đã cập nhật", "Không có tin mới — tất cả bài tìm được đã có trong thông báo.");
