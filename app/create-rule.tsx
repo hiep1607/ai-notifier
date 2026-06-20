@@ -169,7 +169,9 @@ export default function CreateRuleScreen() {
   return (
     <KeyboardAvoidingView
       style={styles.container}
-      behavior={Platform.OS === "ios" ? "padding" : undefined}
+      // Android bật edge-to-edge nên hệ thống KHÔNG tự resize → phải tự né bàn phím
+      // (trước đây để undefined nên bàn phím che mất ô nhập chat).
+      behavior="padding"
       keyboardVerticalOffset={Platform.OS === "ios" ? 60 : 0}
     >
       {/* HEADER */}
