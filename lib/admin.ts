@@ -100,4 +100,5 @@ export interface AdminCronRun {
   inserted: number;
   quota_hit: boolean;
   duration_ms: number;
+  detail?: string | null;
 }

@@ -280,6 +280,7 @@ async function logUsage(supabase: any, ruleId: string, ok: boolean, error?: stri
 }
 
 // Ghi log 1 lần run-monitor chạy (sức khỏe cron). Best-effort.
+// detail = tên các rule đã quét (cột detail có thể chưa tạo → tự bỏ qua, vẫn ghi phần còn lại).
 // deno-lint-ignore no-explicit-any
 async function logCronRun(
   supabase: any,
@@ -288,15 +289,19 @@ async function logCronRun(
   inserted: number,
   quotaHit: boolean,
   durationMs: number,
+  detail?: string,
 ) {
+  const base = {
+    trigger,
+    rules_scanned: rulesScanned,
+    inserted,
+    quota_hit: quotaHit,
+    duration_ms: durationMs,
+  };
   try {
-    await supabase.from("cron_runs").insert({
-      trigger,
-      rules_scanned: rulesScanned,
-      inserted,
-      quota_hit: quotaHit,
-      duration_ms: durationMs,
-    });
+    const { error } = await supabase.from("cron_runs").insert({ ...base, detail: detail ?? null });
+    // Cột detail chưa tồn tại → ghi lại bản không có detail để KHÔNG mất log.
+    if (error) await supabase.from("cron_runs").insert(base);
   } catch { /* bảng cron_runs chưa có → bỏ qua */ }
 }
 
@@ -506,6 +511,7 @@ Deno.serve(async (req) => {
     let inserted = 0;
     let checked = 0;
     let quotaHit = false;
+    const scannedNames: string[] = []; // tên rule thực sự được quét (để log "quét rule nào")
     for (const rule of rules as Rule[]) {
       if (Date.now() > deadline) break;
       if (!manual && checked >= MAX_RULES_PER_RUN) break; // chừa quota; cron lần sau quét tiếp
@@ -514,6 +520,7 @@ Deno.serve(async (req) => {
       if (!manual && !isDue(rule)) continue;
 
       checked++;
+      if (rule.keyword) scannedNames.push(rule.keyword);
       let newValue: string | undefined;
       try {
         const res = await monitorRule(supabase, rule);
@@ -535,7 +542,10 @@ Deno.serve(async (req) => {
       await supabase.from("rules").update(upd).eq("id", rule.id);
     }
 
-    await logCronRun(supabase, trigger, checked, inserted, quotaHit, Date.now() - startedAt);
+    await logCronRun(
+      supabase, trigger, checked, inserted, quotaHit, Date.now() - startedAt,
+      scannedNames.join(", ") || undefined,
+    );
     return json({ inserted, checked, quotaHit });
   } catch (err) {
     return json({ error: (err as Error).message }, 500);

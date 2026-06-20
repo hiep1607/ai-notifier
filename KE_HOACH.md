@@ -55,7 +55,8 @@ pg_cron (mỗi 15 phút) → run-monitor (quét nền, lọc rule tới hạn th
 - [ ] **Chạy SQL** gộp (`run_at` + `push_tokens`) trong Supabase SQL Editor — tôi không có mật khẩu DB.
 - [ ] **Đổi key Gemini** — key cũ đã lộ trong ảnh chụp lúc setup (bảo mật).
 - [ ] **EAS init + dev build** để nhận push thật trên điện thoại (cần tài khoản Expo + thiết bị; build cloud tính phí).
-- [ ] **Chạy SQL `0012_admin_logs.sql`** (bảng `usage_logs` + `cron_runs`) — để trang Quản trị hiện được Quota Gemini + Lịch sử cron. KHÔNG chạy thì 2 mục đó báo "chưa bật log"; phần còn lại của trang vẫn chạy bình thường.
+- [x] **Chạy SQL `0012_admin_logs.sql`** (bảng `usage_logs` + `cron_runs`) — user đã chạy; Quota + Lịch sử cron đã hiện số liệu.
+- [ ] **Chạy SQL `0013_cron_detail.sql`** (cột `detail` cho cron_runs) — để bấm 1 dòng cron xem "đã quét rule nào". Chưa chạy thì vẫn ghi log bình thường (fallback bỏ detail), chỉ là dòng mở rộng báo "không quét rule nào".
 
 ## 📋 CẦN LÀM TIẾP (backlog, ưu tiên trên xuống)
 - [x] **Polish UI/UX**: tìm rule (header search), hiện lịch + điều kiện trên thẻ rule (Rules + Home), trạng thái rỗng theo ngữ cảnh; notifications đã có sẵn search/filter/empty/swipe-delete.

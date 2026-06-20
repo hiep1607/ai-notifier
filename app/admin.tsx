@@ -76,6 +76,7 @@ export default function AdminScreen() {
   const [runningId, setRunningId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [expandedCron, setExpandedCron] = useState<number | null>(null);
 
   // Lọc theo tên rule / email người dùng, sắp xếp mới nhất (theo ngày tạo) lên đầu.
   const shownRules = useMemo(() => {
@@ -274,16 +275,31 @@ export default function AdminScreen() {
                 Chưa có dữ liệu — chạy migration 0012 (cron_runs); log sẽ xuất hiện ở lần quét kế tiếp.
               </Text>
             ) : (
-              cronRuns.slice(0, 10).map((c, i) => (
-                <View key={c.id} style={[styles.cronRow, i === 0 && { borderTopWidth: 0 }]}>
-                  <Text style={styles.cronTime}>{fmtAgo(c.created_at)}</Text>
-                  <Text style={styles.cronMeta}>{c.trigger}</Text>
-                  <Text style={styles.cronMeta}>quét {c.rules_scanned}</Text>
-                  <Text style={styles.cronMeta}>+{c.inserted} tb</Text>
-                  {c.quota_hit && <Ionicons name="warning" size={13} color={colors.warning} />}
-                  <Text style={styles.cronDur}>{(c.duration_ms / 1000).toFixed(1)}s</Text>
-                </View>
-              ))
+              <ScrollView style={styles.cronScroll} nestedScrollEnabled showsVerticalScrollIndicator>
+                {cronRuns.map((c, i) => {
+                  const open = expandedCron === c.id;
+                  return (
+                    <Pressable key={c.id} onPress={() => setExpandedCron(open ? null : c.id)}>
+                      <View style={[styles.cronRow, i === 0 && { borderTopWidth: 0 }]}>
+                        <Text style={styles.cronTime}>{fmtAgo(c.created_at)}</Text>
+                        <Text style={styles.cronMeta}>{c.trigger}</Text>
+                        <Text style={styles.cronMeta}>quét {c.rules_scanned}</Text>
+                        <Text style={styles.cronMeta}>+{c.inserted} tb</Text>
+                        {c.quota_hit && <Ionicons name="warning" size={13} color={colors.warning} />}
+                        <Text style={styles.cronDur}>{(c.duration_ms / 1000).toFixed(1)}s</Text>
+                        <Ionicons name={open ? "chevron-up" : "chevron-down"} size={14} color={colors.muted} />
+                      </View>
+                      {open && (
+                        <Text style={styles.cronDetail}>
+                          {c.detail
+                            ? `Rule đã quét: ${c.detail}`
+                            : "Không quét rule nào (chưa tới hạn hoặc chạm quota Gemini)."}
+                        </Text>
+                      )}
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
             )}
           </View>
 
@@ -428,6 +444,8 @@ function createStyles(C: AppColors) {
     cronTime: { color: C.text, fontSize: 12.5, width: 86 },
     cronMeta: { color: C.subText, fontSize: 12 },
     cronDur: { color: C.muted, fontSize: 12, marginLeft: "auto" },
+    cronScroll: { maxHeight: 360 },
+    cronDetail: { color: C.subText, fontSize: 12, paddingBottom: 9, paddingLeft: 2, lineHeight: 17 },
     sectionLabel: {
       color: C.muted,
       fontSize: 13,
