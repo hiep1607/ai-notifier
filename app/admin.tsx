@@ -77,6 +77,7 @@ export default function AdminScreen() {
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [expandedCron, setExpandedCron] = useState<number | null>(null);
+  const [showFullErr, setShowFullErr] = useState(false);
 
   // Lọc theo tên rule / email người dùng, sắp xếp mới nhất (theo ngày tạo) lên đầu.
   const shownRules = useMemo(() => {
@@ -260,9 +261,11 @@ export default function AdminScreen() {
                   </Text>
                 )}
                 {!!usage.lastError && (
-                  <Text style={styles.quotaErrMsg} numberOfLines={3}>
-                    ⚠️ Lỗi gần nhất: {usage.lastError}
-                  </Text>
+                  <Pressable onPress={() => setShowFullErr((v) => !v)}>
+                    <Text style={styles.quotaErrMsg} numberOfLines={showFullErr ? undefined : 3}>
+                      ⚠️ Lỗi gần nhất ({showFullErr ? "thu gọn" : "bấm xem đầy đủ"}): {usage.lastError}
+                    </Text>
+                  </Pressable>
                 )}
               </>
             ) : (

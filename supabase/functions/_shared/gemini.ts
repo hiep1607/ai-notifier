@@ -71,7 +71,7 @@ export async function geminiGenerate(opts: GeminiOpts): Promise<GeminiResult> {
 
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(`Gemini ${res.status}: ${err.slice(0, 300)}`);
+    throw new Error(`Gemini ${res.status}: ${err.slice(0, 800)}`);
   }
 
   const data = await res.json();
