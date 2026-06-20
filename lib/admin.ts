@@ -90,6 +90,7 @@ export interface AdminUsage {
   todayErrors?: number;
   limit?: number;
   days?: { date: string; total: number; errors: number }[];
+  lastError?: string | null;
 }
 
 export interface AdminCronRun {

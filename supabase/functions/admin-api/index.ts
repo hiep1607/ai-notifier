@@ -205,7 +205,12 @@ Deno.serve(async (req) => {
         const today = byDay.get(todayKey) ?? { total: 0, errors: 0 };
         const days = [...byDay.entries()].map(([date, v]) => ({ date, ...v }))
           .sort((a, b) => a.date.localeCompare(b.date));
-        return json({ available: true, today: today.total, todayErrors: today.errors, limit: 1500, days });
+        // Lỗi Gemini gần nhất (để chẩn đoán 429/quota).
+        const { data: errRows } = await supabase.from("usage_logs")
+          .select("error,created_at").eq("ok", false)
+          .order("created_at", { ascending: false }).limit(1);
+        const lastError: string | null = errRows?.[0]?.error ?? null;
+        return json({ available: true, today: today.total, todayErrors: today.errors, limit: 1500, days, lastError });
       } catch {
         return json({ available: false }); // bảng usage_logs chưa tạo
       }

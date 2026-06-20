@@ -259,6 +259,11 @@ export default function AdminScreen() {
                     7 ngày: {usage.days!.map((d) => d.total).join(" · ")}
                   </Text>
                 )}
+                {!!usage.lastError && (
+                  <Text style={styles.quotaErrMsg} numberOfLines={3}>
+                    ⚠️ Lỗi gần nhất: {usage.lastError}
+                  </Text>
+                )}
               </>
             ) : (
               <Text style={styles.muted}>
@@ -293,7 +298,11 @@ export default function AdminScreen() {
                         <Text style={styles.cronDetail}>
                           {c.detail
                             ? `Rule đã quét: ${c.detail}`
-                            : "Không quét rule nào (chưa tới hạn hoặc chạm quota Gemini)."}
+                            : c.rules_scanned > 0
+                              ? `Đã quét ${c.rules_scanned} rule (log cũ chưa ghi tên — chạy SQL 0013 để có tên).`
+                              : c.quota_hit
+                                ? "Thử quét nhưng chạm quota/giới hạn Gemini (429) nên dừng — chưa quét được rule nào."
+                                : "Không có rule nào tới hạn ở nhịp này nên bỏ qua."}
                         </Text>
                       )}
                     </Pressable>
@@ -433,6 +442,7 @@ function createStyles(C: AppColors) {
     barTrack: { height: 8, borderRadius: 4, backgroundColor: C.border, overflow: "hidden" },
     barFill: { height: 8, borderRadius: 4 },
     quotaSub: { color: C.muted, fontSize: 12, marginTop: 10 },
+    quotaErrMsg: { color: C.warning, fontSize: 12, marginTop: 8, lineHeight: 16 },
     cronRow: {
       flexDirection: "row",
       alignItems: "center",
