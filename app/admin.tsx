@@ -1,6 +1,6 @@
 // TRANG QUẢN TRỊ (Pha 1) — chỉ admin. Tổng quan + danh sách mọi rule + chạy thử 1 rule.
 // Dữ liệu lấy qua Edge Function admin-api (server tự kiểm tra quyền admin).
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
@@ -75,6 +75,11 @@ export default function AdminScreen() {
   const [runningId, setRunningId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Bấm thẻ Rule → cuộn xuống danh sách rule ngay trong trang.
+  const scrollRef = useRef<ScrollView>(null);
+  const rulesY = useRef(0);
+  const scrollToRules = () => scrollRef.current?.scrollTo({ y: rulesY.current, animated: true });
+
   const allowed = isAdminEmail(user?.email);
 
   const load = useCallback(async () => {
@@ -128,21 +133,30 @@ export default function AdminScreen() {
     );
   }
 
-  const stats: { label: string; value: number; icon: keyof typeof Ionicons.glyphMap; color: string }[] =
-    overview
-      ? [
-          { label: "Người dùng", value: overview.users, icon: "people-outline", color: colors.primary },
-          { label: "Rule (tổng)", value: overview.rulesTotal, icon: "list-outline", color: colors.accent },
-          { label: "Rule đang bật", value: overview.rulesActive, icon: "flash-outline", color: colors.success },
-          { label: "Rule để êm", value: overview.rulesMuted, icon: "notifications-off-outline", color: colors.warning },
-          { label: "Thông báo (tổng)", value: overview.notifTotal, icon: "mail-outline", color: colors.primary },
-          { label: "Thông báo hôm nay", value: overview.notifToday, icon: "today-outline", color: colors.success },
-          { label: "Push token", value: overview.pushTokens, icon: "phone-portrait-outline", color: colors.accent },
-        ]
-      : [];
+  const goUsers = () => router.push("/admin-users" as never);
+  const goNotifs = () => router.push("/admin-notifications" as never);
+
+  const stats: {
+    label: string;
+    value: number;
+    icon: keyof typeof Ionicons.glyphMap;
+    color: string;
+    onPress?: () => void;
+  }[] = overview
+    ? [
+        { label: "Người dùng", value: overview.users, icon: "people-outline", color: colors.primary, onPress: goUsers },
+        { label: "Rule (tổng)", value: overview.rulesTotal, icon: "list-outline", color: colors.accent, onPress: scrollToRules },
+        { label: "Rule đang bật", value: overview.rulesActive, icon: "flash-outline", color: colors.success, onPress: scrollToRules },
+        { label: "Rule để êm", value: overview.rulesMuted, icon: "notifications-off-outline", color: colors.warning, onPress: scrollToRules },
+        { label: "Thông báo (tổng)", value: overview.notifTotal, icon: "mail-outline", color: colors.primary, onPress: goNotifs },
+        { label: "Thông báo hôm nay", value: overview.notifToday, icon: "today-outline", color: colors.success, onPress: goNotifs },
+        { label: "Push token", value: overview.pushTokens, icon: "phone-portrait-outline", color: colors.accent },
+      ]
+    : [];
 
   return (
     <ScrollView
+      ref={scrollRef}
       style={styles.container}
       contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}
@@ -184,26 +198,20 @@ export default function AdminScreen() {
           {/* TỔNG QUAN */}
           <View style={styles.statGrid}>
             {stats.map((s) => (
-              <View key={s.label} style={[styles.statCard, { width: statW }]}>
-                <Ionicons name={s.icon} size={20} color={s.color} />
+              <Pressable
+                key={s.label}
+                style={[styles.statCard, { width: statW }]}
+                onPress={s.onPress}
+                disabled={!s.onPress}
+              >
+                <View style={styles.statTop}>
+                  <Ionicons name={s.icon} size={20} color={s.color} />
+                  {!!s.onPress && <Ionicons name="chevron-forward" size={15} color={colors.muted} />}
+                </View>
                 <Text style={styles.statValue}>{s.value}</Text>
                 <Text style={styles.statLabel}>{s.label}</Text>
-              </View>
+              </Pressable>
             ))}
-          </View>
-
-          {/* ĐIỀU HƯỚNG */}
-          <View style={styles.navRow}>
-            <Pressable style={styles.navBtn} onPress={() => router.push("/admin-users" as never)}>
-              <Ionicons name="people-outline" size={20} color={colors.primary} />
-              <Text style={styles.navBtnText}>Người dùng</Text>
-              <Ionicons name="chevron-forward" size={16} color={colors.muted} />
-            </Pressable>
-            <Pressable style={styles.navBtn} onPress={() => router.push("/admin-notifications" as never)}>
-              <Ionicons name="mail-outline" size={20} color={colors.accent} />
-              <Text style={styles.navBtnText}>Thông báo</Text>
-              <Ionicons name="chevron-forward" size={16} color={colors.muted} />
-            </Pressable>
           </View>
 
           {/* QUOTA GEMINI */}
@@ -265,7 +273,12 @@ export default function AdminScreen() {
           </View>
 
           {/* DANH SÁCH RULE */}
-          <Text style={styles.sectionLabel}>Tất cả rule ({rules.length})</Text>
+          <Text
+            style={styles.sectionLabel}
+            onLayout={(e) => { rulesY.current = e.nativeEvent.layout.y; }}
+          >
+            Tất cả rule ({rules.length})
+          </Text>
           {rules.map((r) => (
             <View key={r.id} style={styles.ruleCard}>
               <View style={styles.ruleHead}>
@@ -346,18 +359,7 @@ function createStyles(C: AppColors) {
     statValue: { color: C.text, fontSize: 22, fontWeight: "800" },
     statLabel: { color: C.subText, fontSize: 12.5 },
     card: { backgroundColor: C.card, borderRadius: RADIUS.md, padding: 14, marginBottom: 26 },
-    navRow: { flexDirection: "row", gap: 10, marginBottom: 26 },
-    navBtn: {
-      flex: 1,
-      flexDirection: "row",
-      alignItems: "center",
-      gap: 8,
-      backgroundColor: C.card,
-      borderRadius: RADIUS.md,
-      paddingVertical: 16,
-      paddingHorizontal: 14,
-    },
-    navBtnText: { color: C.text, fontSize: 14.5, fontWeight: "700", flex: 1 },
+    statTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
     quotaRow: { flexDirection: "row", alignItems: "baseline", gap: 6, marginBottom: 10 },
     quotaNum: { color: C.text, fontSize: 26, fontWeight: "800" },
     quotaLimit: { color: C.subText, fontSize: 13 },
