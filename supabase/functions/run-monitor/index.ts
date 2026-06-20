@@ -19,9 +19,11 @@ import { corsHeaders, json } from "../_shared/cors.ts";
 import { geminiGenerate, parseJsonLoose, GeminiSource } from "../_shared/gemini.ts";
 
 // Mỗi lần quét 1 rule chỉ tạo 1 thông báo (tin mới/đáng chú ý nhất, hoặc 1 tb fallback).
-const MAX_RULES_PER_RUN = 4; // trần số rule gọi Gemini trong 1 lần (giữ quota free + tránh timeout)
+const MAX_RULES_PER_RUN = 2; // trần số rule gọi Gemini trong 1 lần (giảm để né 429 grounding free tier)
 
 // Lỗi hết quota / quá tải tạm thời từ Gemini → nên DỪNG sớm thay vì đốt thêm request.
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 function isQuotaErr(e: unknown): boolean {
   const m = (e instanceof Error ? e.message : String(e)).toLowerCase();
   return m.includes("429") || m.includes("resource_exhausted") || m.includes("quota") ||
@@ -35,7 +37,8 @@ const LEGACY_FREQ: Record<string, number> = {
 };
 function intervalMs(freq?: string): number {
   let mins = 30;
-  if (freq === "change") mins = 15;
+  // Giãn nhịp để né 429 grounding free tier: "theo điều kiện" 15→60 phút (giảm 4 lần số call/ngày).
+  if (freq === "change") mins = 60;
   else if (freq && freq in LEGACY_FREQ) mins = LEGACY_FREQ[freq];
   else {
     const n = parseInt(freq ?? "", 10);
@@ -519,6 +522,8 @@ Deno.serve(async (req) => {
       // Lịch theo từng rule: chỉ quét khi tới hạn (trừ khi gọi thủ công "Kiểm tra tin ngay").
       if (!manual && !isDue(rule)) continue;
 
+      // Giãn giữa các lần gọi trong cùng 1 run để né rate-limit theo phút.
+      if (checked > 0) await sleep(4000);
       checked++;
       if (rule.keyword) scannedNames.push(rule.keyword);
       let newValue: string | undefined;
