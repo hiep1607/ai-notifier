@@ -281,9 +281,12 @@ export default function AdminScreen() {
                     ]}
                   />
                 </View>
+                <Text style={styles.quotaSub}>
+                  Tính theo mốc reset của Gemini — reset lúc ~14–15h VN (nửa đêm giờ Mỹ).
+                </Text>
                 {(usage.days?.length ?? 0) > 1 && (
                   <Text style={styles.quotaSub}>
-                    7 ngày: {usage.days!.map((d) => d.total).join(" · ")}
+                    Mấy ngày gần đây: {usage.days!.map((d) => d.total).join(" · ")}
                   </Text>
                 )}
                 {!!usage.lastError && (

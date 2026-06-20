@@ -25,6 +25,17 @@ function vnTodayStartIso(): string {
   return new Date(startVnMs).toISOString();
 }
 
+// Ngày (YYYY-MM-DD) theo giờ Thái Bình Dương — ĐÚNG mốc reset quota Gemini free tier.
+// Dùng Intl để tự xử lý DST (PST/PDT). Bộ đếm quota reset cùng lúc Gemini reset.
+function pacificDay(ms: number): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Los_Angeles",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(ms));
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
@@ -195,13 +206,13 @@ Deno.serve(async (req) => {
         if (error) throw error;
         const byDay = new Map<string, { total: number; errors: number }>();
         for (const r of data ?? []) {
-          const d = new Date(Date.parse(r.created_at) + 7 * 3600000).toISOString().slice(0, 10);
+          const d = pacificDay(Date.parse(r.created_at)); // gom theo NGÀY GIỜ MỸ (mốc reset Gemini)
           const cur = byDay.get(d) ?? { total: 0, errors: 0 };
           cur.total++;
           if (!r.ok) cur.errors++;
           byDay.set(d, cur);
         }
-        const todayKey = new Date(Date.now() + 7 * 3600000).toISOString().slice(0, 10);
+        const todayKey = pacificDay(Date.now());
         const today = byDay.get(todayKey) ?? { total: 0, errors: 0 };
         const days = [...byDay.entries()].map(([date, v]) => ({ date, ...v }))
           .sort((a, b) => a.date.localeCompare(b.date));
