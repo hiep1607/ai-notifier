@@ -131,7 +131,11 @@ interface NewsItem {
 const SEARCH_SYSTEM =
   `Bạn là AI giám sát tin tức tiếng Việt. Bạn DÙNG Google Search để tìm tin THẬT, MỚI NHẤT.
 TUYỆT ĐỐI KHÔNG bịa tin, không bịa số liệu, không bịa URL. Chỉ dùng thông tin từ kết quả tìm được.
-Ưu tiên nguồn uy tín (VnExpress, Tuổi Trẻ, Thanh Niên, Dân Trí, CafeF, VietnamNet...).`;
+Ưu tiên nguồn uy tín (VnExpress, Tuổi Trẻ, Thanh Niên, Dân Trí, CafeF, VietnamNet...).
+
+QUY TẮC TRÌNH BÀY (áp dụng cho MỌI thông báo):
+- Khi có thay đổi số liệu (giá, lãi suất, %, mức độ...): LUÔN nêu RÕ "từ [mức CŨ] → [mức MỚI]" kèm mức chênh, KHÔNG chỉ nói "giảm/tăng bao nhiêu" chung chung. Nếu được cung cấp giá trị lần trước thì dùng nó làm mốc cũ.
+- Ưu tiên ĐƠN VỊ & TIỀN TỆ Việt Nam (VND/đồng, °C, km, kg, m²...). Nếu nguồn gốc dùng đơn vị/tiền nước ngoài (USD, EUR, °F, dặm, oz, inch...), VẪN nêu số gốc NHƯNG kèm quy đổi/giải thích sang đơn vị Việt trong ngoặc để người Việt dễ hiểu — ví dụ: "2.650 USD/oz (~85 triệu đồng/lượng)", "100°F (~38°C)". NGOẠI LỆ: nếu yêu cầu/điều kiện của người dùng nói rõ muốn dùng đơn vị/tiền nước ngoài thì theo đúng ý họ.`;
 
 function buildPrompt(rule: Rule): string {
   const hasCond = Boolean(rule.condition && rule.condition.trim());
@@ -144,9 +148,9 @@ ${prev ? `Số liệu/giá trị GHI NHẬN LẦN TRƯỚC của chủ đề nà
 Chọn DUY NHẤT 1 bài mới và đáng chú ý NHẤT. Trả về JSON THUẦN (không markdown) là MẢNG đúng 1 phần tử:
 {
   "title": "tiêu đề bài báo thật",
-  "content": "3-5 câu tóm tắt ĐẦY ĐỦ: chuyện gì xảy ra, số liệu cụ thể (giá, %, mốc thời gian, mức tăng/giảm), bối cảnh chính. Chỉ dùng dữ liệu CÓ THẬT trong bài.",
+  "content": "3-5 câu tóm tắt ĐẦY ĐỦ: chuyện gì xảy ra, số liệu cụ thể. Nếu có thay đổi/biến động: ghi RÕ 'từ [mức cũ] → [mức mới]' (vd 'giảm từ 76 triệu xuống 74,5 triệu đồng/lượng'), không chỉ nói chênh lệch. Đơn vị/tiền tệ ưu tiên kiểu Việt Nam; số liệu nước ngoài thì kèm quy đổi trong ngoặc. Chỉ dùng dữ liệu CÓ THẬT trong bài.",
   "details": "Phân tích chi tiết hơn (3-5 câu): nguyên nhân, diễn biến trước đó, tác động/ý nghĩa, dự báo nếu bài có nêu. Vẫn TUYỆT ĐỐI không bịa số.",
-  "ai_summary": "1 câu ngắn ~15 từ chứa điểm mấu chốt kèm số nếu có",
+  "ai_summary": "1 câu ngắn ~15 từ chứa điểm mấu chốt; nếu có thay đổi nêu 'từ X → Y'; ưu tiên đơn vị/tiền VN",
   "source": "tên báo (vd: VnExpress)",
   "source_url": "URL bài viết gốc",
   "sentiment": "positive | neutral | negative",
