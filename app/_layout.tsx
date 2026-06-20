@@ -148,6 +148,11 @@ function RootNavigator() {
           options={{ headerShown: false }}
         />
 
+        <Stack.Screen
+          name="admin"
+          options={{ headerShown: false }}
+        />
+
 
       </Stack>
 

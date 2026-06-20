@@ -59,6 +59,47 @@ pg_cron (mỗi 15 phút) → run-monitor (quét nền, lọc rule tới hạn th
 ## 📋 CẦN LÀM TIẾP (backlog, ưu tiên trên xuống)
 - [x] **Polish UI/UX**: tìm rule (header search), hiện lịch + điều kiện trên thẻ rule (Rules + Home), trạng thái rỗng theo ngữ cảnh; notifications đã có sẵn search/filter/empty/swipe-delete.
 - [ ] (mở rộng nếu cần) lọc thông báo theo rule/danh mục; badge unread trên tab; ẩn nút "Đọc bài gốc" đã xong (chuyển thành "Xem thông báo trước").
+- [~] **Trang quản trị (Admin Dashboard) — CHỈ ADMIN** — Pha 1 XONG (xem kế hoạch bên dưới); Pha 2/3 còn lại.
+
+---
+
+## 🛠 KẾ HOẠCH: Trang quản trị (Admin Dashboard) — chỉ chủ app
+> Mục tiêu: 1 nơi để theo dõi & vận hành toàn hệ thống (mọi user/rule/cron/quota), không phải mò Supabase Dashboard.
+
+### Nơi đặt (đề xuất)
+- **Route `/admin` trong chính app Expo hiện tại** (web là chính), KHÔNG dựng project web thứ 2.
+- Lý do: tái dùng auth + Supabase client + pipeline deploy/OTA sẵn có; chỉ thêm 1 màn ẩn, vào bằng tài khoản admin. Trên mobile ẩn entry, dùng chủ yếu trên trình duyệt.
+
+### Bảo mật (BẮT BUỘC — không được phá RLS)
+- RLS hiện chặn mỗi user chỉ thấy dữ liệu của mình. Admin cần đọc TẤT CẢ → KHÔNG nới RLS.
+- Cách đúng: **Edge Function `admin-api` (service_role)** xác thực JWT → kiểm tra user nằm trong **allowlist admin** → mới trả dữ liệu tổng hợp. Client `/admin` chỉ gọi function này.
+- Cần: bảng `admins(user_id)` (hoặc allowlist env) để phân quyền; gate UI + gate server (2 lớp).
+
+### Tính năng (chia pha)
+- **Pha 1 — MVP (xem + vận hành cơ bản)**
+  - Tổng quan: số user, số rule (bật/tắt/muted), số thông báo (hôm nay/tổng), token push.
+  - Danh sách RULE toàn hệ thống: chủ đề, tần suất, `last_run_at`, `muted`, `last_value`; lọc/tìm.
+  - Nút **chạy thử 1 rule** (admin trigger run-monitor) để soi lỗi.
+- **Pha 2 — Người dùng & nội dung**
+  - Danh sách user: email, ngày tạo, số rule, số thông báo, hoạt động cuối; mở chi tiết 1 user.
+  - Stream thông báo mới nhất toàn hệ thống (soi chất lượng AI + link đúng/sai), lọc category/sentiment.
+- **Pha 3 — Vận hành & quota**
+  - Lịch sử cron (thành công/lỗi/HTTP status). *(cần hạ tầng log — xem dưới)*
+  - Theo dõi **quota Gemini/ngày** + cảnh báo gần ngưỡng 1.500. *(cần log usage)*
+  - Gửi **push test**; quản lý danh sách admin.
+
+### Hạ tầng còn THIẾU phải làm trước (gaps)
+1. `admins` (phân quyền) + Edge Function `admin-api` (service_role, check admin).
+2. **Log quota Gemini**: hiện KHÔNG đếm số call/429 → thêm bảng `usage_logs` (hoặc đếm trong run-monitor) thì Pha 3 mới có số liệu.
+3. **Log cron run**: tạo bảng `cron_runs` (mỗi lần run-monitor: số rule quét, lỗi, thời lượng) — hoặc đọc tạm `net._http_response`.
+
+### Thứ tự làm gợi ý
+admins + admin-api (service_role) → route `/admin` gate → Pha 1 (overview + rule list + chạy thử) → log usage/cron → Pha 2 → Pha 3.
+
+### Tiến độ
+- [x] **Pha 1 (2026-06-20)**: Edge Function `admin-api` (service_role + gate admin theo secret `ADMIN_EMAILS`, hiện = tonghiep1607@gmail.com); `lib/admin.ts`; màn `app/admin.tsx` (overview + danh sách mọi rule + nút "Chạy thử"); lối vào trong Settings (chỉ admin); route đăng ký ở `_layout.tsx`. Smoke test gọi không auth → 401. Đổi danh sách admin = `npx supabase secrets set ADMIN_EMAILS="a@x,b@y" --project-ref idtibfiyfywcugdvlqal` (KHÔNG cần đổi code).
+- [ ] **Pha 2**: danh sách user + chi tiết; stream thông báo toàn hệ thống (lọc category/sentiment).
+- [ ] **Pha 3**: log quota Gemini + cảnh báo (cần bảng `usage_logs`); log cron run (bảng `cron_runs`); push test; quản lý admin trong UI.
 
 ---
 

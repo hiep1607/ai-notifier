@@ -11,6 +11,7 @@ import { confirmAsync, alertMessage } from "../../lib/dialog";
 import { SCREEN, RADIUS, type AppColors } from "../../lib/theme";
 import { useAuth } from "../../contexts/AuthContext";
 import { useTheme } from "../../contexts/ThemeContext";
+import { isAdminEmail } from "../../lib/admin";
 import SettingRow from "../../components/SettingRow";
 
 const fmtHour = (h: number) => `${String(h).padStart(2, "0")}:00`;
@@ -158,6 +159,22 @@ export default function SettingsScreen() {
           last
         />
       </View>
+
+      {/* QUẢN TRỊ (chỉ admin) */}
+      {isAdminEmail(user?.email) && (
+        <>
+          <Text style={styles.sectionLabel}>Quản trị</Text>
+          <View style={styles.card}>
+            <SettingRow
+              icon="shield-checkmark-outline"
+              label="Trang quản trị"
+              onPress={() => router.push("/admin")}
+              iconColor={colors.primary}
+              last
+            />
+          </View>
+        </>
+      )}
 
       {/* THÔNG BÁO */}
       <Text style={styles.sectionLabel}>Thông báo</Text>
