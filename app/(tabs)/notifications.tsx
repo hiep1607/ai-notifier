@@ -37,6 +37,7 @@ export default function NotificationsScreen() {
 
   const [activeTab, setActiveTab] = useState("all");
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [ruleNames, setRuleNames] = useState<Record<string, string>>({});
   const [refreshing, setRefreshing] = useState(false);
   const [searchMode, setSearchMode] = useState(false);
   const [searchText, setSearchText] = useState("");
@@ -67,10 +68,17 @@ export default function NotificationsScreen() {
 
     const { data: userRules } = await supabase
       .from("rules")
-      .select("id")
+      .select("id, title, keyword")
       .eq("user_id", user.id);
 
     const ruleIds = userRules?.map((r) => r.id) ?? [];
+
+    // Map rule_id → tên rule để gắn nhãn lên từng thông báo (nhìn là biết của rule nào).
+    const nameMap: Record<string, string> = {};
+    (userRules ?? []).forEach((r: { id: string; title?: string; keyword?: string }) => {
+      nameMap[r.id] = r.title || r.keyword || "Rule";
+    });
+    setRuleNames(nameMap);
 
     if (ruleIds.length === 0) {
       setNotifications([]);
@@ -257,6 +265,15 @@ export default function NotificationsScreen() {
             <IconBadge category={item.category} size={48} />
 
             <View style={styles.cardBody}>
+              {ruleNames[item.rule_id] ? (
+                <View style={styles.ruleChip}>
+                  <Ionicons name="pricetag" size={11} color={colors.primary} />
+                  <Text style={styles.ruleChipText} numberOfLines={1}>
+                    {ruleNames[item.rule_id]}
+                  </Text>
+                </View>
+              ) : null}
+
               <View style={styles.cardTop}>
                 <Text style={styles.cardTitle} numberOfLines={1}>{item.title}</Text>
                 {!item.is_read && <View style={styles.dot} />}
@@ -397,6 +414,24 @@ function createStyles(C: AppColors) {
     cardBody: {
       flex: 1,
       marginLeft: 14,
+    },
+    ruleChip: {
+      flexDirection: "row",
+      alignItems: "center",
+      alignSelf: "flex-start",
+      gap: 4,
+      backgroundColor: C.primary + "1A",
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      borderRadius: 999,
+      marginBottom: 6,
+      maxWidth: "100%",
+    },
+    ruleChipText: {
+      color: C.primary,
+      fontSize: 11,
+      fontWeight: "700",
+      maxWidth: 180,
     },
     cardTop: {
       flexDirection: "row",
