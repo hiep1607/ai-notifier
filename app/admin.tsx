@@ -8,6 +8,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   useWindowDimensions,
   View,
 } from "react-native";
@@ -74,6 +75,20 @@ export default function AdminScreen() {
   const [cronRuns, setCronRuns] = useState<AdminCronRun[]>([]);
   const [runningId, setRunningId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+
+  // Lọc theo tên rule / email người dùng, sắp xếp mới nhất (theo ngày tạo) lên đầu.
+  const shownRules = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const list = q
+      ? rules.filter(
+          (r) =>
+            (r.keyword ?? "").toLowerCase().includes(q) ||
+            (r.email ?? "").toLowerCase().includes(q),
+        )
+      : rules;
+    return [...list].sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""));
+  }, [rules, query]);
 
   // Bấm thẻ Rule → cuộn xuống danh sách rule ngay trong trang.
   const scrollRef = useRef<ScrollView>(null);
@@ -277,9 +292,29 @@ export default function AdminScreen() {
             style={styles.sectionLabel}
             onLayout={(e) => { rulesY.current = e.nativeEvent.layout.y; }}
           >
-            Tất cả rule ({rules.length})
+            Tất cả rule ({shownRules.length}{query.trim() ? `/${rules.length}` : ""})
           </Text>
-          {rules.map((r) => (
+
+          {/* TÌM KIẾM */}
+          <View style={styles.searchBox}>
+            <Ionicons name="search" size={17} color={colors.muted} />
+            <TextInput
+              style={styles.searchInput}
+              value={query}
+              onChangeText={setQuery}
+              placeholder="Tìm theo tên rule hoặc email người dùng…"
+              placeholderTextColor={colors.muted}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            {query.length > 0 && (
+              <Pressable onPress={() => setQuery("")} hitSlop={8}>
+                <Ionicons name="close-circle" size={18} color={colors.muted} />
+              </Pressable>
+            )}
+          </View>
+
+          {shownRules.map((r) => (
             <View key={r.id} style={styles.ruleCard}>
               <View style={styles.ruleHead}>
                 <Text style={styles.ruleKeyword} numberOfLines={1}>{r.keyword || "(không tên)"}</Text>
@@ -314,7 +349,11 @@ export default function AdminScreen() {
               </Pressable>
             </View>
           ))}
-          {rules.length === 0 && <Text style={styles.muted}>Chưa có rule nào.</Text>}
+          {shownRules.length === 0 && (
+            <Text style={styles.muted}>
+              {query.trim() ? "Không tìm thấy rule khớp." : "Chưa có rule nào."}
+            </Text>
+          )}
         </>
       )}
     </ScrollView>
@@ -360,6 +399,17 @@ function createStyles(C: AppColors) {
     statLabel: { color: C.subText, fontSize: 12.5 },
     card: { backgroundColor: C.card, borderRadius: RADIUS.md, padding: 14, marginBottom: 26 },
     statTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+    searchBox: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      backgroundColor: C.inputBg,
+      borderRadius: RADIUS.sm,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      marginBottom: 14,
+    },
+    searchInput: { flex: 1, color: C.text, fontSize: 14, paddingVertical: 0 },
     quotaRow: { flexDirection: "row", alignItems: "baseline", gap: 6, marginBottom: 10 },
     quotaNum: { color: C.text, fontSize: 26, fontWeight: "800" },
     quotaLimit: { color: C.subText, fontSize: 13 },
