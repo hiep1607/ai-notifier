@@ -21,6 +21,8 @@ import { StatusBar } from "expo-status-bar";
 import "react-native-reanimated";
 
 import { registerForPush } from "../lib/push";
+import { startWebAutoUpdate } from "../lib/webAutoUpdate";
+import { runNativeAutoUpdate } from "../lib/nativeAutoUpdate";
 
 import {
   AuthProvider,
@@ -55,6 +57,13 @@ function RootNavigator() {
       NavigationBar.setBehaviorAsync("overlay-swipe");
       NavigationBar.setVisibilityAsync("hidden");
     }
+  }, []);
+
+  // Web: tự phát hiện bản deploy mới và nạp lại.
+  // Native (Android/iOS): tự tải & nạp bản OTA mới khi mở app.
+  useEffect(() => {
+    startWebAutoUpdate();
+    runNativeAutoUpdate();
   }, []);
 
   useEffect(() => {
