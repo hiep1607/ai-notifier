@@ -19,7 +19,7 @@ import { corsHeaders, json } from "../_shared/cors.ts";
 import { geminiGenerate, parseJsonLoose, GeminiSource } from "../_shared/gemini.ts";
 
 // Mỗi lần quét 1 rule chỉ tạo 1 thông báo (tin mới/đáng chú ý nhất, hoặc 1 tb fallback).
-const MAX_RULES_PER_RUN = 8; // trần số rule gọi Gemini trong 1 lần (giữ quota + tránh timeout)
+const MAX_RULES_PER_RUN = 4; // trần số rule gọi Gemini trong 1 lần (giữ quota free + tránh timeout)
 
 // Lỗi hết quota / quá tải tạm thời từ Gemini → nên DỪNG sớm thay vì đốt thêm request.
 function isQuotaErr(e: unknown): boolean {
