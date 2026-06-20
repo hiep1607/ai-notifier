@@ -354,12 +354,12 @@ async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult
   );
   const { data: prevRows } = await supabase
     .from("notifications")
-    .select("id, title, source, source_url")
+    .select("id, title, source, source_url, created_at")
     .eq("rule_id", rule.id)
     .order("created_at", { ascending: false })
     .limit(1);
   const prev = prevRows?.[0] as
-    { id?: string; title?: string; source?: string; source_url?: string } | undefined;
+    { id?: string; title?: string; source?: string; source_url?: string; created_at?: string } | undefined;
 
   const top = items[0];
   let value: string | undefined;
@@ -392,8 +392,17 @@ async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult
     }
   }
 
-  // 2) Rule định kỳ/đặt giờ mà CHƯA gửi được tin thật → vẫn PHẢI gửi 1 tb.
+  // 2) Rule định kỳ/đặt giờ mà CHƯA gửi được tin thật → gửi 1 tb "trạng thái".
+  // GIẢM RÁC: nếu rule ĐÃ có thông báo nào trong HÔM NAY (giờ VN) rồi thì KHÔNG gửi
+  // thêm tb "chưa có thay đổi/chưa tìm thấy" nữa (trước đây mỗi nhịp quét đều gửi → spam).
+  // Tin THẬT vẫn luôn được gửi ở nhánh (1) ở trên, không bị ảnh hưởng.
   if (inserted === 0 && forceSend) {
+    const prevMs = prev?.created_at ? Date.parse(prev.created_at) : 0;
+    const vnNow = new Date(Date.now() + 7 * 3600000);
+    const vnDayStart = Date.UTC(vnNow.getUTCFullYear(), vnNow.getUTCMonth(), vnNow.getUTCDate()) - 7 * 3600000;
+    if (prevMs >= vnDayStart) {
+      return { inserted, value }; // đã có tb hôm nay → im, tránh lặp lại trạng thái
+    }
     const topic = (rule.keyword || rule.title || "thông tin").slice(0, 60);
     if (prev) {
       // Có tb trước → "tạm thời chưa có thay đổi". KHÔNG có URL bài mới → cho người dùng

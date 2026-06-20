@@ -34,6 +34,24 @@ const SUGGESTIONS: { label: string; icon: keyof typeof Ionicons.glyphMap }[] = [
   { label: "Thông báo deadline bài tập", icon: "school-outline" },
 ];
 
+// Mẫu rule TẠO NGAY: bấm 1 chạm là tạo luôn, KHÔNG gọi AI (chạy được cả khi kẹt quota Gemini).
+interface TemplateRule {
+  title: string;
+  keyword: string;
+  category: string;
+  frequency: string;
+  run_at?: string | null;
+  condition?: string;
+}
+const QUICK_TEMPLATES: { label: string; icon: keyof typeof Ionicons.glyphMap; rule: TemplateRule }[] = [
+  { label: "Giá vàng", icon: "cash-outline", rule: { title: "Giá vàng SJC", keyword: "giá vàng SJC hôm nay", category: "finance", frequency: "1440", run_at: "08:00" } },
+  { label: "Tỷ giá USD", icon: "card-outline", rule: { title: "Tỷ giá USD", keyword: "tỷ giá USD/VND hôm nay", category: "finance", frequency: "1440", run_at: "08:00" } },
+  { label: "Giá Bitcoin", icon: "logo-bitcoin", rule: { title: "Giá Bitcoin", keyword: "giá Bitcoin BTC hôm nay", category: "finance", frequency: "480" } },
+  { label: "Giá xăng", icon: "car-outline", rule: { title: "Giá xăng dầu", keyword: "giá xăng dầu Việt Nam hôm nay", category: "news", frequency: "1440", run_at: "08:00" } },
+  { label: "Thời tiết Hà Nội", icon: "partly-sunny-outline", rule: { title: "Thời tiết Hà Nội", keyword: "dự báo thời tiết Hà Nội hôm nay", category: "weather", frequency: "1440", run_at: "07:00" } },
+  { label: "Tin công nghệ", icon: "hardware-chip-outline", rule: { title: "Tin công nghệ", keyword: "tin công nghệ mới nhất", category: "tech", frequency: "1440", run_at: "08:00" } },
+];
+
 export default function CreateRuleScreen() {
   const { user } = useAuth();
   const { colors } = useTheme();
@@ -46,6 +64,31 @@ export default function CreateRuleScreen() {
   const [previewRules, setPreviewRules] = useState<RuleDraft[]>([]);
   const [loading, setLoading] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [creatingTemplate, setCreatingTemplate] = useState<string | null>(null);
+
+  // Tạo rule TRỰC TIẾP từ mẫu (không qua AI) → dùng được kể cả khi Gemini kẹt quota.
+  const createFromTemplate = async (t: (typeof QUICK_TEMPLATES)[number]) => {
+    if (!user || creatingTemplate) return;
+    setCreatingTemplate(t.label);
+    const { error } = await supabase.from("rules").insert({
+      title: t.rule.title,
+      description: "",
+      keyword: t.rule.keyword,
+      category: t.rule.category,
+      sources: "",
+      frequency: t.rule.frequency,
+      run_at: t.rule.run_at ?? null,
+      condition: t.rule.condition ?? "",
+      is_active: true,
+      user_id: user.id,
+    });
+    setCreatingTemplate(null);
+    if (error) {
+      alertMessage("Lỗi", error.message);
+      return;
+    }
+    router.back();
+  };
 
   const scrollToBottom = () => {
     setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
@@ -211,13 +254,41 @@ export default function CreateRuleScreen() {
           </View>
         </View>
 
-        {/* Suggestion chips chỉ hiện khi chưa chat */}
+        {/* Mẫu nhanh — tạo NGAY, không cần AI (chỉ hiện khi chưa chat) */}
         {messages.length === 0 && (
-          <View style={styles.suggestions}>
-            {SUGGESTIONS.map((s) => (
-              <SuggestionChip key={s.label} label={s.label} icon={s.icon} onPress={() => send(s.label)} />
-            ))}
+          <View style={styles.templateBox}>
+            <Text style={styles.templateTitle}>⚡ Mẫu nhanh — tạo ngay, không cần AI</Text>
+            <View style={styles.templateGrid}>
+              {QUICK_TEMPLATES.map((t) => (
+                <TouchableOpacity
+                  key={t.label}
+                  style={[styles.templateChip, creatingTemplate === t.label && { opacity: 0.5 }]}
+                  onPress={() => createFromTemplate(t)}
+                  disabled={!!creatingTemplate}
+                  activeOpacity={0.8}
+                >
+                  {creatingTemplate === t.label ? (
+                    <ActivityIndicator size="small" color={colors.primary} />
+                  ) : (
+                    <Ionicons name={t.icon} size={16} color={colors.primary} />
+                  )}
+                  <Text style={styles.templateChipText}>{t.label}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
           </View>
+        )}
+
+        {/* Suggestion chips (qua AI) chỉ hiện khi chưa chat */}
+        {messages.length === 0 && (
+          <>
+            <Text style={styles.templateTitle}>💬 Hoặc mô tả cho AI</Text>
+            <View style={styles.suggestions}>
+              {SUGGESTIONS.map((s) => (
+                <SuggestionChip key={s.label} label={s.label} icon={s.icon} onPress={() => send(s.label)} />
+              ))}
+            </View>
+          </>
         )}
 
         {messages.map((msg, i) =>
@@ -351,6 +422,37 @@ function createStyles(C: AppColors) {
     },
     suggestions: {
       marginBottom: 12,
+    },
+    templateBox: {
+      marginBottom: 16,
+    },
+    templateTitle: {
+      color: C.subText,
+      fontSize: 13,
+      fontWeight: "700",
+      marginBottom: 10,
+      marginLeft: 2,
+    },
+    templateGrid: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: 8,
+    },
+    templateChip: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+      backgroundColor: C.card,
+      borderWidth: 1,
+      borderColor: C.primary + "44",
+      borderRadius: RADIUS.pill,
+      paddingHorizontal: 14,
+      paddingVertical: 9,
+    },
+    templateChipText: {
+      color: C.text,
+      fontSize: 13.5,
+      fontWeight: "600",
     },
     aiBubble: {
       backgroundColor: C.card,
