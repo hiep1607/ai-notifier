@@ -14,7 +14,7 @@ import { router, useLocalSearchParams } from "expo-router";
 import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";
 import { SCREEN, RADIUS, type AppColors } from "../lib/theme";
-import { alertMessage } from "../lib/dialog";
+import { alertMessage, confirmAsync } from "../lib/dialog";
 import { adminCall, isAdminEmail, type AdminUserDetail } from "../lib/admin";
 
 export default function AdminUserDetailScreen() {
@@ -28,6 +28,7 @@ export default function AdminUserDetailScreen() {
   const [data, setData] = useState<AdminUserDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pushing, setPushing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -60,6 +61,24 @@ export default function AdminUserDetailScreen() {
       alertMessage("Lỗi", e instanceof Error ? e.message : String(e));
     } finally {
       setPushing(false);
+    }
+  };
+
+  const onDeleteUser = async () => {
+    const ok = await confirmAsync(
+      "Xóa người dùng",
+      `Xóa ${data?.user?.email ?? "tài khoản này"}? Toàn bộ rule, thông báo, push token của họ sẽ bị xóa theo. Không thể hoàn tác.`,
+    );
+    if (!ok) return;
+    setDeleting(true);
+    try {
+      await adminCall("delete_user", { userId: id });
+      alertMessage("Đã xóa", "Người dùng đã được xóa.");
+      router.back();
+    } catch (e) {
+      alertMessage("Lỗi", e instanceof Error ? e.message : String(e));
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -126,6 +145,18 @@ export default function AdminUserDetailScreen() {
             </View>
           ))}
           {data.notifications.length === 0 && <Text style={styles.muted}>Chưa có thông báo.</Text>}
+
+          {/* VÙNG NGUY HIỂM */}
+          <Pressable style={[styles.deleteBtn, deleting && { opacity: 0.6 }]} onPress={onDeleteUser} disabled={deleting}>
+            {deleting ? (
+              <ActivityIndicator size="small" color={colors.danger} />
+            ) : (
+              <>
+                <Ionicons name="trash-outline" size={16} color={colors.danger} />
+                <Text style={styles.deleteBtnText}>Xóa người dùng này</Text>
+              </>
+            )}
+          </Pressable>
         </>
       ) : null}
     </ScrollView>
@@ -168,5 +199,17 @@ function createStyles(C: AppColors) {
     miniMeta: { color: C.subText, fontSize: 12, marginTop: 4 },
     muted: { color: C.muted, fontSize: 14, marginBottom: 16 },
     error: { color: C.danger, fontSize: 13.5, textAlign: "center", paddingVertical: 20 },
+    deleteBtn: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 8,
+      marginTop: 18,
+      paddingVertical: 12,
+      borderRadius: RADIUS.sm,
+      borderWidth: 1,
+      borderColor: C.danger,
+    },
+    deleteBtnText: { color: C.danger, fontSize: 14, fontWeight: "700" },
   });
 }

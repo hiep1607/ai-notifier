@@ -22,7 +22,7 @@ import { router } from "expo-router";
 import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";
 import { SCREEN, RADIUS, type AppColors } from "../lib/theme";
-import { alertMessage } from "../lib/dialog";
+import { alertMessage, confirmAsync } from "../lib/dialog";
 import {
   adminCall,
   isAdminEmail,
@@ -76,21 +76,47 @@ export default function AdminScreen() {
   const [runningId, setRunningId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [ruleFilter, setRuleFilter] = useState<"all" | "active" | "off" | "muted">("all");
   const [expandedCron, setExpandedCron] = useState<number | null>(null);
   const [showFullErr, setShowFullErr] = useState(false);
 
-  // Lọc theo tên rule / email người dùng, sắp xếp mới nhất (theo ngày tạo) lên đầu.
+  // Lọc theo trạng thái + tên rule / email người dùng, sắp xếp mới nhất (theo ngày tạo) lên đầu.
   const shownRules = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const list = q
-      ? rules.filter(
-          (r) =>
-            (r.keyword ?? "").toLowerCase().includes(q) ||
-            (r.email ?? "").toLowerCase().includes(q),
-        )
-      : rules;
+    let list = rules;
+    if (ruleFilter === "active") list = list.filter((r) => r.is_active);
+    else if (ruleFilter === "off") list = list.filter((r) => !r.is_active);
+    else if (ruleFilter === "muted") list = list.filter((r) => r.muted);
+    if (q) {
+      list = list.filter(
+        (r) =>
+          (r.keyword ?? "").toLowerCase().includes(q) ||
+          (r.email ?? "").toLowerCase().includes(q),
+      );
+    }
     return [...list].sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""));
-  }, [rules, query]);
+  }, [rules, query, ruleFilter]);
+
+  const RULE_FILTERS: { key: typeof ruleFilter; label: string }[] = [
+    { key: "all", label: "Tất cả" },
+    { key: "active", label: "Đang bật" },
+    { key: "off", label: "Tắt" },
+    { key: "muted", label: "Để êm" },
+  ];
+
+  // Quản lý rule: bật/tắt, để êm, xóa.
+  const ruleAction = async (r: AdminRule, op: "toggle_active" | "toggle_muted" | "delete") => {
+    if (op === "delete") {
+      const ok = await confirmAsync("Xóa rule", `Xóa "${r.keyword}" của ${r.email}? Không thể hoàn tác.`);
+      if (!ok) return;
+    }
+    try {
+      await adminCall("rule_action", { ruleId: r.id, op });
+      load();
+    } catch (e) {
+      alertMessage("Lỗi", e instanceof Error ? e.message : String(e));
+    }
+  };
 
   // Bấm thẻ Rule → cuộn xuống danh sách rule ngay trong trang.
   const scrollRef = useRef<ScrollView>(null);
@@ -342,6 +368,21 @@ export default function AdminScreen() {
             )}
           </View>
 
+          {/* LỌC TRẠNG THÁI */}
+          <View style={styles.filterRow}>
+            {RULE_FILTERS.map((f) => (
+              <Pressable
+                key={f.key}
+                style={[styles.filterChip, ruleFilter === f.key && styles.filterChipActive]}
+                onPress={() => setRuleFilter(f.key)}
+              >
+                <Text style={[styles.filterChipText, ruleFilter === f.key && styles.filterChipTextActive]}>
+                  {f.label}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+
           {shownRules.map((r) => (
             <View key={r.id} style={styles.ruleCard}>
               <View style={styles.ruleHead}>
@@ -375,6 +416,30 @@ export default function AdminScreen() {
                   </>
                 )}
               </Pressable>
+
+              {/* QUẢN LÝ */}
+              <View style={styles.manageRow}>
+                <Pressable style={styles.manageBtn} onPress={() => ruleAction(r, "toggle_active")}>
+                  <Ionicons
+                    name={r.is_active ? "pause-circle-outline" : "play-circle-outline"}
+                    size={15}
+                    color={colors.subText}
+                  />
+                  <Text style={styles.manageText}>{r.is_active ? "Tạm dừng" : "Bật"}</Text>
+                </Pressable>
+                <Pressable style={styles.manageBtn} onPress={() => ruleAction(r, "toggle_muted")}>
+                  <Ionicons
+                    name={r.muted ? "notifications-outline" : "notifications-off-outline"}
+                    size={15}
+                    color={colors.subText}
+                  />
+                  <Text style={styles.manageText}>{r.muted ? "Bỏ êm" : "Để êm"}</Text>
+                </Pressable>
+                <Pressable style={styles.manageBtn} onPress={() => ruleAction(r, "delete")}>
+                  <Ionicons name="trash-outline" size={15} color={colors.danger} />
+                  <Text style={[styles.manageText, { color: colors.danger }]}>Xóa</Text>
+                </Pressable>
+              </View>
             </View>
           ))}
           {shownRules.length === 0 && (
@@ -438,6 +503,21 @@ function createStyles(C: AppColors) {
       marginBottom: 14,
     },
     searchInput: { flex: 1, color: C.text, fontSize: 14, paddingVertical: 0 },
+    filterRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginBottom: 14 },
+    filterChip: { paddingHorizontal: 13, paddingVertical: 6, borderRadius: RADIUS.pill, backgroundColor: C.card },
+    filterChipActive: { backgroundColor: C.primary },
+    filterChipText: { color: C.subText, fontSize: 12.5, fontWeight: "600" },
+    filterChipTextActive: { color: "#fff" },
+    manageRow: {
+      flexDirection: "row",
+      gap: 6,
+      marginTop: 8,
+      borderTopWidth: 1,
+      borderTopColor: C.border,
+      paddingTop: 8,
+    },
+    manageBtn: { flex: 1, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, paddingVertical: 6 },
+    manageText: { color: C.subText, fontSize: 12.5, fontWeight: "600" },
     quotaRow: { flexDirection: "row", alignItems: "baseline", gap: 6, marginBottom: 10 },
     quotaNum: { color: C.text, fontSize: 26, fontWeight: "800" },
     quotaLimit: { color: C.subText, fontSize: 13 },

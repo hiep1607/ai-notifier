@@ -250,6 +250,38 @@ Deno.serve(async (req) => {
       return json({ ok: res.ok, sent: tokens.length, result: out });
     }
 
+    // ===== QUẢN LÝ RULE (bật/tắt, để êm, xóa) =====
+    if (action === "rule_action") {
+      const ruleId = body.ruleId as string | undefined;
+      const op = body.op as string | undefined; // toggle_active | toggle_muted | delete
+      if (!ruleId || !op) return json({ error: "Thiếu ruleId/op." }, 400);
+
+      if (op === "delete") {
+        const { error } = await supabase.from("rules").delete().eq("id", ruleId);
+        if (error) return json({ error: error.message }, 500);
+        return json({ ok: true });
+      }
+
+      const col = op === "toggle_active" ? "is_active" : op === "toggle_muted" ? "muted" : null;
+      if (!col) return json({ error: "op không hợp lệ." }, 400);
+      const { data: cur } = await supabase.from("rules").select(col).eq("id", ruleId).maybeSingle();
+      if (!cur) return json({ error: "Không tìm thấy rule." }, 404);
+      const newVal = !(cur as Record<string, unknown>)[col];
+      const { error } = await supabase.from("rules").update({ [col]: newVal }).eq("id", ruleId);
+      if (error) return json({ error: error.message }, 500);
+      return json({ ok: true, [col]: newVal });
+    }
+
+    // ===== XÓA NGƯỜI DÙNG (cascade rule/notification/token) =====
+    if (action === "delete_user") {
+      const userId = body.userId as string | undefined;
+      if (!userId) return json({ error: "Thiếu userId." }, 400);
+      if (userId === u.user.id) return json({ error: "Không thể tự xóa tài khoản admin đang dùng." }, 400);
+      const { error } = await supabase.auth.admin.deleteUser(userId);
+      if (error) return json({ error: error.message }, 500);
+      return json({ ok: true });
+    }
+
     return json({ error: "Hành động không hỗ trợ." }, 400);
   } catch (e) {
     return json({ error: e instanceof Error ? e.message : String(e) }, 500);
