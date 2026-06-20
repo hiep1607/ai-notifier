@@ -68,7 +68,7 @@ export default function AdminUserDetailScreen() {
   }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 48 }} showsVerticalScrollIndicator={false}>
+    <ScrollView style={styles.container} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
       <View style={styles.header}>
         <Pressable onPress={() => router.back()} hitSlop={10} style={styles.headerBack}>
           <Ionicons name="chevron-back" size={26} color={colors.text} />
@@ -150,7 +150,8 @@ function fmtDateTime(iso?: string | null): string {
 
 function createStyles(C: AppColors) {
   return StyleSheet.create({
-    container: { flex: 1, backgroundColor: C.background, paddingTop: SCREEN.paddingTop, paddingHorizontal: SCREEN.paddingHorizontal },
+    container: { flex: 1, backgroundColor: C.background, paddingTop: SCREEN.paddingTop },
+    content: { paddingHorizontal: SCREEN.paddingHorizontal, paddingBottom: 48, width: "100%", maxWidth: 760 + SCREEN.paddingHorizontal * 2, alignSelf: "center" },
     center: { alignItems: "center", justifyContent: "center", paddingVertical: 60 },
     header: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 20 },
     headerBack: { padding: 2 },

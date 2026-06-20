@@ -8,8 +8,12 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
 } from "react-native";
+
+// Bề rộng nội dung tối đa trên web (canh giữa, tránh kéo giãn full màn hình).
+const MAX_CONTENT_W = 860;
 
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
@@ -55,6 +59,12 @@ export default function AdminScreen() {
   const { colors } = useTheme();
   const { user } = useAuth();
   const styles = useMemo(() => createStyles(colors), [colors]);
+
+  // Lưới thẻ co theo độ rộng: màn rộng → nhiều cột hơn (đỡ trống).
+  const { width } = useWindowDimensions();
+  const contentW = Math.min(width - SCREEN.paddingHorizontal * 2, MAX_CONTENT_W);
+  const cols = contentW > 700 ? 4 : contentW > 460 ? 3 : 2;
+  const statW = Math.floor((contentW - 10 * (cols - 1)) / cols);
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -134,7 +144,7 @@ export default function AdminScreen() {
   return (
     <ScrollView
       style={styles.container}
-      contentContainerStyle={{ paddingBottom: 48 }}
+      contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}
       refreshControl={
         <RefreshControl
@@ -174,7 +184,7 @@ export default function AdminScreen() {
           {/* TỔNG QUAN */}
           <View style={styles.statGrid}>
             {stats.map((s) => (
-              <View key={s.label} style={styles.statCard}>
+              <View key={s.label} style={[styles.statCard, { width: statW }]}>
                 <Ionicons name={s.icon} size={20} color={s.color} />
                 <Text style={styles.statValue}>{s.value}</Text>
                 <Text style={styles.statLabel}>{s.label}</Text>
@@ -312,7 +322,13 @@ function createStyles(C: AppColors) {
       flex: 1,
       backgroundColor: C.background,
       paddingTop: SCREEN.paddingTop,
+    },
+    content: {
       paddingHorizontal: SCREEN.paddingHorizontal,
+      paddingBottom: 48,
+      width: "100%",
+      maxWidth: MAX_CONTENT_W + SCREEN.paddingHorizontal * 2,
+      alignSelf: "center",
     },
     center: { alignItems: "center", justifyContent: "center", paddingVertical: 60, gap: 14 },
     header: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 20 },
@@ -323,12 +339,11 @@ function createStyles(C: AppColors) {
     statCard: {
       backgroundColor: C.card,
       borderRadius: RADIUS.md,
-      paddingVertical: 14,
-      paddingHorizontal: 14,
-      width: "47.5%",
-      gap: 6,
+      paddingVertical: 12,
+      paddingHorizontal: 13,
+      gap: 4,
     },
-    statValue: { color: C.text, fontSize: 24, fontWeight: "800" },
+    statValue: { color: C.text, fontSize: 22, fontWeight: "800" },
     statLabel: { color: C.subText, fontSize: 12.5 },
     card: { backgroundColor: C.card, borderRadius: RADIUS.md, padding: 14, marginBottom: 26 },
     navRow: { flexDirection: "row", gap: 10, marginBottom: 26 },

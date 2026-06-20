@@ -63,7 +63,7 @@ export default function AdminUsersScreen() {
   return (
     <ScrollView
       style={styles.container}
-      contentContainerStyle={{ paddingBottom: 48 }}
+      contentContainerStyle={styles.content}
       showsVerticalScrollIndicator={false}
       refreshControl={
         <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); load(); }} tintColor={colors.primary} />
@@ -109,7 +109,8 @@ export default function AdminUsersScreen() {
 
 function createStyles(C: AppColors) {
   return StyleSheet.create({
-    container: { flex: 1, backgroundColor: C.background, paddingTop: SCREEN.paddingTop, paddingHorizontal: SCREEN.paddingHorizontal },
+    container: { flex: 1, backgroundColor: C.background, paddingTop: SCREEN.paddingTop },
+    content: { paddingHorizontal: SCREEN.paddingHorizontal, paddingBottom: 48, width: "100%", maxWidth: 760 + SCREEN.paddingHorizontal * 2, alignSelf: "center" },
     center: { alignItems: "center", justifyContent: "center", paddingVertical: 60 },
     header: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 20 },
     headerBack: { padding: 2 },
