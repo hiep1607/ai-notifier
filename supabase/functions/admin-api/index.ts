@@ -268,6 +268,8 @@ Deno.serve(async (req) => {
       if (!ruleId || !op) return json({ error: "Thiếu ruleId/op." }, 400);
 
       if (op === "delete") {
+        // Xóa thông báo con trước (FK notifications.rule_id có thể không ON DELETE CASCADE).
+        await supabase.from("notifications").delete().eq("rule_id", ruleId);
         const { error } = await supabase.from("rules").delete().eq("id", ruleId);
         if (error) return json({ error: error.message }, 500);
         return json({ ok: true });
@@ -288,6 +290,11 @@ Deno.serve(async (req) => {
       const userId = body.userId as string | undefined;
       if (!userId) return json({ error: "Thiếu userId." }, 400);
       if (userId === u.user.id) return json({ error: "Không thể tự xóa tài khoản admin đang dùng." }, 400);
+      // Xóa thông báo con của các rule thuộc user trước (FK notifications.rule_id có thể không cascade),
+      // rồi xóa user (rules/push_tokens/user_settings tự cascade theo auth.users).
+      const { data: uRules } = await supabase.from("rules").select("id").eq("user_id", userId);
+      const rIds = (uRules ?? []).map((r) => r.id);
+      if (rIds.length) await supabase.from("notifications").delete().in("rule_id", rIds);
       const { error } = await supabase.auth.admin.deleteUser(userId);
       if (error) return json({ error: error.message }, 500);
       return json({ ok: true });

@@ -15,7 +15,18 @@ export async function adminCall<T = unknown>(
   const { data, error } = await supabase.functions.invoke("admin-api", {
     body: { action, ...payload },
   });
-  if (error) throw error;
+  if (error) {
+    // supabase-js trả lỗi chung khi non-2xx; thông điệp thật nằm trong body {error}.
+    let real: string | null = null;
+    const ctx = (error as { context?: { json?: () => Promise<unknown> } }).context;
+    if (ctx && typeof ctx.json === "function") {
+      try {
+        const b = (await ctx.json()) as { error?: unknown };
+        if (b?.error) real = String(b.error);
+      } catch { /* không đọc được body → dùng lỗi gốc */ }
+    }
+    throw real ? new Error(real) : error;
+  }
   if (data && typeof data === "object" && "error" in data) {
     throw new Error(String((data as { error: unknown }).error));
   }
