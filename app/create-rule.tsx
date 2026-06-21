@@ -64,30 +64,29 @@ export default function CreateRuleScreen() {
   const [previewRules, setPreviewRules] = useState<RuleDraft[]>([]);
   const [loading, setLoading] = useState(false);
   const [confirming, setConfirming] = useState(false);
-  const [creatingTemplate, setCreatingTemplate] = useState<string | null>(null);
-
-  // Tạo rule TRỰC TIẾP từ mẫu (không qua AI) → dùng được kể cả khi Gemini kẹt quota.
-  const createFromTemplate = async (t: (typeof QUICK_TEMPLATES)[number]) => {
-    if (!user || creatingTemplate) return;
-    setCreatingTemplate(t.label);
-    const { error } = await supabase.from("rules").insert({
+  // Chọn mẫu → KHÔNG tạo ngay, mà hiện thẻ preview để người dùng XEM LẠI rồi mới bấm Tạo.
+  // Không gọi AI nên dùng được cả khi Gemini kẹt quota.
+  const useTemplate = (t: (typeof QUICK_TEMPLATES)[number]) => {
+    if (loading || confirming) return;
+    const draft: RuleDraft = {
       title: t.rule.title,
       description: "",
       keyword: t.rule.keyword,
       category: t.rule.category,
       sources: "",
       frequency: t.rule.frequency,
-      run_at: t.rule.run_at ?? null,
+      run_at: t.rule.run_at ?? "",
       condition: t.rule.condition ?? "",
-      is_active: true,
-      user_id: user.id,
-    });
-    setCreatingTemplate(null);
-    if (error) {
-      alertMessage("Lỗi", error.message);
-      return;
-    }
-    router.back();
+    };
+    setMessages((prev) => [
+      ...prev,
+      { role: "user", text: `Dùng mẫu: ${t.label}` },
+      { role: "ai", text: "Đây là rule từ mẫu. Bạn xem lại thông tin bên dưới — muốn đổi gì thì bấm \"Chỉnh sửa\" rồi mô tả, ưng thì bấm \"Tạo rule\" nhé." },
+    ]);
+    historyRef.current.push({ role: "user", content: `Tạo rule mẫu: ${t.rule.keyword}` });
+    historyRef.current.push({ role: "assistant", content: JSON.stringify({ status: "ready", rules: [draft] }) });
+    setPreviewRules([draft]);
+    scrollToBottom();
   };
 
   const scrollToBottom = () => {
@@ -257,21 +256,16 @@ export default function CreateRuleScreen() {
         {/* Mẫu nhanh — tạo NGAY, không cần AI (chỉ hiện khi chưa chat) */}
         {messages.length === 0 && (
           <View style={styles.templateBox}>
-            <Text style={styles.templateTitle}>⚡ Mẫu nhanh — tạo ngay, không cần AI</Text>
+            <Text style={styles.templateTitle}>⚡ Mẫu nhanh — chọn để xem trước rồi tạo (không cần AI)</Text>
             <View style={styles.templateGrid}>
               {QUICK_TEMPLATES.map((t) => (
                 <TouchableOpacity
                   key={t.label}
-                  style={[styles.templateChip, creatingTemplate === t.label && { opacity: 0.5 }]}
-                  onPress={() => createFromTemplate(t)}
-                  disabled={!!creatingTemplate}
+                  style={styles.templateChip}
+                  onPress={() => useTemplate(t)}
                   activeOpacity={0.8}
                 >
-                  {creatingTemplate === t.label ? (
-                    <ActivityIndicator size="small" color={colors.primary} />
-                  ) : (
-                    <Ionicons name={t.icon} size={16} color={colors.primary} />
-                  )}
+                  <Ionicons name={t.icon} size={16} color={colors.primary} />
                   <Text style={styles.templateChipText}>{t.label}</Text>
                 </TouchableOpacity>
               ))}
