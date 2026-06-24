@@ -55,6 +55,8 @@ export default function HomeScreen() {
       // Mở app chỉ ĐỌC tin mới (cron trên Supabase đã quét nền 24/7 theo lịch từng rule).
       // KHÔNG tự gọi Gemini ở client để khỏi quét trùng cron → tiết kiệm quota.
       if (user) fetchData();
+      // fetchData chỉ đọc `user` (đã có trong deps) → không thêm vào deps để tránh tạo lại mỗi render.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [user])
   );
 

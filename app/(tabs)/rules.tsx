@@ -110,6 +110,8 @@ export default function RulesScreen() {
   useFocusEffect(
     React.useCallback(() => {
       if (user) fetchRules();
+      // fetchRules chỉ đọc `user` (đã có trong deps) → không thêm vào deps để tránh tạo lại mỗi render.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [user])
   );
 
@@ -150,7 +152,7 @@ export default function RulesScreen() {
   const handleDeleteRule = async (id: string) => {
     const ok = await confirmAsync("Xóa rule", "Rule và tất cả thông báo liên quan sẽ bị xóa vĩnh viễn?");
     if (!ok) return;
-    await supabase.from("notifications").delete().eq("rule_id", id);
+    // Thông báo con tự xóa theo nhờ FK ON DELETE CASCADE (migration 0014).
     await supabase.from("rules").delete().eq("id", id);
     setRules((prev) => prev.filter((r) => r.id !== id));
   };

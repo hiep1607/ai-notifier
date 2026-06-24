@@ -49,6 +49,8 @@ export default function RuleDetailScreen() {
 
   useEffect(() => {
     if (id) fetchData();
+    // Chỉ fetch lại khi đổi id — không đưa fetchData vào deps để khỏi tạo lại mỗi render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   const fetchData = async () => {
@@ -189,8 +191,7 @@ export default function RuleDetailScreen() {
 
     setSaving(true);
 
-    await supabase.from("notifications").delete().eq("rule_id", id);
-
+    // Thông báo con tự xóa theo nhờ FK ON DELETE CASCADE (migration 0014).
     const { data, error } = await supabase
       .from("rules")
       .delete()

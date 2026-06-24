@@ -9,4 +9,11 @@ module.exports = defineConfig([
     // bằng config Expo/Node để tránh lỗi giả import/no-unresolved.
     ignores: ['dist/*', 'supabase/functions/**'],
   },
+  {
+    // File test: jest.mock factory bắt buộc dùng require() (do hoisting) → cho phép.
+    files: ['__tests__/**'],
+    rules: {
+      '@typescript-eslint/no-require-imports': 'off',
+    },
+  },
 ]);

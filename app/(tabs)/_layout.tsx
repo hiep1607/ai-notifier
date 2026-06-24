@@ -19,6 +19,8 @@ export default function TabLayout() {
       fetchUnread();
       fetchActiveRules();
     }
+    // Chỉ chạy lại khi đổi user/route — không đưa fetch* vào deps để khỏi tạo lại mỗi render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, pathname]);
 
   const fetchActiveRules = async () => {

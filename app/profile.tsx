@@ -41,6 +41,8 @@ export default function ProfileScreen() {
 
   useEffect(() => {
     if (user) fetchStats();
+    // fetchStats chỉ đọc `user` (đã có trong deps) → không thêm vào deps để tránh tạo lại mỗi render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   const fetchStats = async () => {

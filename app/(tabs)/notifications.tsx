@@ -60,6 +60,8 @@ export default function NotificationsScreen() {
         }
       });
       if (user) fetchNotifications();
+      // fetchNotifications chỉ đọc `user` (đã có trong deps) → không thêm vào deps để tránh tạo lại mỗi render.
+      // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [user])
   );
 

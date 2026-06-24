@@ -42,6 +42,8 @@ export default function NotificationDetailScreen() {
       }
     });
     if (id) fetchNotification();
+    // Chỉ fetch lại khi đổi id — không đưa fetchNotification vào deps để khỏi tạo lại mỗi render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   const fetchNotification = async () => {

@@ -7,7 +7,6 @@ import { createQueryChain } from "../helpers/supabase-mock";
 // ── Mocks ────────────────────────────────────────────────────────────────────
 import { router } from "expo-router";
 
-const mockBack = jest.fn();
 const mockFrom = jest.fn();
 const mockUseLocalSearchParams = jest.fn();
 
