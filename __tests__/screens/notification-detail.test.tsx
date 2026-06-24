@@ -105,7 +105,7 @@ describe("Notification Detail Screen", () => {
     const { getByText } = render(<NotificationDetailScreen />);
 
     await waitFor(() => {
-      expect(getByText("AI Summary")).toBeTruthy();
+      expect(getByText("AI tóm tắt")).toBeTruthy();
       expect(
         getByText(
           "AI phân tích: xu hướng tăng ngắn hạn, có thể đạt đỉnh cuối tuần"
@@ -128,7 +128,7 @@ describe("Notification Detail Screen", () => {
       ).toBeTruthy();
     });
 
-    expect(queryByText("AI Summary")).toBeNull();
+    expect(queryByText("AI tóm tắt")).toBeNull();
   });
 
   it("hiển thị badge 'Quan trọng' khi is_important=true", async () => {

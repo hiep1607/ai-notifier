@@ -130,7 +130,7 @@ describe("Rule Detail Screen", () => {
     });
 
     const switches = getAllByRole("switch");
-    fireEvent(switches[0], "valueChange", false);
+    fireEvent.press(switches[0]);
 
     await waitFor(() => {
       expect(rulesChain.update).toHaveBeenCalledWith({ is_active: false });

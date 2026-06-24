@@ -152,7 +152,7 @@ describe("Rules Screen — Tab Filter", () => {
 
     const switches = getAllByRole("switch");
     // Toggle rule đầu tiên (is_active = true → false)
-    fireEvent(switches[0], "valueChange", false);
+    fireEvent.press(switches[0]);
 
     await waitFor(() => {
       expect(mockFrom).toHaveBeenCalledWith("rules");

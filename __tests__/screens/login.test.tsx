@@ -38,7 +38,7 @@ describe("Login Screen", () => {
     const { getByPlaceholderText, getByText } = render(<LoginScreen />);
 
     expect(getByPlaceholderText("Email")).toBeTruthy();
-    expect(getByPlaceholderText("Password")).toBeTruthy();
+    expect(getByPlaceholderText("Mật khẩu")).toBeTruthy();
     expect(getByText("Đăng nhập")).toBeTruthy();
     expect(getByText("Chưa có tài khoản? Đăng ký")).toBeTruthy();
   });
@@ -51,7 +51,7 @@ describe("Login Screen", () => {
     const { getByPlaceholderText, getByText } = render(<LoginScreen />);
 
     fireEvent.changeText(getByPlaceholderText("Email"), "user@test.com");
-    fireEvent.changeText(getByPlaceholderText("Password"), "password123");
+    fireEvent.changeText(getByPlaceholderText("Mật khẩu"), "password123");
     fireEvent.press(getByText("Đăng nhập"));
 
     await waitFor(() => {
@@ -70,7 +70,7 @@ describe("Login Screen", () => {
     const { getByPlaceholderText, getByText } = render(<LoginScreen />);
 
     fireEvent.changeText(getByPlaceholderText("Email"), "user@test.com");
-    fireEvent.changeText(getByPlaceholderText("Password"), "password123");
+    fireEvent.changeText(getByPlaceholderText("Mật khẩu"), "password123");
     fireEvent.press(getByText("Đăng nhập"));
 
     await waitFor(() => {
@@ -86,7 +86,7 @@ describe("Login Screen", () => {
     const { getByPlaceholderText, getByText } = render(<LoginScreen />);
 
     fireEvent.changeText(getByPlaceholderText("Email"), "wrong@test.com");
-    fireEvent.changeText(getByPlaceholderText("Password"), "wrong");
+    fireEvent.changeText(getByPlaceholderText("Mật khẩu"), "wrong");
     fireEvent.press(getByText("Đăng nhập"));
 
     await waitFor(() => {

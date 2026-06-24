@@ -15,6 +15,11 @@ jest.mock("expo-router", () => ({
 
 jest.mock("@expo/vector-icons", () => ({ Ionicons: "Ionicons" }));
 
+jest.mock("@react-navigation/native", () => ({
+  // Defer cb để body component chạy xong trước khi fetch dữ liệu.
+  useFocusEffect: jest.fn((cb) => { Promise.resolve().then(cb); }),
+}));
+
 jest.mock("../../lib/supabase", () => ({
   supabase: { from: (...args: any[]) => mockFrom(...args) },
 }));
@@ -153,13 +158,14 @@ describe("Notifications Screen", () => {
   });
 
   it("tab 'Quan trọng' chỉ hiển thị notifications quan trọng", async () => {
-    const { getByText, queryByText } = render(<NotificationsScreen />);
+    const { getByText, getAllByText, queryByText } = render(<NotificationsScreen />);
 
     await waitFor(() => {
       expect(getByText("Vàng tăng 500k")).toBeTruthy();
     });
 
-    fireEvent.press(getByText("Quan trọng"));
+    // "Quan trọng" xuất hiện ở cả tab lọc lẫn badge trên card → tab là phần tử đầu.
+    fireEvent.press(getAllByText("Quan trọng")[0]);
 
     // is_important=true → hiện
     expect(getByText("Vàng tăng 500k")).toBeTruthy();

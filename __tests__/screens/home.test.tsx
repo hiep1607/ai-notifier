@@ -139,7 +139,7 @@ describe("Home Screen (index)", () => {
 
     await waitFor(() => {
       // 1 important notification trong mockNotifications
-      expect(getByText(/1 thông báo quan trọng/)).toBeTruthy();
+      expect(getByText(/1 tin quan trọng/)).toBeTruthy();
     });
   });
 

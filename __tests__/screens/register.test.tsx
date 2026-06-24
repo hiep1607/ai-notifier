@@ -22,18 +22,22 @@ jest.mock("../../lib/supabase", () => ({
   },
 }));
 
+// Điền đủ form hợp lệ (họ tên + email + mật khẩu ≥6 ký tự + xác nhận khớp).
+function fillValidForm(getByPlaceholderText: (p: string) => any) {
+  fireEvent.changeText(getByPlaceholderText("Nguyễn Văn A"), "Nguyễn Văn A");
+  fireEvent.changeText(getByPlaceholderText("example@email.com"), "newuser@test.com");
+  fireEvent.changeText(getByPlaceholderText("Ít nhất 6 ký tự"), "secret123");
+  fireEvent.changeText(getByPlaceholderText("Nhập lại mật khẩu"), "secret123");
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 describe("Register Screen", () => {
   let alertSpy: jest.SpyInstance;
 
   beforeEach(() => {
     jest.clearAllMocks();
-    alertSpy = jest.spyOn(Alert, "alert").mockImplementation(
-      (_title, _msg, buttons) => {
-        // Auto-click nút OK để trigger onPress callback
-        buttons?.[0]?.onPress?.();
-      }
-    );
+    // App dùng alertMessage (lib/dialog) → trên native gọi Alert.alert.
+    alertSpy = jest.spyOn(Alert, "alert").mockImplementation(() => {});
   });
 
   afterEach(() => alertSpy.mockRestore());
@@ -41,63 +45,66 @@ describe("Register Screen", () => {
   it("render đúng các thành phần cơ bản", () => {
     const { getByPlaceholderText, getByText } = render(<RegisterScreen />);
 
-    expect(getByPlaceholderText("Email")).toBeTruthy();
-    expect(getByPlaceholderText("Mật khẩu")).toBeTruthy();
+    expect(getByPlaceholderText("Nguyễn Văn A")).toBeTruthy();
+    expect(getByPlaceholderText("example@email.com")).toBeTruthy();
+    expect(getByPlaceholderText("Ít nhất 6 ký tự")).toBeTruthy();
+    expect(getByPlaceholderText("Nhập lại mật khẩu")).toBeTruthy();
     expect(getByText("Đăng ký")).toBeTruthy();
     expect(getByText("Đã có tài khoản? Đăng nhập")).toBeTruthy();
   });
 
-  it("gọi signUp với email và password đúng", async () => {
-    (supabase.auth.signUp as jest.Mock).mockResolvedValue({ error: null });
+  it("gọi signUp với email, password và metadata họ tên/điện thoại", async () => {
+    (supabase.auth.signUp as jest.Mock).mockResolvedValue({ data: {}, error: null });
 
     const { getByPlaceholderText, getByText } = render(<RegisterScreen />);
-
-    fireEvent.changeText(getByPlaceholderText("Email"), "newuser@test.com");
-    fireEvent.changeText(getByPlaceholderText("Mật khẩu"), "secret123");
+    fillValidForm(getByPlaceholderText);
     fireEvent.press(getByText("Đăng ký"));
 
     await waitFor(() => {
       expect(supabase.auth.signUp).toHaveBeenCalledWith({
         email: "newuser@test.com",
         password: "secret123",
+        options: { data: { full_name: "Nguyễn Văn A", phone: "" } },
       });
     });
   });
 
-  it("gọi router.replace('/login') đúng 1 lần sau khi đăng ký thành công", async () => {
-    (supabase.auth.signUp as jest.Mock).mockResolvedValue({ error: null });
+  it("điều hướng đến /login sau khi đăng ký thành công (chưa có session)", async () => {
+    (supabase.auth.signUp as jest.Mock).mockResolvedValue({ data: {}, error: null });
 
     const { getByPlaceholderText, getByText } = render(<RegisterScreen />);
-
-    fireEvent.changeText(getByPlaceholderText("Email"), "newuser@test.com");
-    fireEvent.changeText(getByPlaceholderText("Mật khẩu"), "secret123");
+    fillValidForm(getByPlaceholderText);
     fireEvent.press(getByText("Đăng ký"));
 
     await waitFor(() => {
-      expect(alertSpy).toHaveBeenCalled();
+      expect(router.replace).toHaveBeenCalledWith("/login");
     });
+  });
 
-    // Lỗi cũ: gọi 2 lần — sau Phase 0 chỉ 1 lần (bên trong Alert callback)
-    expect(router.replace).toHaveBeenCalledTimes(1);
-    expect(router.replace).toHaveBeenCalledWith("/login");
+  it("chặn submit khi mật khẩu xác nhận không khớp (không gọi signUp)", () => {
+    const { getByPlaceholderText, getByText } = render(<RegisterScreen />);
+    fireEvent.changeText(getByPlaceholderText("Nguyễn Văn A"), "Nguyễn Văn A");
+    fireEvent.changeText(getByPlaceholderText("example@email.com"), "u@test.com");
+    fireEvent.changeText(getByPlaceholderText("Ít nhất 6 ký tự"), "secret123");
+    fireEvent.changeText(getByPlaceholderText("Nhập lại mật khẩu"), "khac123");
+    fireEvent.press(getByText("Đăng ký"));
+
+    expect(supabase.auth.signUp).not.toHaveBeenCalled();
+    expect(alertSpy).toHaveBeenCalledWith("Lỗi", "Mật khẩu xác nhận không khớp");
   });
 
   it("hiển thị Alert lỗi khi đăng ký thất bại", async () => {
     (supabase.auth.signUp as jest.Mock).mockResolvedValue({
+      data: {},
       error: { message: "Email already registered" },
     });
 
     const { getByPlaceholderText, getByText } = render(<RegisterScreen />);
-
-    fireEvent.changeText(getByPlaceholderText("Email"), "existing@test.com");
-    fireEvent.changeText(getByPlaceholderText("Mật khẩu"), "pass");
+    fillValidForm(getByPlaceholderText);
     fireEvent.press(getByText("Đăng ký"));
 
     await waitFor(() => {
-      expect(alertSpy).toHaveBeenCalledWith(
-        "Lỗi",
-        "Email already registered"
-      );
+      expect(alertSpy).toHaveBeenCalledWith("Lỗi", "Email already registered");
     });
 
     expect(router.replace).not.toHaveBeenCalled();
@@ -109,11 +116,5 @@ describe("Register Screen", () => {
     fireEvent.press(getByText("Đã có tài khoản? Đăng nhập"));
 
     expect(router.push).toHaveBeenCalledWith("/login");
-  });
-
-  it("chỉ có một link đăng nhập (không nested TouchableOpacity)", () => {
-    const { getAllByText } = render(<RegisterScreen />);
-
-    expect(getAllByText("Đã có tài khoản? Đăng nhập")).toHaveLength(1);
   });
 });

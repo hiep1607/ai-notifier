@@ -16,7 +16,7 @@ import {
 import { router } from "expo-router";
 import { supabase } from "../lib/supabase";
 import { alertMessage } from "../lib/dialog";
-import { chatRule, RuleDraft } from "../lib/claude";
+import { chatRule, RuleDraft } from "../lib/ruleAI";
 import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";
 import { findCategory, formatSchedule } from "../lib/ruleOptions";
@@ -66,7 +66,7 @@ export default function CreateRuleScreen() {
   const [confirming, setConfirming] = useState(false);
   // Chọn mẫu → KHÔNG tạo ngay, mà hiện thẻ preview để người dùng XEM LẠI rồi mới bấm Tạo.
   // Không gọi AI nên dùng được cả khi Gemini kẹt quota.
-  const useTemplate = (t: (typeof QUICK_TEMPLATES)[number]) => {
+  const applyTemplate = (t: (typeof QUICK_TEMPLATES)[number]) => {
     if (loading || confirming) return;
     const draft: RuleDraft = {
       title: t.rule.title,
@@ -262,7 +262,7 @@ export default function CreateRuleScreen() {
                 <TouchableOpacity
                   key={t.label}
                   style={styles.templateChip}
-                  onPress={() => useTemplate(t)}
+                  onPress={() => applyTemplate(t)}
                   activeOpacity={0.8}
                 >
                   <Ionicons name={t.icon} size={16} color={colors.primary} />
@@ -355,6 +355,7 @@ export default function CreateRuleScreen() {
           returnKeyType="send"
         />
         <TouchableOpacity
+          testID="send-button"
           style={[styles.sendBtn, (!input.trim() || loading) && { opacity: 0.5 }]}
           onPress={() => send(input)}
           disabled={!input.trim() || loading}
