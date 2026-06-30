@@ -104,6 +104,20 @@ export interface AdminUsage {
   lastError?: string | null;
 }
 
+// Tin tạo ra cho 1 rule trong 1 lần quét thật (run_rule / run_cron).
+export type RunNoteKind = "real" | "nochange" | "related" | "none" | "skipped";
+export interface RunNote {
+  keyword: string;
+  title: string;
+  kind: RunNoteKind;
+}
+export interface RunResult {
+  inserted: number;
+  checked: number;
+  quotaHit: boolean;
+  notes?: RunNote[];
+}
+
 // Một dòng trong kế hoạch quét (dry-run): rule + thời điểm đáng lẽ phải báo.
 export interface ScanPlanItem {
   order: number;

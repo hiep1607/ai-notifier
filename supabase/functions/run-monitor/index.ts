@@ -224,9 +224,18 @@ async function sendPush(
   }
 }
 
+// Loại tin tạo ra trong 1 lần quét — để trang test hiểu rule cho ra cái gì.
+type NotifKind =
+  | "real"      // tin thật, vượt mọi cổng (điều kiện/thay đổi/chống trùng)
+  | "nochange"  // fallback: chưa có thay đổi so với tb trước
+  | "related"   // fallback: chưa đúng yêu cầu, gợi ý tin liên quan
+  | "none"      // fallback: hoàn toàn không tìm thấy gì
+  | "skipped";  // không tạo tb (điều kiện chưa thỏa / đã có tb trong chu kỳ)
+
 interface MonitorRuleResult {
   inserted: number;
   value?: string; // số liệu mới để lưu làm baseline cho lần sau
+  note?: { title: string; kind: NotifKind };
 }
 
 interface NotifFields {
@@ -361,6 +370,7 @@ async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult
   const top = items[0];
   let value: string | undefined;
   let inserted = 0;
+  let note: { title: string; kind: NotifKind } | undefined;
 
   // 1) Có tin và VƯỢT các cổng (điều kiện / thay đổi / chống trùng) → gửi tin THẬT.
   if (top) {
@@ -386,6 +396,7 @@ async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult
         sentiment: normSentiment(top.sentiment),
         is_important: toBool(top.is_important),
       });
+      note = { title: String(top.title ?? ""), kind: "real" };
     }
   }
 
@@ -397,7 +408,8 @@ async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult
     const prevMs = prev?.created_at ? Date.parse(prev.created_at) : 0;
     const ruleInterval = intervalMs(rule.frequency);
     if (prevMs >= Date.now() - ruleInterval) {
-      return { inserted, value }; // đã có tb trong chu kỳ rule này → im, đợi đủ tần suất rồi mới gửi lại
+      // đã có tb trong chu kỳ rule này → im, đợi đủ tần suất rồi mới gửi lại
+      return { inserted, value, note: { title: "", kind: "skipped" } };
     }
     const topic = (rule.keyword || rule.title || "thông tin").slice(0, 60);
     if (prev) {
@@ -414,6 +426,7 @@ async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult
         sentiment: "neutral",
         is_important: false,
       });
+      note = { title: `Chưa có thay đổi mới: ${topic}`, kind: "nochange" };
     } else if (top) {
       // Chưa có tb nào, nhưng tìm được tin liên quan/gần nhất → gửi như đề xuất.
       const url = pool.length > 0 ? pool[0].uri : (isUrl(top.source_url) ? top.source_url : "");
@@ -427,6 +440,7 @@ async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult
         sentiment: normSentiment(top.sentiment),
         is_important: false,
       });
+      note = { title: `Gợi ý liên quan: ${String(top.title ?? topic).slice(0, 120)}`, kind: "related" };
     } else {
       // Hoàn toàn không có gì.
       inserted += await insertNotif(supabase, rule, {
@@ -439,10 +453,14 @@ async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult
         sentiment: "neutral",
         is_important: false,
       });
+      note = { title: `Chưa tìm thấy thông tin: ${topic}`, kind: "none" };
     }
   }
 
-  return { inserted, value };
+  // Không tạo gì + không phải fallback (rule "theo điều kiện" chưa thỏa) → đánh dấu bỏ qua.
+  if (!note && inserted === 0) note = { title: "", kind: "skipped" };
+
+  return { inserted, value, note };
 }
 
 Deno.serve(async (req) => {
@@ -519,6 +537,7 @@ Deno.serve(async (req) => {
     let checked = 0;
     let quotaHit = false;
     const scannedNames: string[] = []; // tên rule thực sự được quét (để log "quét rule nào")
+    const notes: { keyword: string; title: string; kind: NotifKind }[] = []; // tin tạo ra mỗi rule (cho trang test)
 
     // Lọc trước ra chỉ những rule tới hạn (isDue), sau đó quét hết danh sách đó.
     // isDue đã đóng vai trò quota gate tự nhiên: rule 1 tiếng chỉ tạo tối đa 24 call/ngày,
@@ -574,6 +593,7 @@ Deno.serve(async (req) => {
         const res = await monitorRule(supabase, rule);
         inserted += res.inserted;
         newValue = res.value;
+        if (res.note) notes.push({ keyword: rule.keyword, ...res.note });
       } catch (e) {
         console.log(`Rule ${rule.id} lỗi:`, (e as Error).message);
         // Hết quota/quá tải → DỪNG ngay, KHÔNG cập nhật last_run_at để cron lần sau quét lại rule này.
@@ -594,7 +614,7 @@ Deno.serve(async (req) => {
       supabase, trigger, checked, inserted, quotaHit, Date.now() - startedAt,
       scannedNames.join(", ") || undefined,
     );
-    return json({ inserted, checked, quotaHit });
+    return json({ inserted, checked, quotaHit, notes });
   } catch (err) {
     return json({ error: (err as Error).message }, 500);
   }

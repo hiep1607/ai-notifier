@@ -26,7 +26,32 @@ import {
   type AdminUsage,
   type ScanPreview,
   type ScanPlanItem,
+  type RunResult,
+  type RunNoteKind,
 } from "../lib/admin";
+
+// Diễn giải loại tin tạo ra để dễ đọc trên trang test.
+const KIND_LABEL: Record<RunNoteKind, string> = {
+  real: "✅ Tin thật",
+  nochange: "➖ Fallback: chưa có thay đổi",
+  related: "🔎 Fallback: gợi ý liên quan",
+  none: "❔ Fallback: chưa tìm thấy gì",
+  skipped: "⏭️ Bỏ qua (điều kiện chưa thỏa / đã có tb trong chu kỳ)",
+};
+
+// Gộp kết quả thật thành văn bản dễ đọc: tổng quan + từng rule cho ra cái gì.
+function formatRunResult(r: RunResult, prefix?: string): string {
+  const lines: string[] = [];
+  if (prefix) lines.push(prefix);
+  lines.push(
+    `Đã quét ${r.checked ?? 0} rule · tạo ${r.inserted ?? 0} thông báo${r.quotaHit ? " · ⚠️ chạm quota" : ""}`,
+  );
+  for (const n of r.notes ?? []) {
+    const label = KIND_LABEL[n.kind] ?? n.kind;
+    lines.push(`• [${n.keyword}] ${label}${n.title ? `\n   → ${n.title}` : ""}`);
+  }
+  return lines.join("\n");
+}
 
 const MAX_CONTENT_W = 860;
 
@@ -124,8 +149,8 @@ export default function AdminTestScreen() {
     setBusy("cron");
     setRunResult(null);
     try {
-      const res = await adminCall<{ ok: boolean; result: unknown }>("run_cron");
-      setRunResult(JSON.stringify(res.result, null, 2));
+      const res = await adminCall<{ ok: boolean; result: RunResult }>("run_cron");
+      setRunResult(formatRunResult(res.result, "Chạy cron thử:"));
       load();
     } catch (e) {
       alertMessage("Lỗi", e instanceof Error ? e.message : String(e));
@@ -138,8 +163,8 @@ export default function AdminTestScreen() {
     setBusy("rule:" + r.id);
     setRunResult(null);
     try {
-      const res = await adminCall<{ ok: boolean; result: unknown }>("run_rule", { ruleId: r.id });
-      setRunResult(`[${r.keyword}]\n` + JSON.stringify(res.result, null, 2));
+      const res = await adminCall<{ ok: boolean; result: RunResult }>("run_rule", { ruleId: r.id });
+      setRunResult(formatRunResult(res.result, `Chạy thử rule "${r.keyword}":`));
       load();
     } catch (e) {
       alertMessage("Lỗi", e instanceof Error ? e.message : String(e));
@@ -321,7 +346,7 @@ export default function AdminTestScreen() {
       {runResult && (
         <View style={styles.resultBox}>
           <View style={styles.resultHead}>
-            <Text style={styles.resultTitle}>Kết quả thô</Text>
+            <Text style={styles.resultTitle}>Kết quả lần quét</Text>
             <Pressable onPress={() => setRunResult(null)} hitSlop={8}>
               <Ionicons name="close" size={16} color={colors.muted} />
             </Pressable>
