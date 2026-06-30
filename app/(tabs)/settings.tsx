@@ -170,6 +170,12 @@ export default function SettingsScreen() {
               label="Trang quản trị"
               onPress={() => router.push("/admin")}
               iconColor={colors.primary}
+            />
+            <SettingRow
+              icon="flask-outline"
+              label="Trang test"
+              onPress={() => router.push("/admin-test" as never)}
+              iconColor={colors.accent}
               last
             />
           </View>

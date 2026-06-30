@@ -104,6 +104,27 @@ export interface AdminUsage {
   lastError?: string | null;
 }
 
+// Một dòng trong kế hoạch quét (dry-run): rule + thời điểm đáng lẽ phải báo.
+export interface ScanPlanItem {
+  order: number;
+  id: string;
+  keyword: string;
+  frequency?: string | null;
+  run_at?: string | null;
+  last_run_at?: string | null;
+  due_at: string;       // ISO: thời điểm rule này tới hạn (last_run_at + chu kỳ)
+  overdue_ms: number;   // >0 = đã trễ; <0 = còn phải chờ
+}
+
+export interface ScanPreview {
+  dryRun: true;
+  now: string;
+  total: number;
+  dueCount: number;
+  plan: ScanPlanItem[];     // rule tới hạn, theo thứ tự sẽ quét
+  waiting: ScanPlanItem[];  // rule chưa tới hạn, sắp theo sắp tới hạn nhất
+}
+
 export interface AdminCronRun {
   id: number;
   created_at: string;

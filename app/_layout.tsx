@@ -168,6 +168,11 @@ function RootNavigator() {
           options={{ headerShown: false }}
         />
 
+        <Stack.Screen
+          name="admin-test"
+          options={{ headerShown: false }}
+        />
+
 
       </Stack>
 

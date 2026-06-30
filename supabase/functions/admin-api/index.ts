@@ -111,6 +111,22 @@ Deno.serve(async (req) => {
       return json({ ok: res.ok, result: out }, res.ok ? 200 : 502);
     }
 
+    // ===== QUÉT TOÀN BỘ NGAY (cron thử) / XEM TRƯỚC KẾ HOẠCH (dry-run) =====
+    // run_cron: gọi run-monitor không kèm ruleId → quét hết rule TỚI HẠN như cron thật.
+    // scan_preview: gọi kèm dryRun → chỉ trả kế hoạch (rule nào tới hạn, thứ tự), 0 quota.
+    if (action === "run_cron" || action === "scan_preview") {
+      const res = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/run-monitor`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${serviceKey}`,
+        },
+        body: JSON.stringify(action === "scan_preview" ? { dryRun: true } : {}),
+      });
+      const out = await res.json().catch(() => ({}));
+      return json({ ok: res.ok, result: out }, res.ok ? 200 : 502);
+    }
+
     // ===== USERS (danh sách + thống kê) =====
     if (action === "users") {
       const { data: usersList } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 });

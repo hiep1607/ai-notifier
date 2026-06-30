@@ -472,7 +472,7 @@ Deno.serve(async (req) => {
     }
 
     const body = await req.json().catch(() => ({}));
-    const { ruleId, userId } = body as { ruleId?: string; userId?: string };
+    const { ruleId, userId, dryRun } = body as { ruleId?: string; userId?: string; dryRun?: boolean };
 
     // manual = bấm "Kiểm tra tin ngay" cho 1 rule → bỏ qua lịch, quét luôn.
     const manual = Boolean(ruleId);
@@ -533,6 +533,35 @@ Deno.serve(async (req) => {
     const dueRules = manual
       ? (rules as Rule[])
       : (rules as Rule[]).filter(isDue).sort((a, b) => dueAt(a) - dueAt(b));
+
+    // DRY-RUN: chỉ trả KẾ HOẠCH quét (rule nào tới hạn + thứ tự ưu tiên + rule còn
+    // phải chờ) — KHÔNG gọi Gemini, KHÔNG tốn quota. Trang test dùng để kiểm chứng
+    // logic chọn/sắp rule (đây là NGUỒN DUY NHẤT của logic, không tính lại ở client).
+    if (dryRun) {
+      const nowMs = Date.now();
+      const waiting = (rules as Rule[])
+        .filter((r) => !isDue(r))
+        .sort((a, b) => dueAt(a) - dueAt(b));
+      const lite = (r: Rule, i: number) => ({
+        order: i + 1,
+        id: r.id,
+        keyword: r.keyword,
+        frequency: r.frequency ?? null,
+        run_at: r.run_at ?? null,
+        last_run_at: r.last_run_at ?? null,
+        due_at: new Date(dueAt(r)).toISOString(),
+        overdue_ms: nowMs - dueAt(r), // >0 = đã trễ hạn; <0 = còn phải chờ
+      });
+      return json({
+        dryRun: true,
+        now: new Date(nowMs).toISOString(),
+        total: rules.length,
+        dueCount: dueRules.length,
+        plan: dueRules.map(lite),
+        waiting: waiting.map(lite),
+      });
+    }
+
     for (const rule of dueRules) {
       if (Date.now() > deadline) break;
 
