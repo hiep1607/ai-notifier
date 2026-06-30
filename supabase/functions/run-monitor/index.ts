@@ -18,9 +18,6 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, json } from "../_shared/cors.ts";
 import { geminiGenerate, parseJsonLoose, GeminiSource } from "../_shared/gemini.ts";
 
-// Mỗi lần quét 1 rule chỉ tạo 1 thông báo (tin mới/đáng chú ý nhất, hoặc 1 tb fallback).
-const MAX_RULES_PER_RUN = 2; // trần số rule gọi Gemini trong 1 lần (giảm để né 429 grounding free tier)
-
 // Lỗi hết quota / quá tải tạm thời từ Gemini → nên DỪNG sớm thay vì đốt thêm request.
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -393,15 +390,14 @@ async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult
   }
 
   // 2) Rule định kỳ/đặt giờ mà CHƯA gửi được tin thật → gửi 1 tb "trạng thái".
-  // GIẢM RÁC: nếu rule ĐÃ có thông báo nào trong HÔM NAY (giờ VN) rồi thì KHÔNG gửi
-  // thêm tb "chưa có thay đổi/chưa tìm thấy" nữa (trước đây mỗi nhịp quét đều gửi → spam).
+  // Giảm rác: chỉ gửi fallback nếu đã qua đủ 1 chu kỳ của rule kể từ tb cuối.
+  // Ví dụ rule 1 tiếng → gửi fallback mỗi tiếng (không phải mỗi ngày).
   // Tin THẬT vẫn luôn được gửi ở nhánh (1) ở trên, không bị ảnh hưởng.
   if (inserted === 0 && forceSend) {
     const prevMs = prev?.created_at ? Date.parse(prev.created_at) : 0;
-    const vnNow = new Date(Date.now() + 7 * 3600000);
-    const vnDayStart = Date.UTC(vnNow.getUTCFullYear(), vnNow.getUTCMonth(), vnNow.getUTCDate()) - 7 * 3600000;
-    if (prevMs >= vnDayStart) {
-      return { inserted, value }; // đã có tb hôm nay → im, tránh lặp lại trạng thái
+    const ruleInterval = intervalMs(rule.frequency);
+    if (prevMs >= Date.now() - ruleInterval) {
+      return { inserted, value }; // đã có tb trong chu kỳ rule này → im, đợi đủ tần suất rồi mới gửi lại
     }
     const topic = (rule.keyword || rule.title || "thông tin").slice(0, 60);
     if (prev) {
@@ -482,14 +478,13 @@ Deno.serve(async (req) => {
     const manual = Boolean(ruleId);
     const trigger = manual ? "manual" : (isAdmin ? "cron" : "user");
 
-    // Chọn tập rule cần quét. Sắp theo last_run_at TĂNG DẦN (lâu chưa quét / chưa quét
-    // lần nào lên trước) để khi nhiều rule + trần MAX_RULES_PER_RUN, mọi rule đều tới
-    // lượt theo vòng, không bị "bỏ đói"; rule đặt giờ cũng không bị chen mất khung.
+    // Chọn tập rule cần quét. KHÔNG sắp ở SQL theo last_run_at nữa (sai bản chất: chỉ
+    // nhìn "lâu chưa quét", bỏ qua chu kỳ riêng của từng rule). Việc ưu tiên sẽ làm ở
+    // dưới theo "giờ đáng lẽ phải báo" (dueAt = last_run_at + chu kỳ) — xem dueRules.
     let query = supabase
       .from("rules")
       .select("*")
-      .eq("is_active", true)
-      .order("last_run_at", { ascending: true, nullsFirst: true });
+      .eq("is_active", true);
     if (ruleId) {
       // ruleId: lấy theo id rồi kiểm tra quyền sở hữu bên dưới.
       query = supabase.from("rules").select("*").eq("id", ruleId);
@@ -518,18 +513,28 @@ Deno.serve(async (req) => {
     }
 
     // Ngân sách thời gian: quét tới ~70s thì dừng và trả phần đã làm, tránh nền tảng
-    // kill tiến trình (timeout) khi có nhiều rule. Cron/Home gọi lại sẽ quét tiếp.
+    // kill tiến trình (timeout) khi có nhiều rule. Cron gọi lại sẽ quét tiếp.
     const deadline = Date.now() + 70000;
     let inserted = 0;
     let checked = 0;
     let quotaHit = false;
     const scannedNames: string[] = []; // tên rule thực sự được quét (để log "quét rule nào")
-    for (const rule of rules as Rule[]) {
-      if (Date.now() > deadline) break;
-      if (!manual && checked >= MAX_RULES_PER_RUN) break; // chừa quota; cron lần sau quét tiếp
 
-      // Lịch theo từng rule: chỉ quét khi tới hạn (trừ khi gọi thủ công "Kiểm tra tin ngay").
-      if (!manual && !isDue(rule)) continue;
+    // Lọc trước ra chỉ những rule tới hạn (isDue), sau đó quét hết danh sách đó.
+    // isDue đã đóng vai trò quota gate tự nhiên: rule 1 tiếng chỉ tạo tối đa 24 call/ngày,
+    // không cần cap cứng MAX_RULES_PER_RUN nữa (trước đây cap=2 làm rule bị trễ oan).
+    //
+    // Ưu tiên theo "giờ đáng lẽ phải báo": dueAt = last_run_at + chu kỳ. Rule đến hạn
+    // SỚM NHẤT (trễ hẹn nặng nhất so với chu kỳ riêng) được quét trước — quan trọng khi
+    // chạm deadline 70s chỉ kịp quét một phần. Rule chưa từng quét (last_run_at = null)
+    // → dueAt nhỏ → tự lên đầu. KHÔNG sắp theo last_run_at thuần (bỏ qua chu kỳ là sai).
+    const dueAt = (r: Rule) =>
+      (r.last_run_at ? Date.parse(r.last_run_at) : 0) + intervalMs(r.frequency);
+    const dueRules = manual
+      ? (rules as Rule[])
+      : (rules as Rule[]).filter(isDue).sort((a, b) => dueAt(a) - dueAt(b));
+    for (const rule of dueRules) {
+      if (Date.now() > deadline) break;
 
       // Giãn giữa các lần gọi trong cùng 1 run để né rate-limit theo phút.
       if (checked > 0) await sleep(4000);

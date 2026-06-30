@@ -8,6 +8,7 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  Platform,
 } from "react-native";
 
 import { Ionicons } from "@expo/vector-icons";
@@ -36,6 +37,7 @@ export default function NotificationsScreen() {
   const styles = useMemo(() => createStyles(colors), [colors]);
 
   const [activeTab, setActiveTab] = useState("all");
+  const [selectedRuleId, setSelectedRuleId] = useState<string | null>(null);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [ruleNames, setRuleNames] = useState<Record<string, string>>({});
   const [refreshing, setRefreshing] = useState(false);
@@ -110,14 +112,20 @@ export default function NotificationsScreen() {
       ? notifications.filter((n) => !n.is_read)
       : notifications.filter((n) => n.is_important);
 
+  const ruleFiltered = selectedRuleId
+    ? tabFiltered.filter((n) => n.rule_id === selectedRuleId)
+    : tabFiltered;
+
   const displayedNotifications =
     searchText.trim() === ""
-      ? tabFiltered
-      : tabFiltered.filter(
+      ? ruleFiltered
+      : ruleFiltered.filter(
           (n) =>
             n.title.toLowerCase().includes(searchText.toLowerCase()) ||
             n.content.toLowerCase().includes(searchText.toLowerCase())
         );
+
+  const ruleList = Object.entries(ruleNames).map(([id, name]) => ({ id, name }));
 
   const closeSearch = () => {
     setSearchMode(false);
@@ -224,6 +232,41 @@ export default function NotificationsScreen() {
 
       {/* TABS */}
       <FilterTabs tabs={TABS} active={activeTab} onChange={setActiveTab} />
+
+      {/* RULE FILTER — chỉ hiện khi có > 1 rule */}
+      {ruleList.length > 1 && (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.ruleFilterScroll}
+          contentContainerStyle={{ paddingRight: 8 }}
+        >
+          <TouchableOpacity
+            style={[styles.ruleFilterChip, !selectedRuleId && styles.ruleFilterChipActive]}
+            onPress={() => setSelectedRuleId(null)}
+            activeOpacity={0.75}
+          >
+            <Text style={[styles.ruleFilterChipText, !selectedRuleId && styles.ruleFilterChipTextActive]}>
+              Tất cả
+            </Text>
+          </TouchableOpacity>
+          {ruleList.map((r) => (
+            <TouchableOpacity
+              key={r.id}
+              style={[styles.ruleFilterChip, selectedRuleId === r.id && styles.ruleFilterChipActive]}
+              onPress={() => setSelectedRuleId(selectedRuleId === r.id ? null : r.id)}
+              activeOpacity={0.75}
+            >
+              <Text
+                style={[styles.ruleFilterChipText, selectedRuleId === r.id && styles.ruleFilterChipTextActive]}
+                numberOfLines={1}
+              >
+                {r.name}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      )}
 
       {/* LIST */}
       <ScrollView
@@ -502,6 +545,32 @@ function createStyles(C: AppColors) {
       fontSize: 12,
       fontWeight: "700",
       marginTop: 2,
+    },
+    ruleFilterScroll: {
+      marginBottom: 12,
+      flexGrow: 0,
+    },
+    ruleFilterChip: {
+      paddingHorizontal: 14,
+      paddingVertical: 7,
+      borderRadius: 999,
+      marginRight: 8,
+      backgroundColor: C.card,
+      borderWidth: 1,
+      borderColor: C.border,
+      maxWidth: Platform.OS === "web" ? 180 : 160,
+    },
+    ruleFilterChipActive: {
+      backgroundColor: C.primary,
+      borderColor: C.primary,
+    },
+    ruleFilterChipText: {
+      fontSize: 13,
+      fontWeight: "600",
+      color: C.subText,
+    },
+    ruleFilterChipTextActive: {
+      color: "white",
     },
   });
 }

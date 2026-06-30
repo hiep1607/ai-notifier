@@ -4,6 +4,7 @@ import {
   ActivityIndicator,
   Linking,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -88,6 +89,18 @@ export default function NotificationDetailScreen() {
   const cat = notification.category ? findCategory(notification.category) : null;
   const sentiment = findSentiment(notification.sentiment);
 
+  const handleShare = async () => {
+    const parts: string[] = [notification.title];
+    const body = aiSummaryEnabled && notification.ai_summary ? notification.ai_summary : notification.content;
+    if (body) parts.push(body);
+    if (notification.source_url) parts.push(notification.source_url);
+    try {
+      await Share.share({ message: parts.join("\n\n") });
+    } catch {
+      // user cancelled
+    }
+  };
+
   return (
     <ScrollView
       style={styles.container}
@@ -111,6 +124,10 @@ export default function NotificationDetailScreen() {
             )}
           </View>
         </View>
+
+        <TouchableOpacity onPress={handleShare} style={styles.shareButton}>
+          <Ionicons name="share-social-outline" size={24} color={colors.text} />
+        </TouchableOpacity>
       </View>
 
       {/* META: nguồn + thời gian */}
@@ -227,6 +244,11 @@ function createStyles(C: AppColors) {
     backButton: {
       marginRight: 14,
       marginTop: 4,
+    },
+    shareButton: {
+      marginLeft: 12,
+      marginTop: 4,
+      padding: 4,
     },
     headerContent: {
       flex: 1,
