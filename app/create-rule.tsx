@@ -62,8 +62,19 @@ export default function CreateRuleScreen() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const historyRef = useRef<{ role: "user" | "assistant"; content: string }[]>([]);
   const [previewRules, setPreviewRules] = useState<RuleDraft[]>([]);
+  // important[i] = true → rule i sẽ lưu notify_mode "important" (chỉ báo tin quan trọng).
+  // Mặc định bật sẵn cho rule mà AI chấm noise_risk = "high".
+  const [important, setImportant] = useState<boolean[]>([]);
   const [loading, setLoading] = useState(false);
   const [confirming, setConfirming] = useState(false);
+
+  // Hiện preview + khởi tạo lựa chọn "chỉ tin quan trọng" theo đánh giá độ ồn của AI.
+  const showPreview = (rules: RuleDraft[]) => {
+    setPreviewRules(rules);
+    setImportant(rules.map((r) => r.noise_risk === "high"));
+  };
+  const toggleImportant = (idx: number) =>
+    setImportant((prev) => prev.map((v, i) => (i === idx ? !v : v)));
   // Chọn mẫu → KHÔNG tạo ngay, mà hiện thẻ preview để người dùng XEM LẠI rồi mới bấm Tạo.
   // Không gọi AI nên dùng được cả khi Gemini kẹt quota.
   const applyTemplate = (t: (typeof QUICK_TEMPLATES)[number]) => {
@@ -85,7 +96,7 @@ export default function CreateRuleScreen() {
     ]);
     historyRef.current.push({ role: "user", content: `Tạo rule mẫu: ${t.rule.keyword}` });
     historyRef.current.push({ role: "assistant", content: JSON.stringify({ status: "ready", rules: [draft] }) });
-    setPreviewRules([draft]);
+    showPreview([draft]);
     scrollToBottom();
   };
 
@@ -124,7 +135,7 @@ export default function CreateRuleScreen() {
         content: JSON.stringify({ status: "ready", rules }),
       });
       setMessages((prev) => [...prev, { role: "ai", text: result.message }]);
-      setPreviewRules(rules);
+      showPreview(rules);
       scrollToBottom();
     } catch (err: any) {
       setLoading(false);
@@ -138,7 +149,7 @@ export default function CreateRuleScreen() {
     setConfirming(true);
 
     const { error } = await supabase.from("rules").insert(
-      previewRules.map((r) => ({
+      previewRules.map((r, i) => ({
         title: r.title,
         description: r.description,
         keyword: r.keyword,
@@ -147,6 +158,7 @@ export default function CreateRuleScreen() {
         frequency: r.frequency,
         run_at: r.run_at,
         condition: r.condition,
+        notify_mode: important[i] ? "important" : "all",
         is_active: true,
         user_id: user.id,
       }))
@@ -174,6 +186,7 @@ export default function CreateRuleScreen() {
   // Bỏ 1 rule khỏi danh sách preview trước khi tạo (khi tách ra nhiều rule).
   const removePreviewAt = (idx: number) => {
     setPreviewRules((prev) => prev.filter((_, i) => i !== idx));
+    setImportant((prev) => prev.filter((_, i) => i !== idx));
   };
 
   const renderRuleCard = (r: RuleDraft, idx: number, total: number) => {
@@ -204,6 +217,30 @@ export default function CreateRuleScreen() {
             <Text style={styles.ruleRowValue} numberOfLines={2}>{row.value}</Text>
           </View>
         ))}
+
+        {/* CẢNH BÁO ĐỘ ỒN — chỉ hiện khi AI chấm rule này dễ tạo thông báo rác.
+            Tick bật sẵn → lưu notify_mode "important" (chỉ báo tin quan trọng). */}
+        {r.noise_risk === "high" && (
+          <View style={styles.noiseBox}>
+            <View style={styles.noiseHeader}>
+              <Ionicons name="alert-circle-outline" size={16} color={colors.warning} />
+              <Text style={styles.noiseTitle}>Chủ đề dễ tạo thông báo rác</Text>
+            </View>
+            <Text style={styles.noiseReason}>
+              {r.noise_reason || "Chủ đề khá rộng nên có thể tạo nhiều thông báo ít giá trị."}
+            </Text>
+            <TouchableOpacity style={styles.noiseToggle} onPress={() => toggleImportant(idx)} activeOpacity={0.8}>
+              <Ionicons
+                name={important[idx] ? "checkbox" : "square-outline"}
+                size={20}
+                color={important[idx] ? colors.primary : colors.subText}
+              />
+              <Text style={styles.noiseToggleText}>
+                Chỉ báo tin quan trọng (bỏ tin lặp / không có gì mới)
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
       </View>
     );
   };
@@ -531,6 +568,44 @@ function createStyles(C: AppColors) {
       fontWeight: "600",
       flex: 1,
       textAlign: "right",
+    },
+    noiseBox: {
+      marginTop: 6,
+      marginHorizontal: 6,
+      marginBottom: 6,
+      padding: 12,
+      borderRadius: RADIUS.md,
+      backgroundColor: C.warning + "14",
+      borderWidth: 1,
+      borderColor: C.warning + "44",
+    },
+    noiseHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+      marginBottom: 6,
+    },
+    noiseTitle: {
+      color: C.warning,
+      fontSize: 13,
+      fontWeight: "700",
+    },
+    noiseReason: {
+      color: C.text,
+      fontSize: 13,
+      lineHeight: 19,
+      marginBottom: 10,
+    },
+    noiseToggle: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+    },
+    noiseToggleText: {
+      color: C.text,
+      fontSize: 13.5,
+      fontWeight: "600",
+      flex: 1,
     },
     actionRow: {
       flexDirection: "row",

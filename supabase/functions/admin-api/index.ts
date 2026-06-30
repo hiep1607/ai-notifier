@@ -111,6 +111,22 @@ Deno.serve(async (req) => {
       return json({ ok: res.ok, result: out }, res.ok ? 200 : 502);
     }
 
+    // ===== SOI BỘ LỌC RÁC (gate_check) — 1 rule, 1 lượt Gemini, KHÔNG ghi notification =====
+    if (action === "gate_check") {
+      const ruleId = body.ruleId as string | undefined;
+      if (!ruleId) return json({ error: "Thiếu ruleId." }, 400);
+      const res = await fetch(`${Deno.env.get("SUPABASE_URL")}/functions/v1/run-monitor`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${serviceKey}`,
+        },
+        body: JSON.stringify({ ruleId, gateCheck: true }),
+      });
+      const out = await res.json().catch(() => ({}));
+      return json({ ok: res.ok, result: out }, res.ok ? 200 : 502);
+    }
+
     // ===== QUÉT TOÀN BỘ NGAY (cron thử) / XEM TRƯỚC KẾ HOẠCH (dry-run) =====
     // run_cron: gọi run-monitor không kèm ruleId → quét hết rule TỚI HẠN như cron thật.
     // scan_preview: gọi kèm dryRun → chỉ trả kế hoạch (rule nào tới hạn, thứ tự), 0 quota.

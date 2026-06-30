@@ -11,6 +11,7 @@ export interface Rule {
   condition?: string;  // Điều kiện kích hoạt thông báo
   last_value?: string; // Số liệu chính lần quét trước (trigger "thay đổi")
   muted?: boolean;     // true = vẫn nhận tin trong app nhưng KHÔNG đẩy push/để yên lặng
+  notify_mode?: "all" | "important"; // "important" = bỏ fallback + chỉ báo tin quan trọng/thỏa điều kiện
   is_active: boolean;
   created_at?: string;
 }

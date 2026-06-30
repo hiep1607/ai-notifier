@@ -12,6 +12,8 @@ export interface RuleDraft {
   frequency: string;  // "change" | số phút (vd "1440")
   run_at: string;     // giờ báo "HH:MM" (giờ VN); "" nếu không ghim giờ
   condition: string;
+  noise_risk?: "low" | "high"; // AI chấm: "high" = chủ đề dễ ra nhiều thông báo ít giá trị
+  noise_reason?: string;       // 1 câu giải thích vì sao (chỉ khi "high")
 }
 
 export type RuleAIResult =

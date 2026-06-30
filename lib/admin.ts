@@ -118,6 +118,24 @@ export interface RunResult {
   notes?: RunNote[];
 }
 
+// SOI BỘ LỌC RÁC: kết quả 1 lượt quét thử cho 1 rule — quyết định của CẢ 2 chế độ
+// (Đầy đủ vs Chỉ tin quan trọng) với tin tìm được, KHÔNG ghi notification nào.
+export interface GatePreview {
+  gateCheck: true;
+  keyword: string;
+  currentMode: string;       // "all" | "important" — chế độ rule đang đặt
+  found: boolean;            // Gemini có trả tin nào không
+  candidateTitle: string;
+  value: string;
+  isImportant: boolean;
+  matchesCondition: boolean;
+  changed: boolean;
+  fresh: boolean;            // không trùng tin đã có
+  allKind: RunNoteKind;      // chế độ "Đầy đủ" sẽ tạo loại gì
+  importantPushed: boolean;  // chế độ "Chỉ tin quan trọng" có báo không
+  importantReason: string;   // vì sao chế độ "Chỉ tin quan trọng" bỏ
+}
+
 // Một dòng trong kế hoạch quét (dry-run): rule + thời điểm đáng lẽ phải báo.
 export interface ScanPlanItem {
   order: number;

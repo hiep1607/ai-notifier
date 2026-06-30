@@ -56,6 +56,7 @@ interface Rule {
   last_run_at?: string | null;
   last_value?: string | null; // số liệu chính lần quét trước (trigger "thay đổi")
   muted?: boolean;          // true = vẫn tạo notification nhưng KHÔNG đẩy push (để êm)
+  notify_mode?: string;     // "important" = bỏ fallback + chỉ báo tin quan trọng/thỏa điều kiện; mặc định "all"
   is_active: boolean;
 }
 
@@ -320,6 +321,8 @@ async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult
   // KHÔNG có điều kiện (định kỳ / đặt giờ) → LUÔN gửi 1 tb khi tới hạn, kể cả khi
   // không tìm thấy tin mới. CÓ điều kiện ("theo đk") → chỉ gửi khi thỏa, không thì im.
   const forceSend = !hasCond;
+  // Chế độ "chỉ tin quan trọng": BỎ fallback + tin thật chỉ qua khi is_important hoặc thỏa điều kiện.
+  const importantOnly = rule.notify_mode === "important";
   // Rule "theo điều kiện" + đã có giá trị nền → chỉ báo khi giá trị THỰC SỰ đổi.
   const changeGate = rule.frequency === "change" && Boolean(rule.last_value && rule.last_value.trim());
   const normVal = (s: string) => s.toLowerCase().replace(/\s+/g, "");
@@ -379,13 +382,15 @@ async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult
 
     const condOk = !hasCond || toBool(top.matches_condition);
     const changeOk = !changeGate || toBool(top.changed);
+    // Chế độ "chỉ tin quan trọng": tin phải ĐÁNG CHÚ Ý (is_important) hoặc thỏa điều kiện rule mới qua.
+    const importantOk = !importantOnly || toBool(top.is_important) || (hasCond && toBool(top.matches_condition));
     // Link: ưu tiên URL nguồn THẬT từ grounding (top.source_url do AI tự ghi, hay bị bịa/sai bài).
     const url = pool.length > 0 ? pool[0].uri : (isUrl(top.source_url) ? top.source_url : "");
     const valueChanged = v !== "" && lastValNorm !== "" && normVal(v) !== lastValNorm;
     const titleNorm = normTitle(String(top.title ?? ""));
     const fresh = titleNorm !== "" && (!seenTitles.has(titleNorm) || valueChanged);
 
-    if (condOk && changeOk && fresh) {
+    if (condOk && changeOk && fresh && importantOk) {
       inserted += await insertNotif(supabase, rule, {
         title: String(top.title ?? ""),
         content: String(top.content ?? ""),
@@ -404,7 +409,9 @@ async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult
   // Giảm rác: chỉ gửi fallback nếu đã qua đủ 1 chu kỳ của rule kể từ tb cuối.
   // Ví dụ rule 1 tiếng → gửi fallback mỗi tiếng (không phải mỗi ngày).
   // Tin THẬT vẫn luôn được gửi ở nhánh (1) ở trên, không bị ảnh hưởng.
-  if (inserted === 0 && forceSend) {
+  // Chế độ "chỉ tin quan trọng" (importantOnly): BỎ HẲN fallback — không tạo "chưa có thay đổi"/
+  // "chưa tìm thấy"/gợi ý liên quan (đây chính là phần "thông báo rác" người dùng muốn tắt).
+  if (inserted === 0 && forceSend && !importantOnly) {
     const prevMs = prev?.created_at ? Date.parse(prev.created_at) : 0;
     const ruleInterval = intervalMs(rule.frequency);
     if (prevMs >= Date.now() - ruleInterval) {
@@ -463,6 +470,115 @@ async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult
   return { inserted, value, note };
 }
 
+// SOI BỘ LỌC (gateCheck): gọi Gemini 1 lần cho 1 rule, rồi cho biết MỖI chế độ thông báo
+// (all vs important) SẼ quyết định gì với tin tìm được — KHÔNG ghi notification nào.
+// Dùng ở Trang test để thấy bộ lọc chống rác hoạt động ra sao trên dữ liệu thật.
+interface GatePreview {
+  gateCheck: true;
+  keyword: string;
+  currentMode: string;       // notify_mode hiện tại của rule
+  found: boolean;            // Gemini có trả tin nào không
+  candidateTitle: string;
+  value: string;
+  isImportant: boolean;
+  matchesCondition: boolean;
+  changed: boolean;
+  fresh: boolean;            // không trùng tin đã có (theo tiêu đề / giá trị đổi)
+  allKind: NotifKind;        // chế độ "Đầy đủ" sẽ tạo loại gì
+  importantPushed: boolean;  // chế độ "Chỉ tin quan trọng" có báo không
+  importantReason: string;   // vì sao chế độ "Chỉ tin quan trọng" bỏ (nếu không báo)
+}
+
+// deno-lint-ignore no-explicit-any
+async function previewGate(supabase: any, rule: Rule): Promise<GatePreview> {
+  const hasCond = Boolean(rule.condition && rule.condition.trim());
+  const forceSend = !hasCond;
+  const changeGate = rule.frequency === "change" && Boolean(rule.last_value && rule.last_value.trim());
+  const normVal = (s: string) => s.toLowerCase().replace(/\s+/g, "");
+  const normTitle = (t: string) => t.toLowerCase().replace(/\s+/g, " ").trim();
+  const lastValNorm = normVal(String(rule.last_value ?? ""));
+
+  const base: GatePreview = {
+    gateCheck: true,
+    keyword: rule.keyword,
+    currentMode: rule.notify_mode ?? "all",
+    found: false,
+    candidateTitle: "",
+    value: "",
+    isImportant: false,
+    matchesCondition: false,
+    changed: false,
+    fresh: false,
+    allKind: "skipped",
+    importantPushed: false,
+    importantReason: "",
+  };
+
+  // Gọi Gemini (1 call). Lỗi quota/mạng → THROW để caller báo lỗi.
+  const gen = await geminiGenerate({
+    system: SEARCH_SYSTEM,
+    user: buildPrompt(rule),
+    grounding: true,
+    temperature: 0.2,
+  });
+  await logUsage(supabase, rule.id, true);
+
+  let items: NewsItem[] = [];
+  try {
+    const parsed = parseJsonLoose<NewsItem[]>(gen.text);
+    if (Array.isArray(parsed)) items = parsed;
+  } catch { /* không JSON → coi như không tìm thấy */ }
+  const top = items[0];
+
+  // Lấy tiêu đề đã có để tính "fresh" (giống monitorRule, nhưng KHÔNG insert).
+  const { data: existing } = await supabase
+    .from("notifications").select("title").eq("rule_id", rule.id);
+  const seenTitles = new Set<string>(
+    (existing ?? []).map((n: { title: string }) => normTitle(String(n.title ?? ""))).filter(Boolean),
+  );
+  const hasPrev = (existing ?? []).length > 0;
+
+  if (!top) {
+    // Không có tin: chế độ Đầy đủ vẫn gửi filler (nếu rule định kỳ); Chỉ-quan-trọng thì bỏ.
+    base.allKind = forceSend ? (hasPrev ? "nochange" : "none") : "skipped";
+    base.importantReason = "Không có tin nào để báo.";
+    return base;
+  }
+
+  const v = String(top.value ?? "").trim();
+  const condOk = !hasCond || toBool(top.matches_condition);
+  const changeOk = !changeGate || toBool(top.changed);
+  const valueChanged = v !== "" && lastValNorm !== "" && normVal(v) !== lastValNorm;
+  const titleNorm = normTitle(String(top.title ?? ""));
+  const fresh = titleNorm !== "" && (!seenTitles.has(titleNorm) || valueChanged);
+  const importantOk = toBool(top.is_important) || (hasCond && toBool(top.matches_condition));
+
+  base.found = true;
+  base.candidateTitle = String(top.title ?? "");
+  base.value = v;
+  base.isImportant = toBool(top.is_important);
+  base.matchesCondition = toBool(top.matches_condition);
+  base.changed = toBool(top.changed);
+  base.fresh = fresh;
+
+  const realPasses = condOk && changeOk && fresh;
+  // Chế độ Đầy đủ.
+  if (realPasses) base.allKind = "real";
+  else if (forceSend) base.allKind = hasPrev ? "nochange" : "related";
+  else base.allKind = "skipped";
+
+  // Chế độ Chỉ tin quan trọng.
+  base.importantPushed = realPasses && importantOk;
+  if (!base.importantPushed) {
+    if (!condOk) base.importantReason = "Chưa thỏa điều kiện của rule.";
+    else if (!changeOk) base.importantReason = "Số liệu chưa thay đổi so với lần trước.";
+    else if (!fresh) base.importantReason = "Tin trùng với thông báo đã có.";
+    else if (!importantOk) base.importantReason = "Tin không quan trọng và không thỏa điều kiện → bị lọc.";
+    else base.importantReason = "Bị lọc.";
+  }
+  return base;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
@@ -490,7 +606,8 @@ Deno.serve(async (req) => {
     }
 
     const body = await req.json().catch(() => ({}));
-    const { ruleId, userId, dryRun } = body as { ruleId?: string; userId?: string; dryRun?: boolean };
+    const { ruleId, userId, dryRun, gateCheck } = body as
+      { ruleId?: string; userId?: string; dryRun?: boolean; gateCheck?: boolean };
 
     // manual = bấm "Kiểm tra tin ngay" cho 1 rule → bỏ qua lịch, quét luôn.
     const manual = Boolean(ruleId);
@@ -527,6 +644,19 @@ Deno.serve(async (req) => {
         if (r.user_id !== authUserId) {
           return json({ error: "Bạn không có quyền với rule này." }, 403);
         }
+      }
+    }
+
+    // SOI BỘ LỌC: chỉ với 1 rule (ruleId). Gọi Gemini 1 lần, trả quyết định 2 chế độ, KHÔNG insert.
+    if (gateCheck && ruleId) {
+      const rule = (rules as Rule[])[0];
+      if (!rule) return json({ error: "Không tìm thấy rule." }, 404);
+      try {
+        const result = await previewGate(supabase, rule);
+        return json(result);
+      } catch (e) {
+        if (isQuotaErr(e)) return json({ error: "AI đang quá tải/hết lượt (quota). Thử lại sau." }, 429);
+        return json({ error: (e as Error).message }, 500);
       }
     }
 

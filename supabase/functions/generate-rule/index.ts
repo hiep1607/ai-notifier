@@ -23,6 +23,11 @@ Một rule hoàn chỉnh gồm các trường:
     * Chỉ đặt khi người dùng nêu giờ rõ (vd "8h sáng"→"08:00", "7 giờ tối"→"19:00", "trưa"→"12:00"). Áp dụng cho rule định kỳ hằng ngày/hằng tuần.
     * Nếu không nêu giờ, hoặc là kiểu theo điều kiện ("change") → để "".
 - condition: điều kiện để gửi thông báo, vd "khi giá vượt 80 triệu". Để "" nếu chỉ cần tin mới định kỳ.
+- noise_risk: "high" nếu rule này DỄ tạo nhiều thông báo ít giá trị, ngược lại "low". Đánh giá:
+    * CAO khi: chủ đề RỘNG/chung chung (vd "tin tức", "tin công nghệ", "thể thao") → mỗi lần quét đều có bài nhưng tản mạn;
+      HOẶC định kỳ ĐỊNH KỲ (không phải "change", không có condition) trên chủ đề ÍT BIẾN ĐỘNG (vd thời tiết 1 thành phố, giá 1 mặt hàng ổn định) → hay phải báo "chưa có thay đổi".
+    * THẤP khi: có condition cụ thể (chỉ báo khi chạm ngưỡng), HOẶC chủ đề hẹp & rõ ràng.
+- noise_reason: 1 câu NGẮN tiếng Việt giải thích vì sao noise_risk như vậy (chỉ cần khi "high"; "low" thì để "").
 
 HAI KIỂU THEO DÕI — phải xác định rõ người dùng muốn kiểu nào:
   (1) ĐỊNH KỲ: báo tin mới đều đặn. → frequency = số phút (≥30), condition = "".
@@ -51,7 +56,7 @@ Hỏi ngắn gọn, thân thiện, tiếng Việt, mỗi lần 1-2 câu.
 LUÔN trả về JSON thuần (không markdown) theo đúng 1 trong 2 dạng:
 { "status": "need_info", "message": "..." }
 hoặc
-{ "status": "ready", "message": "...", "rules": [ { "title": "...", "description": "...", "keyword": "...", "category": "...", "sources": "", "frequency": "...", "run_at": "", "condition": "" } ] }
+{ "status": "ready", "message": "...", "rules": [ { "title": "...", "description": "...", "keyword": "...", "category": "...", "sources": "", "frequency": "...", "run_at": "", "condition": "", "noise_risk": "low", "noise_reason": "" } ] }
 (Trường "rules" LUÔN là MẢNG, kể cả khi chỉ có 1 rule.)
 
 VÍ DỤ A — thiếu thông tin, phải HỎI:
@@ -60,7 +65,7 @@ User: "theo dõi giá ETH"
 
 VÍ DỤ B1 — định kỳ tự do (8 tiếng hợp lệ):
 User: "báo giá ETH mỗi 8 tiếng"
-→ { "status": "ready", "message": "Đã tạo rule theo dõi giá ETH:", "rules": [ { "title": "Theo dõi giá ETH", "description": "Cập nhật giá ETH mỗi 8 tiếng.", "keyword": "giá ETH Ethereum", "category": "finance", "sources": "", "frequency": "480", "run_at": "", "condition": "" } ] }
+→ { "status": "ready", "message": "Đã tạo rule theo dõi giá ETH:", "rules": [ { "title": "Theo dõi giá ETH", "description": "Cập nhật giá ETH mỗi 8 tiếng.", "keyword": "giá ETH Ethereum", "category": "finance", "sources": "", "frequency": "480", "run_at": "", "condition": "", "noise_risk": "low", "noise_reason": "" } ] }
 
 VÍ DỤ B2 — yêu cầu vô lý, GIẢI THÍCH:
 User: "báo giá vàng mỗi 5 phút"
@@ -68,11 +73,11 @@ User: "báo giá vàng mỗi 5 phút"
 
 VÍ DỤ C — đủ thông tin, kiểu ĐIỀU KIỆN:
 User: "báo khi giá bitcoin giảm hơn 5%"
-→ { "status": "ready", "message": "Đã tạo rule theo dõi Bitcoin:", "rules": [ { "title": "Theo dõi giá Bitcoin", "description": "Báo khi giá Bitcoin giảm hơn 5%.", "keyword": "giá bitcoin", "category": "finance", "sources": "", "frequency": "change", "run_at": "", "condition": "khi giá giảm hơn 5%" } ] }
+→ { "status": "ready", "message": "Đã tạo rule theo dõi Bitcoin:", "rules": [ { "title": "Theo dõi giá Bitcoin", "description": "Báo khi giá Bitcoin giảm hơn 5%.", "keyword": "giá bitcoin", "category": "finance", "sources": "", "frequency": "change", "run_at": "", "condition": "khi giá giảm hơn 5%", "noise_risk": "low", "noise_reason": "" } ] }
 
 VÍ DỤ D — định kỳ KÈM GIỜ cụ thể:
 User: "báo tôi tin AI mỗi ngày lúc 8h sáng"
-→ { "status": "ready", "message": "Đã tạo rule theo dõi tin AI:", "rules": [ { "title": "Tin AI mới nhất", "description": "Cập nhật tin tức công nghệ AI hằng ngày lúc 8h sáng.", "keyword": "trí tuệ nhân tạo AI", "category": "tech", "sources": "", "frequency": "1440", "run_at": "08:00", "condition": "" } ] }
+→ { "status": "ready", "message": "Đã tạo rule theo dõi tin AI:", "rules": [ { "title": "Tin AI mới nhất", "description": "Cập nhật tin tức công nghệ AI hằng ngày lúc 8h sáng.", "keyword": "trí tuệ nhân tạo AI", "category": "tech", "sources": "", "frequency": "1440", "run_at": "08:00", "condition": "", "noise_risk": "high", "noise_reason": "Chủ đề tin AI rất rộng nên mỗi ngày sẽ có nhiều tin tản mạn, dễ thành thông báo ít giá trị." } ] }
 
 VÍ DỤ E — NHIỀU chủ đề, đủ thông tin → TÁCH thành nhiều rule:
 User: "mỗi sáng 7h báo giá vàng và giá bitcoin"
@@ -125,15 +130,23 @@ Deno.serve(async (req) => {
     if (data.status === "ready" && rawRules.length > 0) {
       const rules = rawRules.slice(0, 5).map((item) => {
         const r = (item ?? {}) as Record<string, unknown>;
+        // Rule "theo điều kiện" (change) hoặc có condition → bản chất đã ít rác, ép noise_risk = low.
+        const freq = asText(r.frequency) || "1440";
+        const cond = asText(r.condition);
+        const risk = asText(r.noise_risk).toLowerCase() === "high" && freq !== "change" && !cond
+          ? "high"
+          : "low";
         return {
           title: asText(r.title),
           description: asText(r.description),
           keyword: asText(r.keyword),
           category: asText(r.category) || "other",
           sources: asText(r.sources),
-          frequency: asText(r.frequency) || "1440",
+          frequency: freq,
           run_at: asText(r.run_at),
-          condition: asText(r.condition),
+          condition: cond,
+          noise_risk: risk,
+          noise_reason: risk === "high" ? asText(r.noise_reason) : "",
         };
       }).filter((r) => r.keyword); // bỏ rule rỗng (thiếu keyword)
 

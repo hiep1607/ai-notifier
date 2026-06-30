@@ -28,6 +28,7 @@ import {
   type ScanPlanItem,
   type RunResult,
   type RunNoteKind,
+  type GatePreview,
 } from "../lib/admin";
 
 // Diễn giải loại tin tạo ra để dễ đọc trên trang test.
@@ -50,6 +51,31 @@ function formatRunResult(r: RunResult, prefix?: string): string {
     const label = KIND_LABEL[n.kind] ?? n.kind;
     lines.push(`• [${n.keyword}] ${label}${n.title ? `\n   → ${n.title}` : ""}`);
   }
+  return lines.join("\n");
+}
+
+// Diễn giải kết quả "soi bộ lọc rác": so sánh quyết định của 2 chế độ thông báo.
+function formatGate(g: GatePreview): string {
+  const modeLabel = g.currentMode === "important" ? "Chỉ tin quan trọng" : "Đầy đủ";
+  const lines: string[] = [`Soi bộ lọc "${g.keyword}" (chế độ đang đặt: ${modeLabel})`];
+
+  if (!g.found) {
+    lines.push("Gemini không tìm thấy tin nào.");
+  } else {
+    lines.push(`Tin tìm được: ${g.candidateTitle || "(không tiêu đề)"}${g.value ? `  [${g.value}]` : ""}`);
+    lines.push(
+      `  quan trọng: ${g.isImportant ? "có" : "không"} · ` +
+      `thỏa điều kiện: ${g.matchesCondition ? "có" : "không"} · ` +
+      `không trùng: ${g.fresh ? "có" : "không"}`,
+    );
+  }
+  lines.push("");
+  lines.push(`→ Chế độ Đầy đủ: ${KIND_LABEL[g.allKind] ?? g.allKind}`);
+  lines.push(
+    g.importantPushed
+      ? "→ Chế độ Chỉ tin quan trọng: ✅ Vẫn báo (tin đáng chú ý)"
+      : `→ Chế độ Chỉ tin quan trọng: 🚫 Bị lọc — ${g.importantReason}`,
+  );
   return lines.join("\n");
 }
 
@@ -166,6 +192,20 @@ export default function AdminTestScreen() {
       const res = await adminCall<{ ok: boolean; result: RunResult }>("run_rule", { ruleId: r.id });
       setRunResult(formatRunResult(res.result, `Chạy thử rule "${r.keyword}":`));
       load();
+    } catch (e) {
+      alertMessage("Lỗi", e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  // Soi bộ lọc rác: 1 lượt Gemini, KHÔNG ghi notification — chỉ xem 2 chế độ quyết định gì.
+  const doGateCheck = async (r: AdminRule) => {
+    setBusy("gate:" + r.id);
+    setRunResult(null);
+    try {
+      const res = await adminCall<{ ok: boolean; result: GatePreview }>("gate_check", { ruleId: r.id });
+      setRunResult(formatGate(res.result));
     } catch (e) {
       alertMessage("Lỗi", e instanceof Error ? e.message : String(e));
     } finally {
@@ -355,8 +395,14 @@ export default function AdminTestScreen() {
         </View>
       )}
 
-      {/* 4. CHẠY THỬ 1 RULE */}
-      <Text style={styles.sectionLabel}>4 · Chạy thử 1 rule (TỐN quota)</Text>
+      {/* 4. CHẠY THỬ 1 RULE / SOI BỘ LỌC */}
+      <Text style={styles.sectionLabel}>4 · Chạy thử 1 rule / soi bộ lọc rác (TỐN quota)</Text>
+      <Text style={[styles.cardHint, { marginLeft: 4, marginBottom: 12 }]}>
+        <Ionicons name="funnel-outline" size={13} color={colors.subText} /> Soi bộ lọc: lấy 1 tin
+        thật rồi so 2 chế độ (Đầy đủ vs Chỉ tin quan trọng) sẽ báo hay lọc — KHÔNG tạo thông báo.
+        {"  "}
+        <Ionicons name="play" size={13} color={colors.subText} /> Chạy thử: quét thật, có TẠO thông báo.
+      </Text>
       <View style={styles.searchBox}>
         <Ionicons name="search" size={17} color={colors.muted} />
         <TextInput
@@ -384,9 +430,20 @@ export default function AdminTestScreen() {
             </Text>
           </View>
           <Pressable
+            style={[styles.gateMini, busy === "gate:" + r.id && { opacity: 0.6 }]}
+            onPress={() => doGateCheck(r)}
+            disabled={!!busy}
+          >
+            {busy === "gate:" + r.id ? (
+              <ActivityIndicator size="small" color={colors.subText} />
+            ) : (
+              <Ionicons name="funnel-outline" size={15} color={colors.subText} />
+            )}
+          </Pressable>
+          <Pressable
             style={[styles.runMini, busy === "rule:" + r.id && { opacity: 0.6 }]}
             onPress={() => doRunRule(r)}
-            disabled={busy === "rule:" + r.id}
+            disabled={!!busy}
           >
             {busy === "rule:" + r.id ? (
               <ActivityIndicator size="small" color={colors.primary} />
@@ -541,6 +598,15 @@ function createStyles(C: AppColors) {
       borderRadius: RADIUS.sm,
       borderWidth: 1,
       borderColor: C.primary,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    gateMini: {
+      width: 40,
+      height: 40,
+      borderRadius: RADIUS.sm,
+      borderWidth: 1,
+      borderColor: C.border,
       alignItems: "center",
       justifyContent: "center",
     },

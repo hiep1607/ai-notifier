@@ -111,6 +111,25 @@ export default function RuleDetailScreen() {
     }
   };
 
+  // Chế độ thông báo: "all" (đầy đủ) ⇄ "important" (chỉ báo tin quan trọng, bỏ tin lặp/không có gì mới).
+  const toggleNotifyMode = async () => {
+    if (!rule) return;
+
+    const newValue = rule.notify_mode === "important" ? "all" : "important";
+    setRule({ ...rule, notify_mode: newValue });
+
+    const { error } = await supabase
+      .from("rules")
+      .update({ notify_mode: newValue })
+      .eq("id", rule.id);
+
+    if (error) {
+      // Cột chưa có (migration 0015 chưa chạy) → khôi phục + báo nhẹ.
+      setRule({ ...rule, notify_mode: rule.notify_mode });
+      alertMessage("Chưa đổi được", "Cần chạy migration 0015 (cột notify_mode) trong Supabase trước.");
+    }
+  };
+
   const startEditing = () => {
     if (!rule) return;
     setEditTitle(rule.title);
@@ -463,6 +482,24 @@ export default function RuleDetailScreen() {
             </TouchableOpacity>
           )}
 
+          {/* NOTIFY MODE — lọc thông báo rác: chỉ báo tin quan trọng / thỏa điều kiện */}
+          <TouchableOpacity
+            style={[styles.muteButton, rule.notify_mode === "important" && styles.notifyModeOn]}
+            onPress={toggleNotifyMode}
+            activeOpacity={0.8}
+          >
+            <Ionicons
+              name={rule.notify_mode === "important" ? "funnel" : "funnel-outline"}
+              size={20}
+              color={rule.notify_mode === "important" ? colors.primary : colors.subText}
+            />
+            <Text style={[styles.muteText, rule.notify_mode === "important" && { color: colors.primary }]}>
+              {rule.notify_mode === "important"
+                ? "Chỉ báo tin quan trọng — bật lại đầy đủ"
+                : "Chỉ báo tin quan trọng (lọc tin rác/lặp)"}
+            </Text>
+          </TouchableOpacity>
+
           {/* MUTE BUTTON — vẫn nhận tin trong app, chỉ tắt push về máy */}
           <TouchableOpacity
             style={[styles.muteButton, rule.muted && styles.muteButtonOn]}
@@ -783,6 +820,10 @@ function createStyles(C: AppColors) {
     muteButtonOn: {
       borderColor: C.warning,
       backgroundColor: C.warning + "11",
+    },
+    notifyModeOn: {
+      borderColor: C.primary,
+      backgroundColor: C.primary + "11",
     },
     muteText: {
       color: C.subText,
