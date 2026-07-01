@@ -251,9 +251,12 @@ interface NotifFields {
   related_notification_id?: string; // trỏ tới thông báo trước (khi không có URL bài gốc)
 }
 
-// Chèn 1 notification + đẩy push. Trả 1 nếu thành công, 0 nếu lỗi.
+// Chèn 1 notification + (tùy) đẩy push. Trả 1 nếu thành công, 0 nếu lỗi.
+// push=false → chỉ lưu trong app, KHÔNG đẩy push. Dùng cho FILLER ("chưa có thay đổi"/
+// "chưa tìm thấy"/gợi ý liên quan): tin trạng thái này gần như không có giá trị để rung máy,
+// nên mặc định không push (giảm "thông báo rác") — vẫn xem được trong app để biết hệ thống chạy.
 // deno-lint-ignore no-explicit-any
-async function insertNotif(supabase: any, rule: Rule, f: NotifFields): Promise<number> {
+async function insertNotif(supabase: any, rule: Rule, f: NotifFields, push = true): Promise<number> {
   const title = (f.title || "Tin mới").slice(0, 300);
   // deno-lint-ignore no-explicit-any
   const row: Record<string, any> = {
@@ -274,8 +277,8 @@ async function insertNotif(supabase: any, rule: Rule, f: NotifFields): Promise<n
   const { data: ins, error } = await supabase.from("notifications")
     .insert([row]).select("id").single();
   if (error || !ins) return 0;
-  // Rule "để êm" (muted): vẫn lưu notification để xem trong app, nhưng KHÔNG đẩy push về máy.
-  if (!rule.muted) {
+  // Rule "để êm" (muted) HOẶC filler (push=false): vẫn lưu để xem trong app, KHÔNG đẩy push.
+  if (!rule.muted && push) {
     await sendPush(supabase, rule.user_id, title, f.ai_summary || f.content || "", ins.id);
   }
   return 1;
@@ -432,7 +435,7 @@ async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult
         related_notification_id: prev.id,
         sentiment: "neutral",
         is_important: false,
-      });
+      }, false); // filler → chỉ lưu trong app, KHÔNG push
       note = { title: `Chưa có thay đổi mới: ${topic}`, kind: "nochange" };
     } else if (top) {
       // Chưa có tb nào, nhưng tìm được tin liên quan/gần nhất → gửi như đề xuất.
@@ -446,7 +449,7 @@ async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult
         source_url: url,
         sentiment: normSentiment(top.sentiment),
         is_important: false,
-      });
+      }, false); // filler → chỉ lưu trong app, KHÔNG push
       note = { title: `Gợi ý liên quan: ${String(top.title ?? topic).slice(0, 120)}`, kind: "related" };
     } else {
       // Hoàn toàn không có gì.
@@ -459,7 +462,7 @@ async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult
         source_url: "",
         sentiment: "neutral",
         is_important: false,
-      });
+      }, false); // filler → chỉ lưu trong app, KHÔNG push
       note = { title: `Chưa tìm thấy thông tin: ${topic}`, kind: "none" };
     }
   }
