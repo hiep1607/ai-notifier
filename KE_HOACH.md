@@ -59,7 +59,7 @@ pg_cron (mỗi 15 phút) → run-monitor (quét nền, lọc rule tới hạn th
 - [x] **Chạy SQL `0012_admin_logs.sql`** (bảng `usage_logs` + `cron_runs`) — user đã chạy; Quota + Lịch sử cron đã hiện số liệu.
 - [ ] **Chạy SQL `0013_cron_detail.sql`** (cột `detail` cho cron_runs) — để bấm 1 dòng cron xem "đã quét rule nào". Chưa chạy thì vẫn ghi log bình thường (fallback bỏ detail), chỉ là dòng mở rộng báo "không quét rule nào".
 - [ ] **Chạy SQL `0015_rule_notify_mode.sql`** (cột `notify_mode` cho rules) — bật chế độ "chỉ tin quan trọng" (chống thông báo rác). Chưa chạy thì nút đổi chế độ ở chi tiết rule sẽ báo "cần chạy migration 0015"; rule mới vẫn tạo bình thường (mặc định 'all').
-- [ ] **Chạy SQL `0016_rule_reminder.sql`** (cột `source_type` + `remind_at`) — bật tính năng NHẮC HẸN ("nhắc tôi X ngày 20/7"). Chưa chạy thì tạo rule nhắc hẹn sẽ lỗi cột không tồn tại; rule thường không ảnh hưởng.
+- [x] **Chạy SQL `0016_rule_reminder.sql`** (cột `source_type` + `remind_at`) — user xác nhận đã chạy 2026-07-02. Nhắc hẹn ("nhắc tôi X ngày 20/7") đã hoạt động đủ; đẩy lại web (EAS Hosting) + OTA (branch preview) để xác nhận bản mới nhất.
 
 ## 🗺 KẾ HOẠCH: Các loại theo dõi tiếp theo (lập 2026-07-02)
 > Ý tưởng xương sống: hiện MỌI rule đều đi qua Gemini + Google Search grounding — vừa tốn quota

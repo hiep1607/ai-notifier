@@ -197,10 +197,10 @@ Công cụ kiểm thử nhanh, tách khỏi trang quản trị:
 
 ## 8. Migration cần chạy để dùng đủ tính năng
 
-| File | Bật tính năng | Nếu CHƯA chạy |
+| File | Bật tính năng | Trạng thái |
 |---|---|---|
-| `0015_rule_notify_mode.sql` | Chế độ "Chỉ tin quan trọng" per-rule | Nút đổi chế độ báo lỗi; rule vẫn tạo/chạy bình thường ở chế độ Đầy đủ |
-| `0016_rule_reminder.sql` | Nhắc hẹn (reminder) | Tạo rule thường OK; riêng tạo nhắc hẹn báo lỗi thiếu cột |
+| `0015_rule_notify_mode.sql` | Chế độ "Chỉ tin quan trọng" per-rule | Chưa chạy → nút đổi chế độ báo lỗi; rule vẫn tạo/chạy bình thường ở chế độ Đầy đủ |
+| `0016_rule_reminder.sql` | Nhắc hẹn (reminder) | ✅ Đã chạy (2026-07-02) — nhắc hẹn hoạt động đủ |
 
 ---
 
