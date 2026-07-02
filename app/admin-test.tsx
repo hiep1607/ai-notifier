@@ -60,6 +60,7 @@ const PROVIDER_LABEL: Record<string, string> = {
   crypto: "🪙 CoinGecko (API giá coin)",
   fx: "💱 ExchangeRate-API (tỷ giá)",
   rss: "📰 RSS báo VN + flash-lite (không grounding)",
+  url: "🌐 Trang web cụ thể (fetch trực tiếp + flash-lite)",
 };
 
 function formatGate(g: GatePreview): string {

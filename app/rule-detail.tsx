@@ -47,6 +47,11 @@ export default function RuleDetailScreen() {
   const [saving, setSaving] = useState(false);
   const [monitoring, setMonitoring] = useState(false);
 
+  // "Cấp quyền đăng nhập" cho rule theo dõi trang web (source_type 'url'): người dùng
+  // dán Cookie/headers → server fetch trang kèm các header này. Lưu ở cột watch_auth.
+  const [authDraft, setAuthDraft] = useState("");
+  const [savingAuth, setSavingAuth] = useState(false);
+
   useEffect(() => {
     if (id) fetchData();
     // Chỉ fetch lại khi đổi id — không đưa fetchData vào deps để khỏi tạo lại mỗi render.
@@ -64,6 +69,7 @@ export default function RuleDetailScreen() {
 
     if (ruleData) {
       setRule(ruleData as Rule);
+      setAuthDraft((ruleData as Rule).watch_auth ?? "");
     }
 
     const { data: notifData } = await supabase
@@ -128,6 +134,32 @@ export default function RuleDetailScreen() {
       setRule({ ...rule, notify_mode: rule.notify_mode });
       alertMessage("Chưa đổi được", "Cần chạy migration 0015 (cột notify_mode) trong Supabase trước.");
     }
+  };
+
+  // Lưu quyền đăng nhập (Cookie/headers) cho trang cần login. Xóa trắng = thu hồi quyền.
+  const saveWatchAuth = async () => {
+    if (!rule) return;
+    setSavingAuth(true);
+
+    const value = authDraft.trim() || null;
+    const { error } = await supabase
+      .from("rules")
+      .update({ watch_auth: value })
+      .eq("id", rule.id);
+
+    setSavingAuth(false);
+
+    if (error) {
+      alertMessage("Chưa lưu được", "Cần chạy migration 0018 (cột watch_url/watch_auth) trong Supabase trước.");
+      return;
+    }
+    setRule({ ...rule, watch_auth: value ?? undefined });
+    alertMessage(
+      value ? "Đã cấp quyền" : "Đã thu hồi quyền",
+      value
+        ? "Hệ thống sẽ dùng Cookie này khi đọc trang ở các lần quét tới. Cookie hết hạn thì bạn sẽ nhận thông báo nhắc dán lại."
+        : "Đã xóa Cookie đã lưu. Trang cần đăng nhập sẽ không đọc được nữa."
+    );
   };
 
   const startEditing = () => {
@@ -249,6 +281,8 @@ export default function RuleDetailScreen() {
   }
 
   const cat = findCategory(rule.category);
+  // Rule theo dõi TRANG WEB cụ thể (source_type 'url' — hoặc rule cũ có URL trong keyword).
+  const isUrlRule = rule.source_type === "url" || Boolean(rule.watch_url);
 
   return (
     <ScrollView
@@ -343,6 +377,14 @@ export default function RuleDetailScreen() {
             <Text style={styles.value}>{rule.keyword}</Text>
           )}
         </View>
+
+        {/* Trang web theo dõi (rule url) */}
+        {!isEditing && rule.watch_url ? (
+          <View style={styles.infoRow}>
+            <Text style={styles.label}>Trang theo dõi</Text>
+            <Text style={[styles.value, styles.valueRight]} numberOfLines={2}>{rule.watch_url}</Text>
+          </View>
+        ) : null}
 
         {/* Danh mục (khi edit) */}
         {isEditing && (
@@ -499,6 +541,56 @@ export default function RuleDetailScreen() {
                 : "Chỉ báo tin quan trọng (lọc tin rác/lặp)"}
             </Text>
           </TouchableOpacity>
+
+          {/* CẤP QUYỀN ĐĂNG NHẬP — chỉ rule theo dõi trang web: dán Cookie cho trang cần login */}
+          {isUrlRule && (
+            <View style={styles.authCard}>
+              <View style={styles.authHeader}>
+                <Ionicons
+                  name={rule.watch_auth ? "lock-open-outline" : "lock-closed-outline"}
+                  size={18}
+                  color={rule.watch_auth ? colors.success : colors.subText}
+                />
+                <Text style={styles.authTitle}>Cấp quyền đăng nhập</Text>
+                {rule.watch_auth ? <Text style={styles.authGranted}>Đã cấp</Text> : null}
+              </View>
+              <Text style={styles.authHint}>
+                Trang cần đăng nhập mới xem được? Đăng nhập trang đó trên trình duyệt → F12 →
+                tab Network → copy giá trị header Cookie rồi dán vào đây (hoặc từng dòng
+                &quot;Tên-Header: giá trị&quot;). Chỉ mình bạn và hệ thống quét đọc được.
+              </Text>
+              <TextInput
+                style={styles.authInput}
+                value={authDraft}
+                onChangeText={setAuthDraft}
+                placeholder="VD: session=abc123; token=xyz..."
+                placeholderTextColor={colors.subText}
+                multiline
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              <View style={styles.authActions}>
+                {rule.watch_auth ? (
+                  <TouchableOpacity
+                    style={styles.authClearBtn}
+                    onPress={() => { setAuthDraft(""); }}
+                    disabled={savingAuth}
+                  >
+                    <Text style={styles.authClearText}>Xóa</Text>
+                  </TouchableOpacity>
+                ) : null}
+                <TouchableOpacity
+                  style={[styles.authSaveBtn, savingAuth && { opacity: 0.6 }]}
+                  onPress={saveWatchAuth}
+                  disabled={savingAuth || (!authDraft.trim() && !rule.watch_auth)}
+                >
+                  <Text style={styles.authSaveText}>
+                    {savingAuth ? "Đang lưu..." : authDraft.trim() ? "Lưu quyền" : "Thu hồi quyền"}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
 
           {/* MUTE BUTTON — vẫn nhận tin trong app, chỉ tắt push về máy */}
           <TouchableOpacity
@@ -829,6 +921,77 @@ function createStyles(C: AppColors) {
       color: C.subText,
       fontSize: 16,
       fontWeight: "600",
+    },
+    authCard: {
+      backgroundColor: C.card,
+      borderRadius: RADIUS.lg,
+      borderWidth: 1,
+      borderColor: C.border,
+      padding: 16,
+      marginTop: 12,
+      marginBottom: 8,
+    },
+    authHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      marginBottom: 8,
+    },
+    authTitle: {
+      color: C.text,
+      fontSize: 16,
+      fontWeight: "600",
+      flex: 1,
+    },
+    authGranted: {
+      color: C.success,
+      fontSize: 12,
+      fontWeight: "700",
+    },
+    authHint: {
+      color: C.subText,
+      fontSize: 13,
+      lineHeight: 19,
+      marginBottom: 10,
+    },
+    authInput: {
+      backgroundColor: C.inputBg,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: C.border,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      color: C.text,
+      fontSize: 13,
+      minHeight: 64,
+      textAlignVertical: "top",
+    },
+    authActions: {
+      flexDirection: "row",
+      justifyContent: "flex-end",
+      gap: 10,
+      marginTop: 10,
+    },
+    authClearBtn: {
+      paddingHorizontal: 16,
+      paddingVertical: 10,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: C.border,
+    },
+    authClearText: {
+      color: C.subText,
+      fontWeight: "600",
+    },
+    authSaveBtn: {
+      paddingHorizontal: 18,
+      paddingVertical: 10,
+      borderRadius: 12,
+      backgroundColor: C.primary,
+    },
+    authSaveText: {
+      color: "white",
+      fontWeight: "700",
     },
     deleteButton: {
       flexDirection: "row",

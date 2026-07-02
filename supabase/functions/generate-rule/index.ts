@@ -28,7 +28,11 @@ Một rule hoàn chỉnh gồm các trường:
       HOẶC định kỳ ĐỊNH KỲ (không phải "change", không có condition) trên chủ đề ÍT BIẾN ĐỘNG (vd thời tiết 1 thành phố, giá 1 mặt hàng ổn định) → hay phải báo "chưa có thay đổi".
     * THẤP khi: có condition cụ thể (chỉ báo khi chạm ngưỡng), HOẶC chủ đề hẹp & rõ ràng.
 - noise_reason: 1 câu NGẮN tiếng Việt giải thích vì sao noise_risk như vậy (chỉ cần khi "high"; "low" thì để "").
-- source_type: "reminder" nếu người dùng muốn ĐƯỢC NHẮC một việc vào thời điểm cụ thể (deadline, sự kiện, cuộc hẹn, sinh nhật...) — KHÔNG phải theo dõi tin tức trên mạng. Các trường hợp còn lại để "".
+- source_type:
+    * "reminder" nếu người dùng muốn ĐƯỢC NHẮC một việc vào thời điểm cụ thể (deadline, sự kiện, cuộc hẹn, sinh nhật...) — KHÔNG phải theo dõi tin tức trên mạng.
+    * "url" nếu người dùng muốn theo dõi MỘT TRANG WEB/APP CỤ THỂ mà họ đưa link (giá 1 sản phẩm trên trang X, chương mới của truyện, trạng thái đơn hàng, bài mới trên blog...). KHÔNG phải "url" khi chỉ nêu chủ đề chung chung không kèm trang cụ thể.
+    * Các trường hợp còn lại để "".
+- watch_url: CHỈ dùng khi source_type="url" — URL đầy đủ (bắt đầu http:// hoặc https://) của trang cần theo dõi. Người dùng nói muốn theo dõi 1 trang cụ thể nhưng CHƯA đưa link → need_info hỏi xin link. Không phải "url" → để "".
 - remind_at: CHỈ dùng khi source_type="reminder" — thời điểm nhắc dạng "YYYY-MM-DDTHH:mm" GIỜ VIỆT NAM (vd "2026-07-20T09:00"). Không nói giờ → "08:00". Không nói năm → năm hiện tại; nếu ngày đó ĐÃ QUA thì lấy năm sau. Người dùng KHÔNG nêu ngày cụ thể → need_info hỏi lại ngày. Không phải reminder → để "".
 
 NHẮC HẸN (source_type="reminder"):
@@ -36,6 +40,12 @@ NHẮC HẸN (source_type="reminder"):
 - Nhắc 1 LẦN vào remind_at rồi hệ thống tự tắt. Nếu người dùng muốn nhắc LẶP LẠI hằng ngày/tuần → đó là rule đặt giờ thường (run_at + frequency), KHÔNG phải reminder.
 - KHÔNG CÓ GIỚI HẠN THỜI GIAN TỐI THIỂU: nhắc hẹn được đặt BẤT KỲ lúc nào trong tương lai, kể cả vài phút nữa. Quy tắc "tối thiểu 30 phút" CHỈ áp cho theo dõi ĐỊNH KỲ, TUYỆT ĐỐI KHÔNG áp cho nhắc hẹn — đừng từ chối "nhắc tôi 5 phút nữa".
 - GIỜ TƯƠNG ĐỐI: "X phút nữa"/"X tiếng nữa"/"tối nay"/"trưa mai"... → tự cộng từ THỜI ĐIỂM HIỆN TẠI được cung cấp đầu hội thoại để ra remind_at tuyệt đối (vd bây giờ 2026-07-02 21:07, "nhắc tôi 5 phút nữa" → "2026-07-02T21:12"). Đã có mốc tương đối rõ thì KHÔNG hỏi lại.
+
+THEO DÕI TRANG WEB CỤ THỂ (source_type="url"):
+- keyword = MÔ TẢ điều cần theo dõi trên trang (vd "giá sản phẩm", "chương mới", "trạng thái đơn hàng") — KHÔNG lặp lại URL trong keyword.
+- Vẫn phải rõ kiểu theo dõi: định kỳ (frequency = số phút ≥30) hay theo điều kiện (frequency="change" + condition) — thiếu thì hỏi lại như thường.
+- Trang cần ĐĂNG NHẬP mới xem được (trang cá nhân, đơn hàng, nhóm kín...) → VẪN tạo rule bình thường, và trong "message" nhắc thêm: sau khi tạo, mở chi tiết rule → mục "Cấp quyền đăng nhập" để dán Cookie thì hệ thống mới đọc được.
+- App di động thuần (không có bản web/URL) thì KHÔNG theo dõi được → giải thích và gợi ý dùng bản web của dịch vụ đó nếu có.
 
 HAI KIỂU THEO DÕI — phải xác định rõ người dùng muốn kiểu nào:
   (1) ĐỊNH KỲ: báo tin mới đều đặn. → frequency = số phút (≥30), condition = "".
@@ -105,7 +115,15 @@ User: "nhắc tôi đi khám răng"
 
 VÍ DỤ I — nhắc hẹn GIỜ TƯƠNG ĐỐI, rất gần cũng OK (giả sử bây giờ là 2026-07-02 21:07):
 User: "nhắc tôi 5 phút nữa tắt bếp"
-→ { "status": "ready", "message": "Đã tạo nhắc hẹn:", "rules": [ { "title": "Tắt bếp", "description": "Nhắc tắt bếp lúc 21:12.", "keyword": "tắt bếp", "category": "other", "sources": "", "frequency": "1440", "run_at": "", "condition": "", "noise_risk": "low", "noise_reason": "", "source_type": "reminder", "remind_at": "2026-07-02T21:12" } ] }`;
+→ { "status": "ready", "message": "Đã tạo nhắc hẹn:", "rules": [ { "title": "Tắt bếp", "description": "Nhắc tắt bếp lúc 21:12.", "keyword": "tắt bếp", "category": "other", "sources": "", "frequency": "1440", "run_at": "", "condition": "", "noise_risk": "low", "noise_reason": "", "source_type": "reminder", "remind_at": "2026-07-02T21:12" } ] }
+
+VÍ DỤ J — theo dõi TRANG WEB CỤ THỂ theo điều kiện:
+User: "báo tôi khi sản phẩm này giảm dưới 500k https://shop.example.com/ao-khoac"
+→ { "status": "ready", "message": "Đã tạo rule theo dõi giá trên trang bạn đưa:", "rules": [ { "title": "Giá áo khoác shop.example.com", "description": "Báo khi giá áo khoác trên trang giảm dưới 500.000đ.", "keyword": "giá áo khoác", "category": "other", "sources": "", "frequency": "change", "run_at": "", "condition": "khi giá giảm dưới 500.000đ", "noise_risk": "low", "noise_reason": "", "source_type": "url", "watch_url": "https://shop.example.com/ao-khoac" } ] }
+
+VÍ DỤ K — muốn theo dõi trang cụ thể nhưng CHƯA đưa link:
+User: "theo dõi trạng thái đơn hàng của tôi trên Shopee"
+→ { "status": "need_info", "message": "Bạn dán link trang đơn hàng cần theo dõi giúp mình nhé (URL đầy đủ bắt đầu bằng https://). Lưu ý: trang cần đăng nhập thì sau khi tạo rule, bạn mở chi tiết rule → \\"Cấp quyền đăng nhập\\" để dán Cookie." }`;
 
 function asText(v: unknown): string {
   if (Array.isArray(v)) return v.join(", ");
@@ -166,6 +184,11 @@ Deno.serve(async (req) => {
         const isRem = asText(r.source_type).toLowerCase() === "reminder" &&
           /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(rawRemind) &&
           Number.isFinite(Date.parse(`${rawRemind.slice(0, 16)}:00+07:00`));
+        // THEO DÕI TRANG WEB: chỉ nhận khi watch_url là http(s) thật sự.
+        const rawWatch = asText(r.watch_url).trim();
+        const isUrlWatch = !isRem &&
+          asText(r.source_type).toLowerCase() === "url" &&
+          /^https?:\/\/\S+$/i.test(rawWatch);
         return {
           title: asText(r.title),
           description: asText(r.description),
@@ -177,8 +200,9 @@ Deno.serve(async (req) => {
           condition: cond,
           noise_risk: isRem ? "low" : risk,
           noise_reason: !isRem && risk === "high" ? asText(r.noise_reason) : "",
-          source_type: isRem ? "reminder" : "",
+          source_type: isRem ? "reminder" : (isUrlWatch ? "url" : ""),
           remind_at: isRem ? `${rawRemind.slice(0, 16)}:00+07:00` : "",
+          watch_url: isUrlWatch ? rawWatch : "",
         };
       }).filter((r) => r.keyword); // bỏ rule rỗng (thiếu keyword)
 

@@ -21,6 +21,11 @@ import {
   composeWeatherNotif,
   composeCryptoNotif,
   composeFxNotif,
+  extractWatchUrl,
+  isPrivateHost,
+  isWatchableUrl,
+  parseWatchAuth,
+  stripHtml,
 } from "../../supabase/functions/_shared/monitorLogic";
 
 describe("intervalMs", () => {
@@ -325,5 +330,79 @@ describe("compose bản tin provider", () => {
     expect(p.value).toBe("26150 VND");
     // Chưa có mốc cũ → không nêu chênh.
     expect(composeFxNotif(26150, null).content).not.toContain("lần trước");
+  });
+});
+
+// ---------- THEO DÕI TRANG WEB CỤ THỂ (Pha E) ----------
+
+describe("extractWatchUrl & detectSourceType 'url'", () => {
+  it("lấy URL đầu tiên trong text, cắt dấu câu bám đuôi", () => {
+    expect(extractWatchUrl("theo dõi https://shop.vn/ao-khoac nhé")).toBe("https://shop.vn/ao-khoac");
+    expect(extractWatchUrl("xem trang https://a.com/x?p=1&q=2.")).toBe("https://a.com/x?p=1&q=2");
+    expect(extractWatchUrl("không có link nào")).toBe("");
+    expect(extractWatchUrl(undefined)).toBe("");
+  });
+
+  it("keyword chứa URL → source_type 'url' (thắng cả heuristic thời tiết)", () => {
+    expect(detectSourceType("giá áo https://shop.vn/ao")).toBe("url");
+    expect(detectSourceType("thời tiết https://weather.example.com/hn")).toBe("url");
+    expect(detectSourceType("thời tiết Hà Nội")).toBe("weather"); // không URL → như cũ
+  });
+});
+
+describe("isPrivateHost & isWatchableUrl (chống SSRF)", () => {
+  it("chặn localhost/IP nội bộ/metadata", () => {
+    expect(isPrivateHost("localhost")).toBe(true);
+    expect(isPrivateHost("127.0.0.1")).toBe(true);
+    expect(isPrivateHost("10.0.0.5")).toBe(true);
+    expect(isPrivateHost("192.168.1.1")).toBe(true);
+    expect(isPrivateHost("172.20.3.4")).toBe(true);
+    expect(isPrivateHost("169.254.169.254")).toBe(true); // cloud metadata
+    expect(isPrivateHost("db.internal")).toBe(true);
+    expect(isPrivateHost("vnexpress.net")).toBe(false);
+    expect(isPrivateHost("172.32.0.1")).toBe(false); // ngoài dải 172.16-31
+  });
+
+  it("chỉ nhận http/https tới host công khai", () => {
+    expect(isWatchableUrl("https://shop.vn/x")).toBe(true);
+    expect(isWatchableUrl("http://example.com")).toBe(true);
+    expect(isWatchableUrl("ftp://example.com")).toBe(false);
+    expect(isWatchableUrl("https://127.0.0.1/admin")).toBe(false);
+    expect(isWatchableUrl("không phải url")).toBe(false);
+  });
+});
+
+describe("parseWatchAuth", () => {
+  it("dòng 'Header: value' → header; dòng trần → Cookie", () => {
+    expect(parseWatchAuth("Authorization: Bearer abc\nX-Api-Key: k1")).toEqual({
+      Authorization: "Bearer abc",
+      "X-Api-Key": "k1",
+    });
+    expect(parseWatchAuth("session=abc; user=1")).toEqual({ Cookie: "session=abc; user=1" });
+    // Trộn: dòng header + dòng cookie trần.
+    expect(parseWatchAuth("Authorization: Bearer t\nsession=abc")).toEqual({
+      Authorization: "Bearer t",
+      Cookie: "session=abc",
+    });
+    expect(parseWatchAuth("")).toEqual({});
+    expect(parseWatchAuth(null)).toEqual({});
+  });
+});
+
+describe("stripHtml", () => {
+  it("bỏ script/style/tag, decode entity, gọn khoảng trắng", () => {
+    const html = `<html><head><style>.x{color:red}</style><script>alert(1)</script></head>
+      <body><h1>Giá &amp; khuyến mãi</h1><p>1.250.000&nbsp;đ</p><div>Còn hàng</div></body></html>`;
+    const text = stripHtml(html);
+    expect(text).toContain("Giá & khuyến mãi");
+    expect(text).toContain("1.250.000 đ");
+    expect(text).toContain("Còn hàng");
+    expect(text).not.toContain("alert(1)");
+    expect(text).not.toContain("color:red");
+    expect(text).not.toContain("<p>");
+  });
+
+  it("cắt trần độ dài để vừa prompt AI", () => {
+    expect(stripHtml("a".repeat(20000), 12000).length).toBe(12000);
   });
 });

@@ -154,7 +154,7 @@ export function isTooOld(publishedDate: string | undefined, maxDays: number, now
 // Mỗi loại theo dõi có nguồn CHUYÊN BIỆT (API thật, 0 quota grounding); "search" =
 // Gemini + Google Search như cũ, đồng thời là fallback khi provider lỗi.
 // Phân loại bằng heuristic từ keyword — chạy lúc quét nên RULE CŨ tự hưởng, không cần migration.
-export type SourceType = "search" | "weather" | "crypto" | "fx";
+export type SourceType = "search" | "weather" | "crypto" | "fx" | "url";
 
 // Coin phổ biến → id CoinGecko. Chỉ nhận khi keyword có ý "giá" (tránh cướp rule tin tức).
 export const COIN_MAP: { re: RegExp; id: string; name: string }[] = [
@@ -173,9 +173,19 @@ export function matchCoin(keyword: string): { id: string; name: string } | null 
   return hit ? { id: hit.id, name: hit.name } : null;
 }
 
+// URL đầu tiên trong text (dùng nhận diện rule "theo dõi trang web cụ thể").
+// Cắt dấu câu bám đuôi ( ) . , " thường gặp khi URL nằm giữa câu.
+export function extractWatchUrl(text?: string): string {
+  const m = String(text ?? "").match(/https?:\/\/[^\s<>"')\]]+/i);
+  if (!m) return "";
+  return m[0].replace(/[.,;!?]+$/, "");
+}
+
 export function detectSourceType(keyword?: string): SourceType {
   const k = (keyword ?? "").toLowerCase();
   if (!k.trim()) return "search";
+  // Có URL cụ thể trong keyword → theo dõi TRANG đó (ưu tiên trước mọi heuristic khác).
+  if (extractWatchUrl(k)) return "url";
   if (/thời tiết|thoi tiet|dự báo thời tiết|nhiệt độ|nhiet do|weather/.test(k)) return "weather";
   // crypto/fx: phải có ý "giá/tỷ giá" — "tin tức bitcoin" vẫn là rule TIN TỨC (search).
   const priceIntent = /giá|gia\b|price|tỷ giá|ty gia/.test(k);
@@ -325,6 +335,76 @@ export interface PickResult<T> {
 // - bỏ bài quá cũ (theo published_date, nếu có);
 // - lấy bài ĐẦU TIÊN chưa trùng tiêu đề đã gửi (hoặc trùng nhưng số liệu ĐÃ ĐỔI);
 // - tất cả đều trùng → trả bài đầu tiên với fresh=false (để nhánh fallback còn dữ liệu dùng).
+// ---------- THEO DÕI TRANG WEB CỤ THỂ (Pha E — phần thuần, test được) ----------
+
+// Chặn SSRF: run-monitor chạy với service_role nên TUYỆT ĐỐI không được fetch vào
+// mạng nội bộ/metadata theo URL người dùng đưa. Chặn hostname/IP private phổ biến.
+export function isPrivateHost(hostname: string): boolean {
+  const h = hostname.toLowerCase().replace(/^\[|\]$/g, ""); // bỏ ngoặc IPv6
+  if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local") || h.endsWith(".internal")) return true;
+  if (h === "::1" || h === "0.0.0.0" || h === "") return true;
+  const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (m) {
+    const [a, b] = [Number(m[1]), Number(m[2])];
+    if (a === 0 || a === 10 || a === 127) return true;
+    if (a === 169 && b === 254) return true;              // link-local / cloud metadata
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+  }
+  if (/^(fc|fd|fe8|fe9|fea|feb)/.test(h.replace(/:/g, ""))) return true; // IPv6 ULA/link-local
+  return false;
+}
+
+// URL hợp lệ để theo dõi? (http/https + không trỏ vào mạng nội bộ)
+export function isWatchableUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return false;
+    return !isPrivateHost(u.hostname);
+  } catch {
+    return false;
+  }
+}
+
+// watch_auth người dùng dán → headers gửi kèm khi fetch trang cần đăng nhập.
+// Chấp nhận 2 dạng: từng dòng "Header-Name: value" (Cookie/Authorization/X-...-Token...),
+// hoặc dán THẲNG chuỗi cookie ("session=abc; user=1") → coi là header Cookie.
+export function parseWatchAuth(raw?: string | null): Record<string, string> {
+  const out: Record<string, string> = {};
+  const text = String(raw ?? "").trim();
+  if (!text) return out;
+  for (const line of text.split(/\r?\n/)) {
+    const s = line.trim();
+    if (!s) continue;
+    const m = s.match(/^([A-Za-z][A-Za-z0-9-]*)\s*:\s*(.+)$/);
+    if (m) out[m[1]] = m[2].trim();
+    else out["Cookie"] = out["Cookie"] ? `${out["Cookie"]}; ${s}` : s; // dòng trần = cookie
+  }
+  return out;
+}
+
+// HTML → text đọc được cho AI: bỏ script/style, bỏ tag, gọn khoảng trắng, cắt trần.
+// Regex là đủ ở đây (chỉ cần text thô cho AI đọc, không cần DOM chuẩn).
+export function stripHtml(html: string, maxChars = 12000): string {
+  const text = String(html ?? "")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ")
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<(br|\/p|\/div|\/li|\/tr|\/h[1-6])[^>]*>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\s*\n\s*/g, "\n")
+    .trim();
+  return text.length > maxChars ? text.slice(0, maxChars) : text;
+}
+
 export function pickFreshItem<T extends PickableItem>(
   items: T[],
   seenTitles: Set<string>,

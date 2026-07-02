@@ -32,10 +32,12 @@ import {
   detectSourceType,
   significantChange,
   isReminder,
+  extractWatchUrl,
   type SourceType,
   type ProviderNotif,
 } from "../_shared/monitorLogic.ts";
 import { fetchWeatherNotif, fetchCryptoNotif, fetchFxNotif } from "../_shared/providers.ts";
+import { fetchWatchPage, type WatchPage } from "../_shared/webwatch.ts";
 import { feedsForCategory, parseRss, mergeRssItems, sourceFromLink, type RssItem } from "../_shared/rss.ts";
 
 // Lỗi hết quota / quá tải tạm thời từ Gemini → nên DỪNG sớm thay vì đốt thêm request.
@@ -62,6 +64,8 @@ interface Rule {
   notify_mode?: string;     // "important" = bỏ fallback + chỉ báo tin quan trọng/thỏa điều kiện; mặc định "all"
   source_type?: string | null; // 'reminder' = rule nhắc hẹn (migration 0016); mặc định 'search'
   remind_at?: string | null;   // thời điểm nhắc (ISO) — chỉ dùng với reminder
+  watch_url?: string | null;   // URL trang cần theo dõi (migration 0018, source_type='url')
+  watch_auth?: string | null;  // cookie/headers người dùng cấp cho trang cần đăng nhập
   title?: string;           // tên rule (reminder dùng làm nội dung nhắc)
   description?: string;     // mô tả rule (reminder dùng làm ghi chú)
   is_active: boolean;
@@ -415,6 +419,174 @@ async function monitorProvider(supabase: any, rule: Rule, srcType: SourceType): 
   return { inserted, value: p.value, note: { title: p.title, kind: "real" } };
 }
 
+// ---- THEO DÕI TRANG WEB CỤ THỂ (Pha E): fetch URL người dùng đưa, AI trích giá trị ----
+
+// URL của rule: cột watch_url (tường minh) hoặc URL nằm ngay trong keyword (rule cũ/gõ tay).
+function ruleWatchUrl(rule: Rule): string {
+  return (rule.watch_url ?? "").trim() || extractWatchUrl(rule.keyword);
+}
+
+interface UrlExtract {
+  found: boolean;           // trang có chứa thông tin người dùng cần không
+  login_required: boolean;  // trang đang đòi đăng nhập (nội dung chính bị che)
+  title: string;
+  value: string;            // giá trị chính trích được (máy-đọc, để so lần sau)
+  content: string;
+  ai_summary: string;
+  changed: boolean;         // khác đáng kể so với giá trị lần trước?
+  matches_condition: boolean;
+  is_important: boolean;
+}
+
+// flash-lite ĐỌC text trang đã strip HTML → trích đúng thông tin rule cần (KHÔNG grounding,
+// không đụng quota 1.500). Lỗi → throw để caller xử lý.
+// deno-lint-ignore no-explicit-any
+async function extractUrlAI(supabase: any, rule: Rule, page: WatchPage): Promise<UrlExtract> {
+  const hasCond = Boolean(rule.condition && rule.condition.trim());
+  const prev = rule.last_value?.trim() ?? "";
+  try {
+    const { text } = await geminiGenerate({
+      system:
+        "Bạn đọc nội dung TEXT của một trang web và trích đúng thông tin người dùng đang theo dõi. TUYỆT ĐỐI không bịa thông tin không có trong text. Chỉ trả JSON thuần.",
+      user: `Người dùng theo dõi trang: ${page.finalUrl}
+Điều họ quan tâm: "${rule.keyword}"${rule.description ? ` (${rule.description})` : ""}.
+${hasCond ? `Điều kiện để báo: "${rule.condition}".` : ""}
+${prev ? `Giá trị ghi nhận LẦN TRƯỚC: "${prev}".` : ""}
+
+NỘI DUNG TRANG (đã bỏ HTML):
+"""
+${page.text.slice(0, 11000)}
+"""
+
+Trả JSON:
+{
+  "found": true nếu trang CÓ thông tin người dùng cần, false nếu không thấy,
+  "login_required": true nếu nội dung chính bị che vì trang đòi đăng nhập/paywall (chỉ thấy form login, "vui lòng đăng nhập"...), ngược lại false,
+  "title": "tiêu đề ngắn cho thông báo, nêu thông tin chính (vd 'Đơn hàng #123: Đang giao')",
+  "value": "giá trị chính trích được, ngắn gọn máy-đọc (vd '1.250.000 đ' | 'Đang giao' | 'Chương 105'). \\"\\" nếu không có",
+  "content": "3-5 câu tóm tắt thông tin tìm được trên trang, số liệu cụ thể, tiếng Việt${prev ? "; nếu có thay đổi nêu RÕ 'từ [cũ] → [mới]'" : ""}",
+  "ai_summary": "1 câu ngắn ~15 từ điểm mấu chốt",
+  "changed": ${prev ? `true nếu "value" mới KHÁC đáng kể so với "${prev}", false nếu gần như không đổi` : "true"},
+  "matches_condition": ${hasCond ? `true nếu nội dung trang cho thấy điều kiện "${rule.condition}" đã xảy ra, ngược lại false` : "true"},
+  "is_important": true nếu thông tin này đáng chú ý với người theo dõi, ngược lại false
+}`,
+      json: true,
+      temperature: 0.2,
+      model: "gemini-2.5-flash-lite",
+    });
+    await logUsage(supabase, rule.id, true);
+    const d = parseJsonLoose<Partial<UrlExtract>>(text);
+    return {
+      found: toBool(d?.found),
+      login_required: toBool(d?.login_required),
+      title: String(d?.title ?? ""),
+      value: String(d?.value ?? ""),
+      content: String(d?.content ?? ""),
+      ai_summary: String(d?.ai_summary ?? ""),
+      changed: toBool(d?.changed),
+      matches_condition: toBool(d?.matches_condition),
+      is_important: toBool(d?.is_important),
+    };
+  } catch (e) {
+    await logUsage(supabase, rule.id, false, (e as Error).message);
+    throw e;
+  }
+}
+
+// Thông báo "cần cấp quyền đăng nhập" — gửi 1 lần (không lặp lại khi thông báo gần nhất
+// của rule vẫn là chính nó), kèm hướng dẫn dán Cookie trong chi tiết rule.
+// deno-lint-ignore no-explicit-any
+async function notifyLoginNeeded(supabase: any, rule: Rule, host: string, expired: boolean): Promise<MonitorRuleResult> {
+  const title = expired ? `🔒 Quyền đăng nhập hết hạn: ${host}` : `🔒 Trang cần đăng nhập: ${host}`;
+  const { data: prevRows } = await supabase
+    .from("notifications").select("title").eq("rule_id", rule.id)
+    .order("created_at", { ascending: false }).limit(1);
+  if (String(prevRows?.[0]?.title ?? "") === title) {
+    return { inserted: 0, note: { title: "", kind: "skipped" } }; // đã nhắc rồi, đừng spam
+  }
+  const inserted = await insertNotif(supabase, rule, {
+    title,
+    content: expired
+      ? `Cookie/token bạn cấp cho ${host} không còn hiệu lực nên không đọc được nội dung. Mở chi tiết rule → mục "Cấp quyền đăng nhập" và dán Cookie mới (lấy từ trình duyệt sau khi đăng nhập lại).`
+      : `Trang ${host} yêu cầu đăng nhập nên chưa theo dõi được. Mở chi tiết rule → mục "Cấp quyền đăng nhập" và dán Cookie của bạn (đăng nhập trang đó trên trình duyệt → F12 → tab Network → copy giá trị header Cookie). Cookie chỉ mình bạn và hệ thống quét đọc được.`,
+    details: "",
+    ai_summary: expired ? `Cần cấp lại quyền đăng nhập cho ${host}.` : `Cần cấp quyền đăng nhập cho ${host}.`,
+    source: host,
+    source_url: ruleWatchUrl(rule),
+    sentiment: "neutral",
+    is_important: true, // không cấp quyền thì rule tê liệt → đáng push
+  });
+  return { inserted, note: { title, kind: "real" } };
+}
+
+// Quét 1 rule THEO DÕI TRANG WEB: fetch URL (kèm quyền đăng nhập nếu người dùng đã cấp)
+// → flash-lite trích giá trị → cổng gửi giống provider:
+//  - có condition   → chỉ gửi khi thỏa; chống lặp = cooldown 6h + bỏ cooldown khi đổi ≥3%.
+//  - đặt giờ        → luôn gửi bản tin.
+//  - định kỳ thường → gửi mỗi kỳ; chế độ "chỉ tin quan trọng" thì chỉ gửi khi giá trị ĐỔI.
+// deno-lint-ignore no-explicit-any
+async function monitorUrl(supabase: any, rule: Rule): Promise<MonitorRuleResult> {
+  const url = ruleWatchUrl(rule);
+  if (!url) throw new Error("Rule url không có watch_url");
+  const host = new URL(url).hostname;
+  const hasAuth = Boolean(rule.watch_auth && rule.watch_auth.trim());
+
+  const page = await fetchWatchPage(url, rule.watch_auth);
+
+  // Trang đòi đăng nhập rõ ràng (HTTP 401/403) → nhắc người dùng cấp/cấp lại quyền.
+  if (page.status === 401 || page.status === 403) {
+    return await notifyLoginNeeded(supabase, rule, host, hasAuth);
+  }
+  if (page.status >= 400) throw new Error(`Trang trả HTTP ${page.status}`);
+  if (!page.text.trim()) throw new Error("Trang không có nội dung đọc được");
+
+  const ex = await extractUrlAI(supabase, rule, page);
+
+  // Nhiều trang trả 200 nhưng nội dung chính bị che sau form login → AI phát hiện.
+  if (ex.login_required && !ex.found) {
+    return await notifyLoginNeeded(supabase, rule, host, hasAuth);
+  }
+
+  const skipped: MonitorRuleResult = {
+    inserted: 0,
+    value: ex.value.trim() ? ex.value.trim().slice(0, 200) : undefined,
+    note: { title: "", kind: "skipped" },
+  };
+  if (!ex.found) return skipped; // trang không có thông tin cần — im, chờ lượt sau
+
+  const hasCond = Boolean(rule.condition && rule.condition.trim());
+  const scheduled = isScheduled(rule);
+  const prevNorm = normVal(String(rule.last_value ?? ""));
+  const curNorm = normVal(ex.value);
+  // "Thực sự đổi": lần đầu (chưa có mốc) = đổi; còn lại tin AI + so sánh giá trị chuẩn hóa.
+  const reallyChanged = prevNorm === "" || (curNorm !== "" && curNorm !== prevNorm) || ex.changed;
+
+  if (hasCond) {
+    if (!ex.matches_condition) return skipped;
+    const { data: prevRows } = await supabase
+      .from("notifications").select("created_at").eq("rule_id", rule.id)
+      .order("created_at", { ascending: false }).limit(1);
+    const prevMs = prevRows?.[0]?.created_at ? Date.parse(prevRows[0].created_at) : 0;
+    const recentAlert = prevMs > Date.now() - 6 * 3600000;
+    if (recentAlert && !significantChange(rule.last_value, ex.value, 3)) return skipped;
+  } else if (!scheduled && rule.notify_mode === "important") {
+    if (!reallyChanged) return skipped; // trang chưa đổi gì → im
+  }
+
+  const title = ex.title.trim() || `Cập nhật từ ${host}`;
+  const inserted = await insertNotif(supabase, rule, {
+    title,
+    content: ex.content,
+    details: "",
+    ai_summary: ex.ai_summary,
+    source: host,
+    source_url: url,
+    sentiment: "neutral",
+    is_important: hasCond ? true : ex.is_important,
+  });
+  return { inserted, value: skipped.value, note: { title, kind: "real" } };
+}
+
 // ---- ĐƯỜNG RSS (Pha C): tin tức lấy từ feed báo VN — link LUÔN thật, 0 grounding ----
 
 // Thông tin tối thiểu của thông báo gần nhất (cho fallback "chưa có thay đổi").
@@ -642,6 +814,12 @@ async function monitorRssPath(
 // NHẮC HẸN (Pha D): đến hẹn → push 1 thông báo nhắc rồi TỰ TẮT rule. 0 call AI.
 // deno-lint-ignore no-explicit-any
 async function monitorReminder(supabase: any, rule: Rule): Promise<MonitorRuleResult> {
+  // CHƯA TỚI GIỜ HẸN → không bắn. Cần chốt này vì quét THỦ CÔNG ("Kiểm tra tin ngay")
+  // bỏ qua isDue — không chặn thì bấm thử với nhắc hẹn tương lai là bắn luôn trước giờ.
+  if (Date.now() < Date.parse(String(rule.remind_at))) {
+    return { inserted: 0, note: { title: "", kind: "skipped" } };
+  }
+
   // CLAIM chống bắn TRÙNG: 2 lượt run-monitor có thể chạy CHỒNG nhau (cron chính 15'
   // + reminder-tick mỗi phút) — cả hai cùng thấy "chưa bắn" thì cả hai cùng push.
   // UPDATE có điều kiện là thao tác NGUYÊN TỬ ở Postgres: chỉ lượt ĐẦU khớp điều kiện
@@ -685,9 +863,22 @@ async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult
   // NHẮC HẸN: không cần nguồn tin — bắn thông báo rồi tắt rule.
   if (isReminder(rule)) return await monitorReminder(supabase, rule);
 
-  // ROUTER: rule số liệu (thời tiết/crypto/tỷ giá) đi đường provider — chính xác,
+  // ROUTER: rule "url" (theo dõi TRANG CỤ THỂ) đi đường fetch trang trực tiếp. Lỗi
+  // (trang sập/URL hỏng) thì DỪNG ở đó chờ lượt sau — KHÔNG rơi xuống Gemini search,
+  // vì search không đọc được trang cụ thể, chỉ tốn quota và trả tin lạc đề.
+  const srcType: SourceType = ruleWatchUrl(rule) ? "url" : detectSourceType(rule.keyword);
+  if (srcType === "url") {
+    try {
+      return await monitorUrl(supabase, rule);
+    } catch (e) {
+      if (isQuotaErr(e)) throw e; // quota AI → để vòng ngoài dừng sớm như các đường khác
+      console.log(`URL watch lỗi (${(e as Error).message}) → bỏ lượt này, chờ lượt sau.`);
+      return { inserted: 0, note: { title: "", kind: "skipped" } };
+    }
+  }
+
+  // Rule số liệu (thời tiết/crypto/tỷ giá) đi đường provider — chính xác,
   // 0 quota grounding. Provider lỗi (API sập, không nhận diện được...) → fallback search.
-  const srcType = detectSourceType(rule.keyword);
   if (srcType !== "search") {
     try {
       return await monitorProvider(supabase, rule, srcType);
@@ -854,8 +1045,54 @@ async function previewGate(supabase: any, rule: Rule): Promise<GatePreview> {
     importantReason: "",
   };
 
-  // ROUTER: rule số liệu → soi bằng PROVIDER (giống monitorRule; 0 quota grounding).
-  const srcType = detectSourceType(rule.keyword);
+  // ROUTER: rule "url" → soi bằng fetch trang thật + flash-lite (giống monitorUrl, không insert).
+  const srcType: SourceType = ruleWatchUrl(rule) ? "url" : detectSourceType(rule.keyword);
+  if (srcType === "url") {
+    base.provider = "url";
+    try {
+      const url = ruleWatchUrl(rule);
+      const host = new URL(url).hostname;
+      const page = await fetchWatchPage(url, rule.watch_auth);
+      if (page.status === 401 || page.status === 403) {
+        base.importantReason = `Trang ${host} đòi đăng nhập (HTTP ${page.status}) — cần cấp quyền (dán Cookie) trong chi tiết rule.`;
+        return base;
+      }
+      const ex = await extractUrlAI(supabase, rule, page);
+      if (ex.login_required && !ex.found) {
+        base.importantReason = `Nội dung trang ${host} bị che sau đăng nhập — cần cấp quyền (dán Cookie) trong chi tiết rule.`;
+        return base;
+      }
+      base.found = ex.found;
+      base.candidateTitle = ex.title;
+      base.value = ex.value;
+      base.fresh = true;
+      base.isImportant = ex.is_important;
+      base.matchesCondition = ex.matches_condition;
+      const prevNorm = normVal(String(rule.last_value ?? ""));
+      const curNorm = normVal(ex.value);
+      base.changed = prevNorm === "" || (curNorm !== "" && curNorm !== prevNorm) || ex.changed;
+      if (!ex.found) {
+        base.importantReason = "Trang không có thông tin cần theo dõi.";
+        return base;
+      }
+      if (hasCond) {
+        base.allKind = ex.matches_condition ? "real" : "skipped";
+        base.importantPushed = ex.matches_condition;
+        base.importantReason = ex.matches_condition ? "" : "Chưa thỏa điều kiện (chấm trên nội dung trang thật).";
+      } else {
+        base.allKind = "real";
+        base.importantPushed = scheduled || base.changed;
+        base.importantReason = base.importantPushed
+          ? ""
+          : "Nội dung trang chưa đổi → chế độ 'chỉ tin quan trọng' im (chế độ Đầy đủ vẫn gửi).";
+      }
+    } catch (e) {
+      base.importantReason = `Không đọc được trang: ${(e as Error).message}`;
+    }
+    return base;
+  }
+
+  // Rule số liệu → soi bằng PROVIDER (giống monitorRule; 0 quota grounding).
   if (srcType !== "search") {
     try {
       const p = await fetchProviderNotif(rule, srcType);

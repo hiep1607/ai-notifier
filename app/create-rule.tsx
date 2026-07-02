@@ -164,6 +164,11 @@ export default function CreateRuleScreen() {
         ...(r.source_type === "reminder" && r.remind_at
           ? { source_type: "reminder", remind_at: r.remind_at }
           : {}),
+        // THEO DÕI TRANG WEB: tương tự, chỉ đính kèm khi là rule url — chưa chạy
+        // migration 0018 thì rule thường vẫn tạo bình thường.
+        ...(r.source_type === "url" && r.watch_url
+          ? { source_type: "url", watch_url: r.watch_url }
+          : {}),
         is_active: true,
         user_id: user.id,
       }))
@@ -215,6 +220,10 @@ export default function CreateRuleScreen() {
         { icon: cat.icon, label: "Danh mục", value: cat.label },
         { icon: "time-outline", label: "Tần suất", value: formatSchedule(r.frequency, r.run_at) },
       );
+      // Rule theo dõi TRANG WEB cụ thể: hiện URL để người dùng kiểm tra đúng trang.
+      if (r.source_type === "url" && r.watch_url) {
+        rows.push({ icon: "link-outline", label: "Trang web", value: r.watch_url });
+      }
     }
     if (r.sources) rows.push({ icon: "globe-outline", label: "Nguồn", value: r.sources });
     if (r.condition) rows.push({ icon: "flash-outline", label: "Điều kiện", value: r.condition });

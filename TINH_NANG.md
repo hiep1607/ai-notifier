@@ -124,6 +124,10 @@ khi thêm loại mới dựa-trên-heuristic. Provider lỗi → tự rơi về 
   giờ là lịch hẹn LẶP LẠI (hằng ngày/tuần) để theo dõi tin.
 - **Cách hoạt động khi tới hạn:** không gọi AI — push thẳng "⏰ Nhắc hẹn: [nội dung]" kèm giờ hẹn; nếu
   hệ thống bận nên nhắc muộn thì nêu rõ số phút trễ trong nội dung (không bao giờ bỏ qua, dù muộn bao lâu).
+- **Chống bắn TRÙNG (fix 2026-07-03):** nhiều lượt quét có thể chạy chồng nhau (cron 15' + tick mỗi
+  phút + quét khi mở app + "Kiểm tra tin ngay") — trước đây 2 lượt cùng thấy "chưa bắn" là nhận 2 push.
+  Giờ trước khi bắn phải GIÀNH QUYỀN bằng UPDATE nguyên tử ở Postgres: chỉ 1 lượt thắng, lượt kia im.
+  Đồng thời bấm "Kiểm tra tin ngay" với nhắc hẹn CHƯA tới giờ sẽ không bắn sớm nữa (trả "bỏ qua").
 - **Ví dụ:** "nhắc tôi nộp bài tập lớn ngày 20/7 lúc 9h sáng", "nhắc tôi uống thuốc 9h tối nay",
   "nhắc tôi 5 phút nữa tắt bếp".
 - **YÊU CẦU:** migration `0016_rule_reminder.sql` (✅ đã chạy) + `0017_reminder_tick.sql` (cron mỗi phút
