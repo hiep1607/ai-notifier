@@ -47,23 +47,39 @@ export function isQuietNow(start: number, end: number, hour: number): boolean {
   return hour >= start || hour < end; // vắt qua nửa đêm
 }
 
+// Rule "đặt giờ" (ghim giờ báo cụ thể, vd hằng ngày 08:00)?
+export function isScheduled(rule: SchedulableRule): boolean {
+  return rule.frequency !== "change" &&
+    Boolean(rule.run_at && /^\d{1,2}:\d{2}$/.test(rule.run_at));
+}
+
+// Cho phép BẮN MUỘN tối đa 4 tiếng sau giờ hẹn nếu các lượt trước lỡ (quota 429 /
+// deadline 70s cắt). Trước đây khung chỉ [target, +15'): lượt cron 8:00 mà hỏng là
+// MẤT NGUYÊN NGÀY — đây chính là lỗi "rule 8h mấy hôm liền không báo".
+export const SCHEDULED_CATCHUP_MIN = 240;
+
 // Rule đã tới hạn quét chưa? (cron chạy mỗi 15 phút gọi hàm này cho từng rule)
 export function isDue(rule: SchedulableRule, nowMs = Date.now()): boolean {
   const interval = intervalMs(rule.frequency);
   const last = rule.last_run_at ? Date.parse(rule.last_run_at) : 0;
   const elapsed = nowMs - last;
 
-  // Ghim giờ cụ thể (định kỳ, không phải "change"): gửi ĐÚNG GIỜ, không sớm.
-  // Khung [target, target+15): bắn ngay từ mốc giờ, trễ tối đa 15' (do cron 15'/lần).
-  // Guard chu kỳ (1 lần/ngày...) tránh bắn lặp trong cùng ngày.
-  if (rule.frequency !== "change" && rule.run_at && /^\d{1,2}:\d{2}$/.test(rule.run_at)) {
-    const [h, m] = rule.run_at.split(":").map(Number);
+  // Ghim giờ cụ thể: gửi TỪ giờ hẹn (không sớm), lỡ nhịp thì THỬ LẠI các lượt cron sau
+  // trong khung catch-up [target, target+4h) cho tới khi quét thành công.
+  // Chống bắn lặp: so last_run_at với MỐC HẸN gần nhất (đã quét sau mốc = xong hôm nay).
+  if (isScheduled(rule)) {
+    const [h, m] = String(rule.run_at).split(":").map(Number);
     const target = h * 60 + m;
     const now = vnMinutesOfDay(nowMs);
-    // Số phút TỪ target tới now theo vòng 24h (xử lý cả mốc gần nửa đêm).
+    // Số phút TỪ mốc hẹn gần nhất tới now theo vòng 24h (xử lý cả mốc gần nửa đêm).
     const diff = (now - target + 1440) % 1440;
-    if (diff >= 15) return false; // chỉ trong 15' kể từ giờ hẹn
-    return elapsed >= interval - 3600000; // trừ 1h hao để chắc chắn bắt được khung
+    if (diff >= SCHEDULED_CATCHUP_MIN) return false; // chưa tới giờ / quá muộn (bỏ mốc này)
+    // Thời điểm mốc hẹn gần nhất (xấp xỉ theo phút — đệm 1' khi so để bỏ jitter giây).
+    const targetMs = nowMs - diff * 60000;
+    if (last >= targetMs - 60000) return false; // mốc này đã quét rồi → thôi
+    // Guard chu kỳ (rule hằng tuần không bắn mỗi ngày). Trừ hao 5h (4h catch-up + 1h)
+    // để hôm qua bắn muộn không làm trượt mốc đúng giờ của hôm nay.
+    return elapsed >= interval - 5 * 3600000;
   }
 
   // Không ghim giờ: theo chu kỳ thuần (KHÔNG quét sớm — quét sớm sẽ làm trôi tần suất).

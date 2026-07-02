@@ -51,15 +51,33 @@ describe("isDue — rule ghim giờ (run_at, giờ VN)", () => {
   const now = Date.parse("2026-07-01T10:00:00Z");
   const yesterday = new Date(now - 24 * 3600000).toISOString();
 
-  it("bắn trong khung [giờ hẹn, +15'); ngoài khung thì im", () => {
+  it("bắn từ giờ hẹn; CHƯA tới giờ thì im", () => {
     expect(isDue({ frequency: "1440", run_at: "17:00", last_run_at: yesterday }, now)).toBe(true);
     expect(isDue({ frequency: "1440", run_at: "17:20", last_run_at: yesterday }, now)).toBe(false); // chưa tới giờ
-    expect(isDue({ frequency: "1440", run_at: "16:30", last_run_at: yesterday }, now)).toBe(false); // lỡ khung
   });
 
-  it("guard chu kỳ: vừa quét xong trong ngày thì không bắn lặp dù đang trong khung", () => {
-    const twoHoursAgo = new Date(now - 2 * 3600000).toISOString();
-    expect(isDue({ frequency: "1440", run_at: "17:00", last_run_at: twoHoursAgo }, now)).toBe(false);
+  it("CATCH-UP: lỡ lượt cron đúng giờ (quota/deadline) vẫn bắn lại trong 4 tiếng sau", () => {
+    // Giờ hẹn 16:30, giờ hiện tại 17:00 (trễ 30') — trước đây khung 15' là MẤT NGUYÊN NGÀY.
+    expect(isDue({ frequency: "1440", run_at: "16:30", last_run_at: yesterday }, now)).toBe(true);
+    // Trễ 3h59' vẫn kịp; quá 4h thì bỏ mốc hôm nay.
+    expect(isDue({ frequency: "1440", run_at: "13:01", last_run_at: yesterday }, now)).toBe(true);
+    expect(isDue({ frequency: "1440", run_at: "12:59", last_run_at: yesterday }, now)).toBe(false);
+  });
+
+  it("chống bắn lặp: đã quét SAU mốc hẹn hôm nay thì các lượt catch-up sau im", () => {
+    // Hẹn 16:30, đã quét thành công 16:31 → 17:00 không bắn nữa.
+    const after = new Date(Date.parse("2026-07-01T09:31:00Z")).toISOString(); // 16:31 VN
+    expect(isDue({ frequency: "1440", run_at: "16:30", last_run_at: after }, now)).toBe(false);
+  });
+
+  it("guard chu kỳ: rule hằng tuần không bắn lại mỗi ngày dù trong khung giờ", () => {
+    expect(isDue({ frequency: "10080", run_at: "17:00", last_run_at: yesterday }, now)).toBe(false);
+  });
+
+  it("hôm qua bắn muộn (catch-up) không làm trượt mốc ĐÚNG GIỜ hôm nay", () => {
+    // Hôm qua bắn lúc 20:00 (muộn 3h so với hẹn 17:00) → hôm nay 17:00 elapsed 21h ≥ 24h-5h.
+    const lateYesterday = new Date(now - 21 * 3600000).toISOString();
+    expect(isDue({ frequency: "1440", run_at: "17:00", last_run_at: lateYesterday }, now)).toBe(true);
   });
 });
 

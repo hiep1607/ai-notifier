@@ -21,6 +21,7 @@ import { geminiGenerate, parseJsonLoose, GeminiSource } from "../_shared/gemini.
 import {
   intervalMs,
   isDue,
+  isScheduled,
   dueAt,
   vnHourNow,
   isQuietNow,
@@ -336,8 +337,12 @@ async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult
   // KHÔNG có điều kiện (định kỳ / đặt giờ) → LUÔN gửi 1 tb khi tới hạn, kể cả khi
   // không tìm thấy tin mới. CÓ điều kiện ("theo đk") → chỉ gửi khi thỏa, không thì im.
   const forceSend = !hasCond;
+  // Rule ĐẶT GIỜ (vd hằng ngày 08:00) = LỊCH HẸN người dùng chủ động đặt, không phải
+  // "bộ lọc tin": tại giờ hẹn LUÔN giao 1 bản tin (tin thật hoặc fallback) và LUÔN push.
+  const scheduled = isScheduled(rule);
   // Chế độ "chỉ tin quan trọng": BỎ fallback + tin thật chỉ qua khi is_important hoặc thỏa điều kiện.
-  const importantOnly = rule.notify_mode === "important";
+  // KHÔNG áp cho rule đặt giờ (bản tin đúng hẹn là thứ được yêu cầu, lọc là sai ý).
+  const importantOnly = rule.notify_mode === "important" && !scheduled;
   // Rule "theo điều kiện" + đã có giá trị nền → chỉ báo khi giá trị THỰC SỰ đổi.
   const changeGate = rule.frequency === "change" && Boolean(rule.last_value && rule.last_value.trim());
   const lastValNorm = normVal(String(rule.last_value ?? ""));
@@ -441,7 +446,7 @@ async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult
         related_notification_id: prev.id,
         sentiment: "neutral",
         is_important: false,
-      }, false); // filler → chỉ lưu trong app, KHÔNG push
+      }, scheduled); // filler chỉ lưu in-app; RIÊNG rule đặt giờ vẫn push (bản tin đúng hẹn)
       note = { title: `Chưa có thay đổi mới: ${topic}`, kind: "nochange" };
     } else if (top) {
       // Chưa có tb nào, nhưng tìm được tin liên quan/gần nhất → gửi như đề xuất.
@@ -455,7 +460,7 @@ async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult
         source_url: url,
         sentiment: normSentiment(top.sentiment),
         is_important: false,
-      }, false); // filler → chỉ lưu trong app, KHÔNG push
+      }, scheduled); // filler chỉ lưu in-app; RIÊNG rule đặt giờ vẫn push (bản tin đúng hẹn)
       note = { title: `Gợi ý liên quan: ${String(top.title ?? topic).slice(0, 120)}`, kind: "related" };
     } else {
       // Hoàn toàn không có gì.
@@ -468,7 +473,7 @@ async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult
         source_url: "",
         sentiment: "neutral",
         is_important: false,
-      }, false); // filler → chỉ lưu trong app, KHÔNG push
+      }, scheduled); // filler chỉ lưu in-app; RIÊNG rule đặt giờ vẫn push (bản tin đúng hẹn)
       note = { title: `Chưa tìm thấy thông tin: ${topic}`, kind: "none" };
     }
   }
@@ -502,6 +507,7 @@ interface GatePreview {
 async function previewGate(supabase: any, rule: Rule): Promise<GatePreview> {
   const hasCond = Boolean(rule.condition && rule.condition.trim());
   const forceSend = !hasCond;
+  const scheduled = isScheduled(rule); // rule đặt giờ: chế độ lọc KHÔNG áp (luôn giao bản tin đúng hẹn)
   const changeGate = rule.frequency === "change" && Boolean(rule.last_value && rule.last_value.trim());
   const lastValNorm = normVal(String(rule.last_value ?? ""));
 
@@ -552,7 +558,12 @@ async function previewGate(supabase: any, rule: Rule): Promise<GatePreview> {
   if (!top) {
     // Không có tin: chế độ Đầy đủ vẫn gửi filler (nếu rule định kỳ); Chỉ-quan-trọng thì bỏ.
     base.allKind = forceSend ? (hasPrev ? "nochange" : "none") : "skipped";
-    base.importantReason = "Không có tin nào để báo.";
+    if (scheduled) {
+      base.importantPushed = true;
+      base.importantReason = "Rule đặt giờ: luôn gửi bản tin (kèm push) tại giờ hẹn, chế độ lọc không áp.";
+    } else {
+      base.importantReason = "Không có tin nào để báo.";
+    }
     return base;
   }
 
@@ -575,14 +586,16 @@ async function previewGate(supabase: any, rule: Rule): Promise<GatePreview> {
   else if (forceSend) base.allKind = hasPrev ? "nochange" : "related";
   else base.allKind = "skipped";
 
-  // Chế độ Chỉ tin quan trọng.
-  base.importantPushed = realPasses && importantOk;
+  // Chế độ Chỉ tin quan trọng. Rule ĐẶT GIỜ: chế độ lọc không áp — luôn giao bản tin đúng hẹn.
+  base.importantPushed = scheduled ? (realPasses || forceSend) : (realPasses && importantOk);
   if (!base.importantPushed) {
     if (!condOk) base.importantReason = "Chưa thỏa điều kiện của rule.";
     else if (!changeOk) base.importantReason = "Số liệu chưa thay đổi so với lần trước.";
     else if (!fresh) base.importantReason = "Tin trùng với thông báo đã có.";
     else if (!importantOk) base.importantReason = "Tin không quan trọng và không thỏa điều kiện → bị lọc.";
     else base.importantReason = "Bị lọc.";
+  } else if (scheduled && !realPasses) {
+    base.importantReason = "Rule đặt giờ: gửi fallback (kèm push) tại giờ hẹn dù chưa có tin mới.";
   }
   return base;
 }

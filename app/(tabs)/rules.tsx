@@ -197,10 +197,13 @@ export default function RulesScreen() {
 
   // Rule "dễ ồn": định kỳ (không phải theo điều kiện), không có condition, còn chế độ Đầy đủ.
   // Đây là nhóm hay sinh filler/tin nhạt nhất — gợi ý bật "chỉ tin quan trọng" 1 chạm.
+  // LOẠI rule ĐẶT GIỜ (run_at): đó là lịch hẹn chủ động (bản tin 8h sáng...), server luôn
+  // giao bản tin đúng hẹn bất kể chế độ — gợi ý bật lọc cho nó chỉ gây hiểu lầm.
   const noisyRules = rules.filter(
     (r) =>
       r.is_active &&
       r.frequency !== "change" &&
+      !(r.run_at ?? "").trim() &&
       !(r.condition ?? "").trim() &&
       r.notify_mode !== "important"
   );
