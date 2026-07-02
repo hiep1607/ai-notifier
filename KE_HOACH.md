@@ -2,6 +2,7 @@
 
 > File này theo dõi: kiến trúc, việc ĐÃ LÀM, việc CẦN LÀM. Cập nhật sau mỗi task.
 > Cập nhật lần cuối: 2026-06-20 (đã chạy SQL 0009/0010/0011; bảng user_settings đã tạo lại sạch — Giờ yên lặng VERIFY chạy được)
+> Chi tiết CÁCH HOẠT ĐỘNG + KHẢ NĂNG của từng chức năng (loại rule, ví dụ cụ thể...): xem **[TINH_NANG.md](TINH_NANG.md)** — cập nhật file đó mỗi khi xong 1 chức năng mới.
 
 ## Mục tiêu sản phẩm
 Người dùng mô tả bằng ngôn ngữ tự nhiên → AI tạo **rule** → hệ thống **tự quét tin thật nhiều nguồn 24/7** → gửi **thông báo** đúng chủ đề/điều kiện, kèm link bài gốc.
