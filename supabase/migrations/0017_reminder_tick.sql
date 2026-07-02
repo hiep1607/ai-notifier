@@ -22,12 +22,14 @@ select cron.schedule(
   '* * * * *',  -- mỗi phút
   $$
   select net.http_post(
-    url     := 'https://<PROJECT_REF>.supabase.co/functions/v1/run-monitor',
+    url     := 'https://idtibfiyfywcugdvlqal.supabase.co/functions/v1/run-monitor',
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
-      'Authorization', 'Bearer <SERVICE_ROLE_KEY>'
+      'Authorization', 'Bearer ***JWT-DA-XOA-KHOI-LICH-SU***'
     ),
-    body    := '{}'::jsonb,
+    -- reminderOnly: tick CHỈ xử lý nhắc hẹn, KHÔNG quét rule tin tức (tránh chạy chồng
+    -- với cron chính 15' gây thông báo trùng + đỡ tốn quota).
+    body    := '{"reminderOnly": true}'::jsonb,
     timeout_milliseconds := 60000
   )
   -- CHỈ gọi khi có nhắc hẹn đã/sắp tới hạn (30s tới) mà CHƯA bắn

@@ -642,6 +642,21 @@ async function monitorRssPath(
 // NHẮC HẸN (Pha D): đến hẹn → push 1 thông báo nhắc rồi TỰ TẮT rule. 0 call AI.
 // deno-lint-ignore no-explicit-any
 async function monitorReminder(supabase: any, rule: Rule): Promise<MonitorRuleResult> {
+  // CLAIM chống bắn TRÙNG: 2 lượt run-monitor có thể chạy CHỒNG nhau (cron chính 15'
+  // + reminder-tick mỗi phút) — cả hai cùng thấy "chưa bắn" thì cả hai cùng push.
+  // UPDATE có điều kiện là thao tác NGUYÊN TỬ ở Postgres: chỉ lượt ĐẦU khớp điều kiện
+  // (last_run_at còn TRƯỚC mốc hẹn) và nhận được row; lượt sau khớp 0 row → bỏ qua.
+  const { data: claimed, error: claimErr } = await supabase
+    .from("rules")
+    .update({ last_run_at: new Date().toISOString() })
+    .eq("id", rule.id)
+    .eq("is_active", true)
+    .or(`last_run_at.is.null,last_run_at.lt."${rule.remind_at}"`)
+    .select("id");
+  if (claimErr || !claimed || claimed.length === 0) {
+    return { inserted: 0, note: { title: "", kind: "skipped" } }; // lượt khác đã bắn rồi
+  }
+
   const remindMs = Date.parse(String(rule.remind_at));
   const lateMin = Math.max(0, Math.round((Date.now() - remindMs) / 60000));
   const what = (rule.title || rule.keyword || "việc bạn đã hẹn").slice(0, 150);
@@ -1019,8 +1034,8 @@ Deno.serve(async (req) => {
     }
 
     const body = await req.json().catch(() => ({}));
-    const { ruleId, userId, dryRun, gateCheck } = body as
-      { ruleId?: string; userId?: string; dryRun?: boolean; gateCheck?: boolean };
+    const { ruleId, userId, dryRun, gateCheck, reminderOnly } = body as
+      { ruleId?: string; userId?: string; dryRun?: boolean; gateCheck?: boolean; reminderOnly?: boolean };
 
     // manual = bấm "Kiểm tra tin ngay" cho 1 rule → bỏ qua lịch, quét luôn.
     const manual = Boolean(ruleId);
@@ -1092,9 +1107,12 @@ Deno.serve(async (req) => {
     // từng quét (last_run_at = null) → dueAt nhỏ → tự lên đầu.
     // LƯU Ý: không dùng .filter(isDue) trực tiếp — isDue(rule, nowMs?) sẽ nhận INDEX
     // của mảng làm nowMs (bug kinh điển kiểu parseInt trong map).
-    const dueRules = manual
+    // reminderOnly (cron reminder-tick mỗi phút): CHỈ xử lý nhắc hẹn — không đụng rule
+    // tin tức (đỡ quét chồng với cron chính gây thông báo trùng + đỡ tốn quota).
+    let dueRules = manual
       ? (rules as Rule[])
       : (rules as Rule[]).filter((r) => isDue(r)).sort((a, b) => dueAt(a) - dueAt(b));
+    if (reminderOnly) dueRules = dueRules.filter((r) => isReminder(r));
 
     // DRY-RUN: chỉ trả KẾ HOẠCH quét (rule nào tới hạn + thứ tự ưu tiên + rule còn
     // phải chờ) — KHÔNG gọi Gemini, KHÔNG tốn quota. Trang test dùng để kiểm chứng
