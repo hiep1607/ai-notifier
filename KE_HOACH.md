@@ -59,6 +59,40 @@ pg_cron (mỗi 15 phút) → run-monitor (quét nền, lọc rule tới hạn th
 - [ ] **Chạy SQL `0013_cron_detail.sql`** (cột `detail` cho cron_runs) — để bấm 1 dòng cron xem "đã quét rule nào". Chưa chạy thì vẫn ghi log bình thường (fallback bỏ detail), chỉ là dòng mở rộng báo "không quét rule nào".
 - [ ] **Chạy SQL `0015_rule_notify_mode.sql`** (cột `notify_mode` cho rules) — bật chế độ "chỉ tin quan trọng" (chống thông báo rác). Chưa chạy thì nút đổi chế độ ở chi tiết rule sẽ báo "cần chạy migration 0015"; rule mới vẫn tạo bình thường (mặc định 'all').
 
+## 🗺 KẾ HOẠCH: Các loại theo dõi tiếp theo (lập 2026-07-02)
+> Ý tưởng xương sống: hiện MỌI rule đều đi qua Gemini + Google Search grounding — vừa tốn quota
+> (1.500/ngày), vừa dễ tin bịa/URL sai/tin nhạt. Hướng đi: thêm cột `source_type` cho rule,
+> run-monitor thành ROUTER — mỗi loại có nguồn dữ liệu CHUYÊN BIỆT (API thật, 0 quota grounding),
+> Gemini search chỉ là fallback cho chủ đề tự do.
+
+### Pha A — Nền tảng router (làm trước, mọi pha sau đứng trên nó)
+- [ ] Migration 0016: cột `rules.source_type` text default 'search' ('search' | 'weather' | 'crypto' | 'fx' | 'rss' | 'reminder').
+- [ ] generate-rule: AI phân loại rule vào source_type lúc tạo (thời tiết→weather, BTC/ETH→crypto, tỷ giá→fx, nhắc hẹn→reminder, còn lại→search). Rule cũ giữ 'search'.
+- [ ] run-monitor: switch theo source_type; provider lỗi → fallback 'search' (không chết rule).
+
+### Pha B — Provider 0-quota cho dữ liệu SỐ (giá trị cao nhất / công ít nhất)
+- [ ] **Thời tiết: Open-Meteo API** (free, không cần key): geocoding city → forecast ngày. Bản tin 8h thời tiết Thanh Hóa thành CHÍNH XÁC + đúng giờ tuyệt đối (không phụ thuộc quota Gemini). Nội dung format bằng template, không cần AI.
+- [ ] **Crypto: CoinGecko API** (free): giá BTC/ETH... chính xác từng phút → rule "theo điều kiện" so ngưỡng bằng SỐ THẬT thay vì nhờ AI đọc báo đoán. Hết cảnh trigger sai.
+- [ ] **Tỷ giá/vàng: API tỷ giá** (exchangerate.host / feed VCB; vàng SJC cân nhắc nguồn sau). value/last_value thành số thật.
+
+### Pha C — Tin tức qua RSS (né grounding cho rule 'news')
+- [ ] Danh sách RSS báo VN (VnExpress, Tuổi Trẻ, Thanh Niên, CafeF, VietnamNet...) + match keyword.
+- [ ] Gemini flash-lite TÓM TẮT bài đã match (không grounding → không đụng quota 1.500; rẻ).
+- [ ] URL bài = URL thật từ feed → hết hẳn chuyện link sai/bịa; dedup theo GUID feed (chuẩn hơn tiêu đề).
+
+### Pha D — Loại rule mới không cần nguồn tin
+- [ ] **Nhắc hẹn / đếm ngược (reminder)**: "nhắc deadline bài tập 20/7", "còn 3 ngày tới X" — không gọi AI khi chạy, chỉ lịch + push. (Suggestion chip "Thông báo deadline bài tập" đã hứa sẵn tính năng này mà chưa có thật.)
+- [ ] **Bản tin gộp buổi sáng (digest)**: 1 push 7h30 gộp thời tiết + giá + tin của mọi rule trong ngày; từng rule đánh dấu "gộp vào digest" thay vì push lẻ. (Backlog cũ "digest" nằm ở đây.)
+
+### Pha E — Để sau (khó / rủi ro)
+- [ ] Theo dõi URL cụ thể (fetch trang + Gemini trích giá trị, báo khi đổi) — cho trang không có RSS/API.
+- [ ] Giá sản phẩm Shopee/Tiki — chặn bot + ToS, chưa đáng làm ở quy mô cá nhân.
+
+### Vì sao thứ tự này
+- B trước C: rule của user hiện tại đa số là SỐ LIỆU (thời tiết, vàng, tỷ giá, BTC) — B giải đúng đau hiện tại (bản tin 8h + trigger điều kiện), lại dễ (API public, không key hoặc key free).
+- C giải nốt quota + link sai cho rule tin tức tự do.
+- D là tính năng mới hẳn (reminder) + UX (digest), làm khi nền đã vững.
+
 ## 📋 CẦN LÀM TIẾP (backlog, ưu tiên trên xuống)
 - [x] **Polish UI/UX**: tìm rule (header search), hiện lịch + điều kiện trên thẻ rule (Rules + Home), trạng thái rỗng theo ngữ cảnh; notifications đã có sẵn search/filter/empty/swipe-delete.
 - [x] **Lọc thông báo theo rule**: chips ngang dưới TABS (chỉ hiện khi >1 rule); bấm chip chọn/bỏ chọn; kết hợp được với tab Chưa đọc/Quan trọng và search.
