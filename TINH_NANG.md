@@ -133,6 +133,35 @@ khi thêm loại mới dựa-trên-heuristic. Provider lỗi → tự rơi về 
 - **YÊU CẦU:** migration `0016_rule_reminder.sql` (✅ đã chạy) + `0017_reminder_tick.sql` (cron mỗi phút
   — chưa chạy thì nhắc hẹn vẫn hoạt động nhưng độ trễ tối đa ~15 phút theo cron chính).
 
+### 3g. 🌐 Theo dõi TRANG WEB/APP CỤ THỂ theo URL (Pha E — thêm 2026-07-03)
+- **Dùng khi:** người dùng muốn theo dõi 1 TRANG cụ thể do mình chọn (giá 1 sản phẩm trên shop,
+  chương mới của truyện, trạng thái đơn hàng, bài mới trên blog, bảng điểm...) — kể cả trang
+  **cần đăng nhập**. App di động thuần (không có bản web) thì KHÔNG theo dõi được — AI sẽ gợi ý
+  dùng bản web của dịch vụ đó.
+- **Cách tạo:** chat kèm link, vd "báo tôi khi sản phẩm này giảm dưới 500k https://shop.vn/ao-khoac".
+  AI đặt `source_type='url'` + `watch_url`; muốn theo dõi trang cụ thể mà chưa đưa link → AI hỏi xin link.
+  Rule cũ/gõ tay có URL nằm ngay trong keyword cũng tự được nhận diện (không cần migration cho phần này).
+- **Cách hoạt động mỗi lượt quét:** server fetch trang (UA trình duyệt, timeout 15s, đọc tối đa 400KB)
+  → bỏ HTML lấy text → **flash-lite** (KHÔNG grounding, không đụng quota 1.500) trích đúng thông tin
+  cần theo dõi thành `value` + tóm tắt → cổng gửi giống provider:
+  - có điều kiện → chỉ báo khi AI chấm THỎA trên nội dung trang thật; cooldown 6h, bỏ cooldown khi đổi ≥3%;
+  - đặt giờ → luôn giao bản tin đúng hẹn;
+  - định kỳ thường ở chế độ "chỉ tin quan trọng" → chỉ báo khi nội dung trang THỰC SỰ đổi so với lần trước.
+- **Trang cần ĐĂNG NHẬP — "cấp quyền":** gặp HTTP 401/403 hoặc AI thấy nội dung bị che sau form login →
+  gửi 1 thông báo "🔒 Trang cần đăng nhập" (không spam lặp) hướng dẫn: mở **chi tiết rule → mục "Cấp
+  quyền đăng nhập"** → dán **Cookie** (lấy từ trình duyệt sau khi đăng nhập: F12 → Network → copy header
+  Cookie) hoặc từng dòng `Tên-Header: giá trị` (vd `Authorization: Bearer ...`). Từ đó server fetch kèm
+  các header này. Cookie hết hạn → tự báo "🔒 Quyền đăng nhập hết hạn" nhắc dán lại; nút "Thu hồi quyền"
+  xóa cookie đã lưu. Cookie nằm ở cột `watch_auth` bảng rules — RLS chặn user khác đọc, chỉ chủ rule +
+  hệ thống quét (service_role) thấy.
+- **An toàn:** chặn SSRF (chỉ http/https tới host công khai — localhost/IP nội bộ/metadata cloud bị từ
+  chối); trang sập/URL hỏng thì bỏ lượt đó chờ lượt sau, KHÔNG rơi xuống Gemini search (đỡ tốn quota,
+  đỡ tin lạc đề). "Soi bộ lọc" ở Trang test hỗ trợ rule url (nhãn 🌐).
+- **Ví dụ:** "theo dõi https://truyen.vn/abc, báo khi có chương mới" (change + condition), "mỗi sáng 8h
+  báo giá phòng trên https://hotel.vn/x" (1440 + run_at 08:00).
+- **YÊU CẦU:** migration `0018_url_watch.sql` (cột `watch_url` + `watch_auth`). Chưa chạy thì rule url
+  do AI tạo sẽ lỗi insert cột lạ; rule thường không ảnh hưởng.
+
 ---
 
 ## 4. Tần suất & lịch quét
@@ -213,14 +242,18 @@ Công cụ kiểm thử nhanh, tách khỏi trang quản trị:
 | `0015_rule_notify_mode.sql` | Chế độ "Chỉ tin quan trọng" per-rule | Chưa chạy → nút đổi chế độ báo lỗi; rule vẫn tạo/chạy bình thường ở chế độ Đầy đủ |
 | `0016_rule_reminder.sql` | Nhắc hẹn (reminder) | ✅ Đã chạy (2026-07-02) — nhắc hẹn hoạt động đủ |
 | `0017_reminder_tick.sql` | Nhắc hẹn chính xác tới PHÚT (cron phụ mỗi phút, SQL-gated) | Chưa chạy → nhắc hẹn vẫn chạy nhưng trễ tối đa ~15' theo cron chính. Cần thay `<PROJECT_REF>` + `<SERVICE_ROLE_KEY>` (legacy JWT eyJ...) trước khi chạy |
+| `0018_url_watch.sql` | Theo dõi trang web cụ thể theo URL (mục 3g) + cấp quyền đăng nhập | Chưa chạy → rule url do AI tạo sẽ lỗi insert; nút "Lưu quyền" báo cần migration |
 
 ---
 
 ## 9. Backlog tính năng theo dõi (chưa làm)
 
 - **Digest buổi sáng:** gộp nhiều rule thành 1 push tổng hợp thay vì push lẻ từng rule.
-- **Theo dõi URL cụ thể:** fetch 1 trang bất kỳ + AI trích giá trị, báo khi đổi.
-- **Giá sản phẩm sàn TMĐT** (Shopee/Tiki...): chặn bot + ToS, chưa đáng làm ở quy mô cá nhân.
+- ~~Theo dõi URL cụ thể~~ → ✅ ĐÃ LÀM (mục 3g, 2026-07-03).
+- **Giá sản phẩm sàn TMĐT** (Shopee/Tiki...): chặn bot mạnh + ToS — rule url (3g) có thể thử nhưng
+  không đảm bảo (trang render bằng JS thì fetch không thấy nội dung); chưa làm provider riêng.
+- **Trang render thuần JavaScript (SPA):** fetch chỉ lấy HTML tĩnh, không chạy JS — trang kiểu này
+  rule url sẽ báo "không có thông tin". Cần headless browser (nặng, chưa làm).
 - **Giá vàng SJC bằng provider riêng:** hiện vẫn đi RSS/search vì chưa có API free đủ tin cậy.
 
 Chi tiết kế hoạch/thứ tự ưu tiên các mục trên: xem mục "KẾ HOẠCH: Các loại theo dõi tiếp theo" trong
