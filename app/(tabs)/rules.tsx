@@ -24,7 +24,7 @@ import Animated, {
 } from "react-native-reanimated";
 
 import { supabase } from "../../lib/supabase";
-import { confirmAsync } from "../../lib/dialog";
+import { confirmAsync, alertMessage } from "../../lib/dialog";
 import { useAuth } from "../../contexts/AuthContext";
 import { useTheme } from "../../contexts/ThemeContext";
 import { Rule } from "../../types/Rule";
@@ -51,6 +51,13 @@ export default function RulesScreen() {
   const [createMenuVisible, setCreateMenuVisible] = useState(false);
   const [searchMode, setSearchMode] = useState(false);
   const [searchText, setSearchText] = useState("");
+  // Banner "bật lọc rác cho rule cũ": ẩn vĩnh viễn sau khi user đóng (nhớ qua AsyncStorage).
+  const [noiseBannerHidden, setNoiseBannerHidden] = useState(true);
+  const [applyingImportant, setApplyingImportant] = useState(false);
+
+  useEffect(() => {
+    AsyncStorage.getItem("@noise_banner_hidden").then((v) => setNoiseBannerHidden(v === "1"));
+  }, []);
 
   // Nút "+" nổi: kéo thả tự do, vẫn bấm để mở menu. Lưu vị trí để lần sau giữ nguyên.
   const fabX = useSharedValue(0);
@@ -188,6 +195,41 @@ export default function RulesScreen() {
     setSearchText("");
   };
 
+  // Rule "dễ ồn": định kỳ (không phải theo điều kiện), không có condition, còn chế độ Đầy đủ.
+  // Đây là nhóm hay sinh filler/tin nhạt nhất — gợi ý bật "chỉ tin quan trọng" 1 chạm.
+  const noisyRules = rules.filter(
+    (r) =>
+      r.is_active &&
+      r.frequency !== "change" &&
+      !(r.condition ?? "").trim() &&
+      r.notify_mode !== "important"
+  );
+
+  const dismissNoiseBanner = () => {
+    setNoiseBannerHidden(true);
+    AsyncStorage.setItem("@noise_banner_hidden", "1").catch(() => {});
+  };
+
+  const applyImportantAll = async () => {
+    if (noisyRules.length === 0 || applyingImportant) return;
+    setApplyingImportant(true);
+    const ids = noisyRules.map((r) => r.id);
+    const { error } = await supabase
+      .from("rules")
+      .update({ notify_mode: "important" })
+      .in("id", ids);
+    setApplyingImportant(false);
+    if (error) {
+      // Cột chưa có (migration 0015 chưa chạy) → báo rõ thay vì im lặng.
+      alertMessage("Chưa bật được", "Cần chạy migration 0015 (cột notify_mode) trong Supabase trước.");
+      return;
+    }
+    setRules((prev) =>
+      prev.map((r) => (ids.includes(r.id) ? { ...r, notify_mode: "important" } : r))
+    );
+    alertMessage("Đã bật", `${ids.length} rule chuyển sang "Chỉ báo tin quan trọng" — hết filler, chỉ còn tin đáng chú ý. Đổi lại được trong chi tiết từng rule.`);
+  };
+
   const toggleRule = async (item: Rule) => {
     const newValue = !item.is_active;
     setRules((prev) =>
@@ -235,6 +277,32 @@ export default function RulesScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
         }
       >
+        {/* BANNER LỌC RÁC — chỉ hiện khi có rule cũ dễ ồn còn chế độ Đầy đủ */}
+        {!noiseBannerHidden && noisyRules.length > 0 && !searchText && (
+          <View style={styles.noiseBanner}>
+            <View style={styles.noiseBannerHead}>
+              <Ionicons name="funnel-outline" size={16} color={colors.primary} />
+              <Text style={styles.noiseBannerTitle}>Bớt thông báo rác?</Text>
+              <TouchableOpacity onPress={dismissNoiseBanner} hitSlop={8}>
+                <Ionicons name="close" size={18} color={colors.subText} />
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.noiseBannerText}>
+              {noisyRules.length} rule định kỳ đang báo cả khi không có tin đáng chú ý.
+              Bật &quot;Chỉ báo tin quan trọng&quot; để lọc bớt (đổi lại được trong chi tiết rule).
+            </Text>
+            <TouchableOpacity
+              style={[styles.noiseBannerBtn, applyingImportant && { opacity: 0.6 }]}
+              onPress={applyImportantAll}
+              disabled={applyingImportant}
+            >
+              <Text style={styles.noiseBannerBtnText}>
+                {applyingImportant ? "Đang bật..." : `Bật cho ${noisyRules.length} rule`}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {filteredRules.length === 0 && (
           <View style={styles.empty}>
             <Ionicons
@@ -604,6 +672,43 @@ function createStyles(C: AppColors) {
       fontSize: 12,
       fontWeight: "700",
       marginTop: 2,
+    },
+    noiseBanner: {
+      backgroundColor: C.primary + "11",
+      borderWidth: 1,
+      borderColor: C.primary + "44",
+      borderRadius: RADIUS.md,
+      padding: 14,
+      marginBottom: 16,
+    },
+    noiseBannerHead: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      marginBottom: 6,
+    },
+    noiseBannerTitle: {
+      color: C.primary,
+      fontSize: 14,
+      fontWeight: "700",
+      flex: 1,
+    },
+    noiseBannerText: {
+      color: C.text,
+      fontSize: 13,
+      lineHeight: 19,
+      marginBottom: 10,
+    },
+    noiseBannerBtn: {
+      backgroundColor: C.primary,
+      borderRadius: RADIUS.sm,
+      paddingVertical: 10,
+      alignItems: "center",
+    },
+    noiseBannerBtnText: {
+      color: "#fff",
+      fontSize: 13.5,
+      fontWeight: "700",
     },
   });
 }

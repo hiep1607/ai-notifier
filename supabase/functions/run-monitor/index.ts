@@ -17,6 +17,18 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, json } from "../_shared/cors.ts";
 import { geminiGenerate, parseJsonLoose, GeminiSource } from "../_shared/gemini.ts";
+// Logic thuần (lịch quét / chuẩn hóa / chọn tin) tách ra module share để jest test được.
+import {
+  intervalMs,
+  isDue,
+  dueAt,
+  vnHourNow,
+  isQuietNow,
+  normTitle,
+  normVal,
+  recentRealTitles,
+  pickFreshItem,
+} from "../_shared/monitorLogic.ts";
 
 // Lỗi hết quota / quá tải tạm thời từ Gemini → nên DỪNG sớm thay vì đốt thêm request.
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -25,23 +37,6 @@ function isQuotaErr(e: unknown): boolean {
   const m = (e instanceof Error ? e.message : String(e)).toLowerCase();
   return m.includes("429") || m.includes("resource_exhausted") || m.includes("quota") ||
     m.includes("rate") || m.includes("503") || m.includes("overloaded");
-}
-
-// frequency lưu dạng "change" (theo điều kiện → quét 15 phút) HOẶC số phút (định kỳ, tối thiểu 30).
-// Khóa cũ (enum) vẫn được map để tương thích rule tạo trước đây.
-const LEGACY_FREQ: Record<string, number> = {
-  m30: 30, hourly: 60, daily: 1440, weekly: 10080, realtime: 30,
-};
-function intervalMs(freq?: string): number {
-  let mins = 30;
-  // Giãn nhịp để né 429 grounding free tier: "theo điều kiện" 15→60 phút (giảm 4 lần số call/ngày).
-  if (freq === "change") mins = 60;
-  else if (freq && freq in LEGACY_FREQ) mins = LEGACY_FREQ[freq];
-  else {
-    const n = parseInt(freq ?? "", 10);
-    if (Number.isFinite(n) && n >= 30) mins = n;
-  }
-  return mins * 60000;
 }
 
 interface Rule {
@@ -74,47 +69,6 @@ function decodeJwtRole(token: string): string | null {
   }
 }
 
-// Số phút từ 0h theo GIỜ VIỆT NAM (server chạy UTC, VN = UTC+7, không có DST).
-function vnMinutesOfDay(): number {
-  const vn = new Date(Date.now() + 7 * 3600000);
-  return vn.getUTCHours() * 60 + vn.getUTCMinutes();
-}
-
-// Giờ hiện tại (0..23) theo VN, có lẻ phút (vd 7.5 = 7h30) để so với khung yên lặng.
-function vnHourNow(): number {
-  return vnMinutesOfDay() / 60;
-}
-
-// Đang trong khung "giờ yên lặng" [start, end)? Hỗ trợ vắt qua nửa đêm (vd 22→7).
-function isQuietNow(start: number, end: number, hour = vnHourNow()): boolean {
-  if (start === end) return false; // khung rỗng → không yên lặng
-  if (start < end) return hour >= start && hour < end;
-  return hour >= start || hour < end; // vắt qua nửa đêm
-}
-
-// Rule đã tới hạn quét chưa? (cron chạy mỗi 15 phút gọi hàm này cho từng rule)
-function isDue(rule: Rule): boolean {
-  const interval = intervalMs(rule.frequency);
-  const last = rule.last_run_at ? Date.parse(rule.last_run_at) : 0;
-  const elapsed = Date.now() - last;
-
-  // Ghim giờ cụ thể (định kỳ, không phải "change"): gửi ĐÚNG GIỜ, không sớm.
-  // Khung [target, target+15): bắn ngay từ mốc giờ, trễ tối đa 15' (do cron 15'/lần).
-  // Guard chu kỳ (1 lần/ngày...) tránh bắn lặp trong cùng ngày.
-  if (rule.frequency !== "change" && rule.run_at && /^\d{1,2}:\d{2}$/.test(rule.run_at)) {
-    const [h, m] = rule.run_at.split(":").map(Number);
-    const target = h * 60 + m;
-    const now = vnMinutesOfDay();
-    // Số phút TỪ target tới now theo vòng 24h (xử lý cả mốc gần nửa đêm).
-    const diff = (now - target + 1440) % 1440;
-    if (diff >= 15) return false; // chỉ trong 15' kể từ giờ hẹn
-    return elapsed >= interval - 3600000; // trừ 1h hao để chắc chắn bắt được khung
-  }
-
-  // Không ghim giờ: theo chu kỳ thuần (KHÔNG quét sớm — quét sớm sẽ làm trôi tần suất).
-  return elapsed >= interval;
-}
-
 interface NewsItem {
   title: string;
   content: string;
@@ -122,6 +76,7 @@ interface NewsItem {
   ai_summary: string;
   source: string;
   source_url: string;
+  published_date: string; // ngày đăng bài "YYYY-MM-DD" ("" nếu không rõ) — lọc bài quá cũ
   sentiment: string;
   is_important: boolean;
   matches_condition: boolean;
@@ -138,15 +93,19 @@ QUY TẮC TRÌNH BÀY (áp dụng cho MỌI thông báo):
 - Khi có thay đổi số liệu (giá, lãi suất, %, mức độ...): LUÔN nêu RÕ "từ [mức CŨ] → [mức MỚI]" kèm mức chênh, KHÔNG chỉ nói "giảm/tăng bao nhiêu" chung chung. Nếu được cung cấp giá trị lần trước thì dùng nó làm mốc cũ.
 - Ưu tiên ĐƠN VỊ & TIỀN TỆ Việt Nam (VND/đồng, °C, km, kg, m²...). Nếu nguồn gốc dùng đơn vị/tiền nước ngoài (USD, EUR, °F, dặm, oz, inch...), VẪN nêu số gốc NHƯNG kèm quy đổi/giải thích sang đơn vị Việt trong ngoặc để người Việt dễ hiểu — ví dụ: "2.650 USD/oz (~85 triệu đồng/lượng)", "100°F (~38°C)". NGOẠI LỆ: nếu yêu cầu/điều kiện của người dùng nói rõ muốn dùng đơn vị/tiền nước ngoài thì theo đúng ý họ.`;
 
-function buildPrompt(rule: Rule): string {
+// avoidTitles: tiêu đề các bài ĐÃ GỬI trước đó — bảo Gemini né, sửa gốc vòng lặp chết
+// "Gemini luôn trả đúng 1 bài nổi nhất → trùng tiêu đề → chặn mãi → toàn filler".
+function buildPrompt(rule: Rule, avoidTitles: string[] = []): string {
   const hasCond = Boolean(rule.condition && rule.condition.trim());
   const prev = rule.last_value && rule.last_value.trim() ? rule.last_value.trim() : "";
+  const avoid = avoidTitles.length
+    ? `\nCÁC BÀI ĐÃ GỬI CHO NGƯỜI DÙNG RỒI (TRÁNH chọn lại các bài này — hãy tìm bài MỚI KHÁC; chỉ được nhắc lại nếu số liệu trong đó ĐÃ THAY ĐỔI):\n${avoidTitles.map((t) => `- ${t}`).join("\n")}\n`
+    : "";
   return `Hãy tìm trên web tin tức MỚI NHẤT (trong vài ngày gần đây) về chủ đề: "${rule.keyword}".
 ${rule.sources ? `Ưu tiên các nguồn: ${rule.sources}.` : ""}
 ${hasCond ? `Điều kiện người dùng quan tâm: "${rule.condition}".` : "Người dùng muốn nhận tin mới liên quan."}
-${prev ? `Số liệu/giá trị GHI NHẬN LẦN TRƯỚC của chủ đề này: "${prev}". Hãy so sánh với giá trị mới tìm được.` : ""}
-
-Chọn DUY NHẤT 1 bài mới và đáng chú ý NHẤT. Trả về JSON THUẦN (không markdown) là MẢNG đúng 1 phần tử:
+${prev ? `Số liệu/giá trị GHI NHẬN LẦN TRƯỚC của chủ đề này: "${prev}". Hãy so sánh với giá trị mới tìm được.` : ""}${avoid}
+Chọn TỐI ĐA 3 bài MỚI và đáng chú ý nhất (khác nhau, sắp theo mức đáng chú ý GIẢM DẦN). Trả về JSON THUẦN (không markdown) là MẢNG 1-3 phần tử, mỗi phần tử:
 {
   "title": "tiêu đề bài báo thật",
   "content": "3-5 câu tóm tắt ĐẦY ĐỦ: chuyện gì xảy ra, số liệu cụ thể. Nếu có thay đổi/biến động: ghi RÕ 'từ [mức cũ] → [mức mới]' (vd 'giảm từ 76 triệu xuống 74,5 triệu đồng/lượng'), không chỉ nói chênh lệch. Đơn vị/tiền tệ ưu tiên kiểu Việt Nam; số liệu nước ngoài thì kèm quy đổi trong ngoặc. Chỉ dùng dữ liệu CÓ THẬT trong bài.",
@@ -154,6 +113,7 @@ Chọn DUY NHẤT 1 bài mới và đáng chú ý NHẤT. Trả về JSON THUẦ
   "ai_summary": "1 câu ngắn ~15 từ chứa điểm mấu chốt; nếu có thay đổi nêu 'từ X → Y'; ưu tiên đơn vị/tiền VN",
   "source": "tên báo (vd: VnExpress)",
   "source_url": "URL bài viết gốc",
+  "published_date": "ngày ĐĂNG bài dạng YYYY-MM-DD (vd 2026-06-30). Không rõ ngày thì để chuỗi rỗng \\"\\" — KHÔNG đoán bừa",
   "sentiment": "positive | neutral | negative",
   "is_important": true/false,
   "value": "số liệu chính HIỆN TẠI kèm đơn vị (vd: 75,2 triệu/lượng | 2.650 USD | 27,3 độ C). Nếu chủ đề không có số liệu định lượng thì để chuỗi rỗng \\"\\"",
@@ -197,7 +157,7 @@ async function sendPush(
     .select("quiet_enabled, quiet_start, quiet_end")
     .eq("user_id", userId)
     .maybeSingle();
-  if (settings?.quiet_enabled && isQuietNow(settings.quiet_start, settings.quiet_end)) return;
+  if (settings?.quiet_enabled && isQuietNow(settings.quiet_start, settings.quiet_end, vnHourNow())) return;
 
   const { data: toks } = await supabase
     .from("push_tokens")
@@ -215,11 +175,23 @@ async function sendPush(
   }));
 
   try {
-    await fetch("https://exp.host/--/api/v2/push/send", {
+    const res = await fetch("https://exp.host/--/api/v2/push/send", {
       method: "POST",
       headers: { "Content-Type": "application/json", "Accept": "application/json" },
       body: JSON.stringify(messages),
     });
+    // DỌN TOKEN CHẾT: Expo trả ticket theo đúng thứ tự messages. Token đã gỡ app /
+    // hết hạn báo DeviceNotRegistered — giữ lại chỉ tổ bắn mãi vào hư không, nên xóa.
+    const out = await res.json().catch(() => null) as
+      { data?: { status?: string; details?: { error?: string } }[] } | null;
+    const tickets = out?.data ?? [];
+    const dead = tokens.filter((_: string, i: number) =>
+      tickets[i]?.status === "error" && tickets[i]?.details?.error === "DeviceNotRegistered"
+    );
+    if (dead.length > 0) {
+      await supabase.from("push_tokens").delete().in("token", dead);
+      console.log(`Đã xóa ${dead.length} push token chết (DeviceNotRegistered).`);
+    }
   } catch (e) {
     console.log("Push send lỗi:", (e as Error).message);
   }
@@ -318,6 +290,46 @@ async function logCronRun(
   } catch { /* bảng cron_runs chưa có → bỏ qua */ }
 }
 
+// ---- CẢNH BÁO QUOTA (chủ động, khỏi phải mở trang admin xem) ----
+const QUOTA_LIMIT = 1500;      // trần grounding free tier / ngày
+const QUOTA_ALERT_AT = 1200;   // ~80% → báo sớm để kịp giãn nhịp / tắt bớt rule
+
+// Ngày (YYYY-MM-DD) theo giờ Thái Bình Dương — mốc reset quota Gemini (giống admin-api).
+function pacificDay(ms: number): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Los_Angeles", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(new Date(ms));
+}
+
+// Đẩy push cho admin ĐÚNG LÚC quota vượt ngưỡng (trước run còn dưới, sau run chạm) →
+// mỗi ngày tối đa 1 lần, không spam. Best-effort: lỗi gì cũng nuốt, không ảnh hưởng quét.
+// deno-lint-ignore no-explicit-any
+async function maybeAlertQuota(supabase: any, callsThisRun: number) {
+  try {
+    if (callsThisRun <= 0) return;
+    const since = new Date(Date.now() - 26 * 3600000).toISOString();
+    const { data } = await supabase.from("usage_logs").select("created_at").gte("created_at", since);
+    const today = pacificDay(Date.now());
+    const total = (data ?? [])
+      .filter((r: { created_at: string }) => pacificDay(Date.parse(r.created_at)) === today).length;
+    if (total < QUOTA_ALERT_AT || total - callsThisRun >= QUOTA_ALERT_AT) return; // chưa chạm / đã báo run trước
+    const adminEmails = (Deno.env.get("ADMIN_EMAILS") ?? "")
+      .toLowerCase().split(",").map((s) => s.trim()).filter(Boolean);
+    if (adminEmails.length === 0) return;
+    const { data: usersList } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
+    for (const u of usersList?.users ?? []) {
+      if (u.email && adminEmails.includes(u.email.toLowerCase())) {
+        await sendPush(
+          supabase, u.id,
+          "⚠️ Quota Gemini sắp hết",
+          `Hôm nay đã dùng ${total}/${QUOTA_LIMIT} lượt (ngưỡng cảnh báo ${QUOTA_ALERT_AT}). Cân nhắc giãn nhịp hoặc tạm dừng bớt rule.`,
+          "",
+        );
+      }
+    }
+  } catch { /* usage_logs chưa có / lỗi phụ → bỏ qua */ }
+}
+
 // deno-lint-ignore no-explicit-any
 async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult> {
   const hasCond = Boolean(rule.condition && rule.condition.trim());
@@ -328,9 +340,21 @@ async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult
   const importantOnly = rule.notify_mode === "important";
   // Rule "theo điều kiện" + đã có giá trị nền → chỉ báo khi giá trị THỰC SỰ đổi.
   const changeGate = rule.frequency === "change" && Boolean(rule.last_value && rule.last_value.trim());
-  const normVal = (s: string) => s.toLowerCase().replace(/\s+/g, "");
-  const normTitle = (t: string) => t.toLowerCase().replace(/\s+/g, " ").trim();
   const lastValNorm = normVal(String(rule.last_value ?? ""));
+
+  // Lấy tiêu đề ĐÃ GỬI trước khi gọi Gemini: vừa để dedup, vừa đưa vào prompt bảo Gemini
+  // NÉ các bài đó (sửa gốc vòng lặp "luôn trả đúng 1 bài nổi nhất → trùng mãi → toàn filler").
+  const { data: existing } = await supabase
+    .from("notifications")
+    .select("id, title, source, source_url, created_at")
+    .eq("rule_id", rule.id)
+    .order("created_at", { ascending: false });
+  const seenTitles = new Set<string>(
+    (existing ?? []).map((n: { title: string }) => normTitle(String(n.title ?? ""))).filter(Boolean)
+  );
+  const avoidTitles = recentRealTitles((existing ?? []).map((n: { title: string }) => n.title));
+  const prev = (existing ?? [])[0] as
+    { id?: string; title?: string; source?: string; source_url?: string; created_at?: string } | undefined;
 
   // Gọi Gemini (lỗi mạng/quota sẽ THROW → caller xử lý; chỉ nuốt lỗi parse).
   // Log mỗi call vào usage_logs để theo dõi quota (kể cả khi lỗi).
@@ -338,7 +362,7 @@ async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult
   try {
     const gen = await geminiGenerate({
       system: SEARCH_SYSTEM,
-      user: buildPrompt(rule),
+      user: buildPrompt(rule, avoidTitles),
       grounding: true,
       temperature: 0.2,
     });
@@ -356,24 +380,9 @@ async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult
     if (Array.isArray(parsed)) items = parsed;
   } catch { /* model không trả JSON → coi như không tìm thấy */ }
 
-  // Chống trùng THEO TIÊU ĐỀ (URL grounding hay đổi mỗi lần gọi nên không dùng để dedup).
-  const { data: existing } = await supabase
-    .from("notifications")
-    .select("title, created_at")
-    .eq("rule_id", rule.id);
-  const seenTitles = new Set<string>(
-    (existing ?? []).map((n: { title: string }) => normTitle(String(n.title ?? ""))).filter(Boolean)
-  );
-  const { data: prevRows } = await supabase
-    .from("notifications")
-    .select("id, title, source, source_url, created_at")
-    .eq("rule_id", rule.id)
-    .order("created_at", { ascending: false })
-    .limit(1);
-  const prev = prevRows?.[0] as
-    { id?: string; title?: string; source?: string; source_url?: string; created_at?: string } | undefined;
-
-  const top = items[0];
+  // Chọn ứng viên: Gemini trả tối đa 3 bài — lấy bài ĐẦU TIÊN chưa trùng tiêu đề đã gửi
+  // (bỏ bài quá cũ theo published_date). Tất cả trùng → giữ bài đầu cho nhánh fallback.
+  const { top, fresh } = pickFreshItem(items, seenTitles, lastValNorm);
   let value: string | undefined;
   let inserted = 0;
   let note: { title: string; kind: NotifKind } | undefined;
@@ -389,9 +398,6 @@ async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult
     const importantOk = !importantOnly || toBool(top.is_important) || (hasCond && toBool(top.matches_condition));
     // Link: ưu tiên URL nguồn THẬT từ grounding (top.source_url do AI tự ghi, hay bị bịa/sai bài).
     const url = pool.length > 0 ? pool[0].uri : (isUrl(top.source_url) ? top.source_url : "");
-    const valueChanged = v !== "" && lastValNorm !== "" && normVal(v) !== lastValNorm;
-    const titleNorm = normTitle(String(top.title ?? ""));
-    const fresh = titleNorm !== "" && (!seenTitles.has(titleNorm) || valueChanged);
 
     if (condOk && changeOk && fresh && importantOk) {
       inserted += await insertNotif(supabase, rule, {
@@ -497,8 +503,6 @@ async function previewGate(supabase: any, rule: Rule): Promise<GatePreview> {
   const hasCond = Boolean(rule.condition && rule.condition.trim());
   const forceSend = !hasCond;
   const changeGate = rule.frequency === "change" && Boolean(rule.last_value && rule.last_value.trim());
-  const normVal = (s: string) => s.toLowerCase().replace(/\s+/g, "");
-  const normTitle = (t: string) => t.toLowerCase().replace(/\s+/g, " ").trim();
   const lastValNorm = normVal(String(rule.last_value ?? ""));
 
   const base: GatePreview = {
@@ -517,10 +521,20 @@ async function previewGate(supabase: any, rule: Rule): Promise<GatePreview> {
     importantReason: "",
   };
 
+  // Lấy tiêu đề đã có TRƯỚC khi gọi Gemini (giống monitorRule): dedup + đưa vào prompt để né.
+  const { data: existing } = await supabase
+    .from("notifications").select("title").eq("rule_id", rule.id)
+    .order("created_at", { ascending: false });
+  const seenTitles = new Set<string>(
+    (existing ?? []).map((n: { title: string }) => normTitle(String(n.title ?? ""))).filter(Boolean),
+  );
+  const avoidTitles = recentRealTitles((existing ?? []).map((n: { title: string }) => n.title));
+  const hasPrev = (existing ?? []).length > 0;
+
   // Gọi Gemini (1 call). Lỗi quota/mạng → THROW để caller báo lỗi.
   const gen = await geminiGenerate({
     system: SEARCH_SYSTEM,
-    user: buildPrompt(rule),
+    user: buildPrompt(rule, avoidTitles),
     grounding: true,
     temperature: 0.2,
   });
@@ -531,15 +545,9 @@ async function previewGate(supabase: any, rule: Rule): Promise<GatePreview> {
     const parsed = parseJsonLoose<NewsItem[]>(gen.text);
     if (Array.isArray(parsed)) items = parsed;
   } catch { /* không JSON → coi như không tìm thấy */ }
-  const top = items[0];
 
-  // Lấy tiêu đề đã có để tính "fresh" (giống monitorRule, nhưng KHÔNG insert).
-  const { data: existing } = await supabase
-    .from("notifications").select("title").eq("rule_id", rule.id);
-  const seenTitles = new Set<string>(
-    (existing ?? []).map((n: { title: string }) => normTitle(String(n.title ?? ""))).filter(Boolean),
-  );
-  const hasPrev = (existing ?? []).length > 0;
+  // Chọn ứng viên GIỐNG HỆT monitorRule: bài đầu tiên chưa trùng (bỏ bài quá cũ).
+  const { top, fresh } = pickFreshItem(items, seenTitles, lastValNorm);
 
   if (!top) {
     // Không có tin: chế độ Đầy đủ vẫn gửi filler (nếu rule định kỳ); Chỉ-quan-trọng thì bỏ.
@@ -551,9 +559,6 @@ async function previewGate(supabase: any, rule: Rule): Promise<GatePreview> {
   const v = String(top.value ?? "").trim();
   const condOk = !hasCond || toBool(top.matches_condition);
   const changeOk = !changeGate || toBool(top.changed);
-  const valueChanged = v !== "" && lastValNorm !== "" && normVal(v) !== lastValNorm;
-  const titleNorm = normTitle(String(top.title ?? ""));
-  const fresh = titleNorm !== "" && (!seenTitles.has(titleNorm) || valueChanged);
   const importantOk = toBool(top.is_important) || (hasCond && toBool(top.matches_condition));
 
   base.found = true;
@@ -676,15 +681,15 @@ Deno.serve(async (req) => {
     // isDue đã đóng vai trò quota gate tự nhiên: rule 1 tiếng chỉ tạo tối đa 24 call/ngày,
     // không cần cap cứng MAX_RULES_PER_RUN nữa (trước đây cap=2 làm rule bị trễ oan).
     //
-    // Ưu tiên theo "giờ đáng lẽ phải báo": dueAt = last_run_at + chu kỳ. Rule đến hạn
-    // SỚM NHẤT (trễ hẹn nặng nhất so với chu kỳ riêng) được quét trước — quan trọng khi
-    // chạm deadline 70s chỉ kịp quét một phần. Rule chưa từng quét (last_run_at = null)
-    // → dueAt nhỏ → tự lên đầu. KHÔNG sắp theo last_run_at thuần (bỏ qua chu kỳ là sai).
-    const dueAt = (r: Rule) =>
-      (r.last_run_at ? Date.parse(r.last_run_at) : 0) + intervalMs(r.frequency);
+    // Ưu tiên theo "giờ đáng lẽ phải báo": dueAt = last_run_at + chu kỳ (import từ
+    // monitorLogic). Rule đến hạn SỚM NHẤT (trễ hẹn nặng nhất so với chu kỳ riêng) được
+    // quét trước — quan trọng khi chạm deadline 70s chỉ kịp quét một phần. Rule chưa
+    // từng quét (last_run_at = null) → dueAt nhỏ → tự lên đầu.
+    // LƯU Ý: không dùng .filter(isDue) trực tiếp — isDue(rule, nowMs?) sẽ nhận INDEX
+    // của mảng làm nowMs (bug kinh điển kiểu parseInt trong map).
     const dueRules = manual
       ? (rules as Rule[])
-      : (rules as Rule[]).filter(isDue).sort((a, b) => dueAt(a) - dueAt(b));
+      : (rules as Rule[]).filter((r) => isDue(r)).sort((a, b) => dueAt(a) - dueAt(b));
 
     // DRY-RUN: chỉ trả KẾ HOẠCH quét (rule nào tới hạn + thứ tự ưu tiên + rule còn
     // phải chờ) — KHÔNG gọi Gemini, KHÔNG tốn quota. Trang test dùng để kiểm chứng
@@ -747,6 +752,8 @@ Deno.serve(async (req) => {
       supabase, trigger, checked, inserted, quotaHit, Date.now() - startedAt,
       scannedNames.join(", ") || undefined,
     );
+    // Cảnh báo admin khi quota ngày vượt ~80% (chỉ nhịp cron nền, báo 1 lần/ngày).
+    if (trigger === "cron") await maybeAlertQuota(supabase, checked);
     return json({ inserted, checked, quotaHit, notes });
   } catch (err) {
     return json({ error: (err as Error).message }, 500);
