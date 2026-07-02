@@ -34,6 +34,8 @@ Một rule hoàn chỉnh gồm các trường:
 NHẮC HẸN (source_type="reminder"):
 - title = nội dung cần nhắc (ngắn gọn), keyword = giống title, category = "other", frequency = "1440", condition = "", run_at = "", noise_risk = "low".
 - Nhắc 1 LẦN vào remind_at rồi hệ thống tự tắt. Nếu người dùng muốn nhắc LẶP LẠI hằng ngày/tuần → đó là rule đặt giờ thường (run_at + frequency), KHÔNG phải reminder.
+- KHÔNG CÓ GIỚI HẠN THỜI GIAN TỐI THIỂU: nhắc hẹn được đặt BẤT KỲ lúc nào trong tương lai, kể cả vài phút nữa. Quy tắc "tối thiểu 30 phút" CHỈ áp cho theo dõi ĐỊNH KỲ, TUYỆT ĐỐI KHÔNG áp cho nhắc hẹn — đừng từ chối "nhắc tôi 5 phút nữa".
+- GIỜ TƯƠNG ĐỐI: "X phút nữa"/"X tiếng nữa"/"tối nay"/"trưa mai"... → tự cộng từ THỜI ĐIỂM HIỆN TẠI được cung cấp đầu hội thoại để ra remind_at tuyệt đối (vd bây giờ 2026-07-02 21:07, "nhắc tôi 5 phút nữa" → "2026-07-02T21:12"). Đã có mốc tương đối rõ thì KHÔNG hỏi lại.
 
 HAI KIỂU THEO DÕI — phải xác định rõ người dùng muốn kiểu nào:
   (1) ĐỊNH KỲ: báo tin mới đều đặn. → frequency = số phút (≥30), condition = "".
@@ -47,7 +49,7 @@ QUY TẮC HỎI LẠI (RẤT QUAN TRỌNG — đừng tự bịa):
 - Chỉ trả "ready" khi đã rõ: keyword cụ thể + category + (tần suất hợp lệ HOẶC điều kiện cụ thể).
 
 YÊU CẦU KHÔNG HỢP LỆ → trả "need_info" và GIẢI THÍCH VÌ SAO, gợi ý cách sửa:
-- Tần suất định kỳ nhanh hơn 30 phút (vd "mỗi 5 phút", "mỗi giây", "liên tục") → giải thích theo dõi định kỳ tối thiểu 30 phút/lần; nếu cần phản ứng nhanh thì nên đặt theo ĐIỀU KIỆN (chỉ báo khi chạm yêu cầu). Hỏi người dùng chọn lại. (Đừng nêu con số phút quét nội bộ.)
+- Tần suất định kỳ nhanh hơn 30 phút (vd "mỗi 5 phút", "mỗi giây", "liên tục") → giải thích theo dõi định kỳ tối thiểu 30 phút/lần; nếu cần phản ứng nhanh thì nên đặt theo ĐIỀU KIỆN (chỉ báo khi chạm yêu cầu). Hỏi người dùng chọn lại. (Đừng nêu con số phút quét nội bộ.) NGOẠI LỆ: NHẮC HẸN ("nhắc tôi 5 phút nữa") KHÔNG bị giới hạn này — xem mục NHẮC HẸN.
 - Chủ đề không theo dõi được bằng tin tức/web → nói thẳng lý do, gợi ý chủ đề khả thi.
 
 NHIỀU RULE TRONG 1 CÂU (tách):
@@ -99,7 +101,11 @@ User: "nhắc tôi nộp bài tập lớn ngày 20/7 lúc 9h sáng"
 
 VÍ DỤ H — nhắc hẹn nhưng THIẾU ngày:
 User: "nhắc tôi đi khám răng"
-→ { "status": "need_info", "message": "Bạn muốn được nhắc đi khám răng vào ngày nào, lúc mấy giờ?" }`;
+→ { "status": "need_info", "message": "Bạn muốn được nhắc đi khám răng vào ngày nào, lúc mấy giờ?" }
+
+VÍ DỤ I — nhắc hẹn GIỜ TƯƠNG ĐỐI, rất gần cũng OK (giả sử bây giờ là 2026-07-02 21:07):
+User: "nhắc tôi 5 phút nữa tắt bếp"
+→ { "status": "ready", "message": "Đã tạo nhắc hẹn:", "rules": [ { "title": "Tắt bếp", "description": "Nhắc tắt bếp lúc 21:12.", "keyword": "tắt bếp", "category": "other", "sources": "", "frequency": "1440", "run_at": "", "condition": "", "noise_risk": "low", "noise_reason": "", "source_type": "reminder", "remind_at": "2026-07-02T21:12" } ] }`;
 
 function asText(v: unknown): string {
   if (Array.isArray(v)) return v.join(", ");

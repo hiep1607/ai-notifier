@@ -114,13 +114,20 @@ khi thêm loại mới dựa-trên-heuristic. Provider lỗi → tự rơi về 
 - **Cách tạo:** chat "nhắc tôi [việc] ngày [X] lúc [giờ]" — AI nhận diện đây là NHẮC HẸN (không phải
   theo dõi tin), tự quy đổi ngày tháng dựa trên ngày giờ VN hiện tại (thiếu ngày → hỏi lại; không nói
   giờ → mặc định 08:00; ngày đã qua trong năm nay → tự hiểu là năm sau).
+- **KHÔNG có giới hạn thời gian tối thiểu:** quy tắc "tối thiểu 30 phút" chỉ áp cho theo dõi ĐỊNH KỲ.
+  Nhắc hẹn đặt được bất kỳ lúc nào trong tương lai, kể cả "nhắc tôi 5 phút nữa". AI hiểu giờ TƯƠNG ĐỐI
+  ("5 phút nữa", "2 tiếng nữa", "tối nay") và tự cộng từ giờ hiện tại.
+- **Độ chính xác tới PHÚT:** ngoài cron chính 15'/lần còn có cron phụ `reminder-tick` chạy MỖI PHÚT
+  (migration `0017`) — chỉ là 1 câu SQL kiểm tra "có nhắc hẹn nào tới hạn chưa bắn không", CÓ mới gọi
+  run-monitor (không thì 0 tốn gì). Reminder tới hạn được ưu tiên quét ĐẦU TIÊN trong hàng đợi.
 - **Khác biệt với rule đặt giờ (mục 4c):** nhắc hẹn chỉ bắn **ĐÚNG 1 LẦN** rồi rule **tự tắt**; rule đặt
   giờ là lịch hẹn LẶP LẠI (hằng ngày/tuần) để theo dõi tin.
 - **Cách hoạt động khi tới hạn:** không gọi AI — push thẳng "⏰ Nhắc hẹn: [nội dung]" kèm giờ hẹn; nếu
   hệ thống bận nên nhắc muộn thì nêu rõ số phút trễ trong nội dung (không bao giờ bỏ qua, dù muộn bao lâu).
-- **Ví dụ:** "nhắc tôi nộp bài tập lớn ngày 20/7 lúc 9h sáng", "nhắc tôi uống thuốc 9h tối nay".
-- **YÊU CẦU:** đã chạy migration `0016_rule_reminder.sql` (cột `source_type` + `remind_at`). Chưa chạy
-  thì tạo rule thường vẫn OK, chỉ riêng tạo nhắc hẹn sẽ báo lỗi thiếu cột.
+- **Ví dụ:** "nhắc tôi nộp bài tập lớn ngày 20/7 lúc 9h sáng", "nhắc tôi uống thuốc 9h tối nay",
+  "nhắc tôi 5 phút nữa tắt bếp".
+- **YÊU CẦU:** migration `0016_rule_reminder.sql` (✅ đã chạy) + `0017_reminder_tick.sql` (cron mỗi phút
+  — chưa chạy thì nhắc hẹn vẫn hoạt động nhưng độ trễ tối đa ~15 phút theo cron chính).
 
 ---
 
@@ -201,6 +208,7 @@ Công cụ kiểm thử nhanh, tách khỏi trang quản trị:
 |---|---|---|
 | `0015_rule_notify_mode.sql` | Chế độ "Chỉ tin quan trọng" per-rule | Chưa chạy → nút đổi chế độ báo lỗi; rule vẫn tạo/chạy bình thường ở chế độ Đầy đủ |
 | `0016_rule_reminder.sql` | Nhắc hẹn (reminder) | ✅ Đã chạy (2026-07-02) — nhắc hẹn hoạt động đủ |
+| `0017_reminder_tick.sql` | Nhắc hẹn chính xác tới PHÚT (cron phụ mỗi phút, SQL-gated) | Chưa chạy → nhắc hẹn vẫn chạy nhưng trễ tối đa ~15' theo cron chính. Cần thay `<PROJECT_REF>` + `<SERVICE_ROLE_KEY>` (legacy JWT eyJ...) trước khi chạy |
 
 ---
 

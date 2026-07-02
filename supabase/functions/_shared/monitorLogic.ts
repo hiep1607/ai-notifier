@@ -102,7 +102,11 @@ export function isDue(rule: SchedulableRule, nowMs = Date.now()): boolean {
 }
 
 // Thời điểm rule "đáng lẽ phải báo" — dùng để sắp thứ tự ưu tiên khi quét.
+// NHẮC HẸN: mốc báo chính là remind_at (không phải last_run_at + chu kỳ) → reminder tới
+// hạn tự lên ĐẦU hàng đợi, được xử lý trước các rule tin tức (nó nhạy thời gian nhất
+// và 0 tốn AI nên xử lý tức thì).
 export function dueAt(rule: SchedulableRule): number {
+  if (isReminder(rule)) return Date.parse(String(rule.remind_at));
   return (rule.last_run_at ? Date.parse(rule.last_run_at) : 0) + intervalMs(rule.frequency);
 }
 

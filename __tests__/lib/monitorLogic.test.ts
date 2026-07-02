@@ -220,6 +220,23 @@ describe("isDue — rule NHẮC HẸN (reminder)", () => {
   it("reminder thiếu/hỏng remind_at → rơi về lịch thường (không crash)", () => {
     expect(isDue({ frequency: "1440", source_type: "reminder", remind_at: "ngày mai", last_run_at: null }, now)).toBe(true); // fallback chu kỳ thuần: chưa quét lần nào → due
   });
+
+  it("dueAt của reminder = đúng mốc hẹn → tới hạn thì lên ĐẦU hàng đợi quét", () => {
+    const remindMs = Date.parse("2026-07-20T09:00:00+07:00");
+    const reminder = { frequency: "1440", source_type: "reminder", remind_at: "2026-07-20T09:00:00+07:00", last_run_at: null };
+    expect(dueAt(reminder)).toBe(remindMs);
+    // Rule tin tức quét 30' trước (dueAt ≈ now) vẫn xếp SAU reminder đã tới hạn 1 tiếng.
+    const newsRule = { frequency: "60", last_run_at: new Date(remindMs).toISOString() };
+    expect(dueAt(reminder)).toBeLessThan(dueAt(newsRule));
+  });
+
+  it("nhắc hẹn RẤT GẦN (5 phút nữa) — chưa tới thì im, tới là bắn (không có giới hạn 30')", () => {
+    const in5min = new Date(now + 5 * 60000).toISOString();
+    const r = { frequency: "1440", source_type: "reminder", remind_at: in5min, last_run_at: null };
+    expect(isDue(r, now)).toBe(false);              // còn 5 phút → chưa
+    expect(isDue(r, now + 5 * 60000)).toBe(true);   // đúng mốc → bắn
+    expect(isDue(r, now + 6 * 60000)).toBe(true);   // trễ 1 phút → vẫn bắn
+  });
 });
 
 describe("detectSourceType — router chọn nguồn dữ liệu", () => {
