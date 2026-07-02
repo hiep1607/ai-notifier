@@ -31,10 +31,12 @@ import {
   pickFreshItem,
   detectSourceType,
   significantChange,
+  isReminder,
   type SourceType,
   type ProviderNotif,
 } from "../_shared/monitorLogic.ts";
 import { fetchWeatherNotif, fetchCryptoNotif, fetchFxNotif } from "../_shared/providers.ts";
+import { feedsForCategory, parseRss, mergeRssItems, sourceFromLink, type RssItem } from "../_shared/rss.ts";
 
 // Lỗi hết quota / quá tải tạm thời từ Gemini → nên DỪNG sớm thay vì đốt thêm request.
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -58,6 +60,10 @@ interface Rule {
   last_value?: string | null; // số liệu chính lần quét trước (trigger "thay đổi")
   muted?: boolean;          // true = vẫn tạo notification nhưng KHÔNG đẩy push (để êm)
   notify_mode?: string;     // "important" = bỏ fallback + chỉ báo tin quan trọng/thỏa điều kiện; mặc định "all"
+  source_type?: string | null; // 'reminder' = rule nhắc hẹn (migration 0016); mặc định 'search'
+  remind_at?: string | null;   // thời điểm nhắc (ISO) — chỉ dùng với reminder
+  title?: string;           // tên rule (reminder dùng làm nội dung nhắc)
+  description?: string;     // mô tả rule (reminder dùng làm ghi chú)
   is_active: boolean;
 }
 
@@ -409,8 +415,261 @@ async function monitorProvider(supabase: any, rule: Rule, srcType: SourceType): 
   return { inserted, value: p.value, note: { title: p.title, kind: "real" } };
 }
 
+// ---- ĐƯỜNG RSS (Pha C): tin tức lấy từ feed báo VN — link LUÔN thật, 0 grounding ----
+
+// Thông tin tối thiểu của thông báo gần nhất (cho fallback "chưa có thay đổi").
+interface PrevNotif {
+  id?: string;
+  title?: string;
+  source?: string;
+  source_url?: string;
+  created_at?: string;
+}
+
+// Ngữ cảnh cổng gửi của 1 rule — tính 1 lần, dùng chung các đường quét.
+interface GateCtx {
+  hasCond: boolean;
+  forceSend: boolean;
+  scheduled: boolean;
+  importantOnly: boolean;
+  changeGate: boolean;
+  lastValNorm: string;
+}
+
+// Gửi thông báo "trạng thái" khi KHÔNG có tin thật (dùng chung đường RSS + search).
+// Giữ nguyên hành vi cũ: chỉ rule định kỳ/đặt giờ (forceSend) + không ở chế độ lọc;
+// tôn trọng chu kỳ (1 filler/chu kỳ); filler chỉ push khi rule đặt giờ.
+// deno-lint-ignore no-explicit-any
+async function sendFallback(
+  supabase: any,
+  rule: Rule,
+  ctx: GateCtx,
+  prev: PrevNotif | undefined,
+  related: NotifFields | null, // ứng viên "liên quan nhất" khi rule chưa từng có tb (hoặc null)
+  value?: string,
+): Promise<MonitorRuleResult> {
+  const skipped: MonitorRuleResult = { inserted: 0, value, note: { title: "", kind: "skipped" } };
+  if (!ctx.forceSend || ctx.importantOnly) return skipped;
+  const prevMs = prev?.created_at ? Date.parse(prev.created_at) : 0;
+  if (prevMs >= Date.now() - intervalMs(rule.frequency)) return skipped; // đã có tb trong chu kỳ
+
+  const topic = (rule.keyword || rule.title || "thông tin").slice(0, 60);
+  if (prev) {
+    const title = `Chưa có thay đổi mới: ${topic}`;
+    const inserted = await insertNotif(supabase, rule, {
+      title,
+      content: "Tạm thời chưa tìm thấy thông tin mới theo yêu cầu — chưa có thay đổi so với thông báo trước. Bạn có thể xem lại thông báo gần nhất bên dưới.",
+      details: "",
+      ai_summary: "Chưa có thay đổi so với lần trước.",
+      source: prev.source || "Web",
+      source_url: "",
+      related_notification_id: prev.id,
+      sentiment: "neutral",
+      is_important: false,
+    }, ctx.scheduled);
+    return { inserted, value, note: { title, kind: "nochange" } };
+  }
+  if (related) {
+    const title = `Gợi ý liên quan: ${related.title.slice(0, 120)}`;
+    const inserted = await insertNotif(supabase, rule, {
+      ...related,
+      title,
+      content: `Chưa tìm thấy thông tin đúng yêu cầu của bạn. Đây là thông tin liên quan/mới nhất tìm được:\n${related.content}`,
+      is_important: false,
+    }, ctx.scheduled);
+    return { inserted, value, note: { title, kind: "related" } };
+  }
+  const title = `Chưa tìm thấy thông tin: ${topic}`;
+  const inserted = await insertNotif(supabase, rule, {
+    title,
+    content: "Hiện chưa tìm thấy thông tin nào theo yêu cầu của bạn. Hệ thống sẽ tiếp tục theo dõi và cập nhật ở lần quét kế tiếp.",
+    details: "",
+    ai_summary: "Chưa tìm thấy thông tin theo yêu cầu.",
+    source: "Web",
+    source_url: "",
+    sentiment: "neutral",
+    is_important: false,
+  }, ctx.scheduled);
+  return { inserted, value, note: { title, kind: "none" } };
+}
+
+// Fetch feed RSS theo category (song song, nuốt lỗi lẻ). null = TẤT CẢ hỏng → grounding.
+async function fetchRssItems(category?: string | null): Promise<RssItem[] | null> {
+  const feeds = feedsForCategory(category);
+  if (feeds.length === 0) return null;
+  const settled = await Promise.allSettled(
+    feeds.map(async (u) => {
+      const res = await fetch(u, { headers: { "Accept": "application/rss+xml, application/xml, text/xml" } });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return parseRss(await res.text());
+    }),
+  );
+  const lists = settled
+    .filter((s): s is PromiseFulfilledResult<RssItem[]> => s.status === "fulfilled")
+    .map((s) => s.value);
+  if (lists.length === 0) return null;
+  return mergeRssItems(lists);
+}
+
+interface RssPick {
+  index: number; // -1 = không bài nào thực sự liên quan
+  content: string;
+  ai_summary: string;
+  sentiment: string;
+  is_important: boolean;
+  matches_condition: boolean;
+  value: string;
+  changed: boolean;
+}
+
+// Flash-lite CHỌN bài hợp chủ đề nhất trong danh sách + tóm tắt (KHÔNG grounding — rẻ,
+// không đụng quota 1.500). Lỗi → throw để caller quyết định fallback.
+// deno-lint-ignore no-explicit-any
+async function pickRssItemAI(supabase: any, rule: Rule, items: RssItem[]): Promise<RssPick> {
+  const hasCond = Boolean(rule.condition && rule.condition.trim());
+  const prevVal = rule.last_value?.trim() ?? "";
+  const list = items
+    .map((it, i) => `[${i}] ${it.title} — ${it.description.slice(0, 160)}`)
+    .join("\n");
+  try {
+    const { text } = await geminiGenerate({
+      system: "Bạn chọn bài báo phù hợp nhất từ danh sách RSS và tóm tắt ngắn gọn tiếng Việt. TUYỆT ĐỐI không bịa thông tin ngoài tiêu đề + mô tả đã cho. Chỉ trả JSON thuần.",
+      user: `Chủ đề người dùng theo dõi: "${rule.keyword}".
+${hasCond ? `Điều kiện người dùng quan tâm: "${rule.condition}".` : ""}
+${prevVal ? `Số liệu ghi nhận lần trước: "${prevVal}".` : ""}
+Danh sách bài MỚI trên báo (đánh số):
+${list}
+
+Chọn 1 bài PHÙ HỢP NHẤT với chủ đề. Trả JSON:
+{
+  "index": số thứ tự bài chọn (0-${items.length - 1}), hoặc -1 nếu KHÔNG bài nào thật sự liên quan chủ đề,
+  "content": "3-5 câu tóm tắt từ tiêu đề + mô tả của bài đã chọn (không bịa số liệu)",
+  "ai_summary": "1 câu ngắn ~15 từ điểm mấu chốt",
+  "sentiment": "positive | neutral | negative",
+  "is_important": true nếu tin đáng chú ý với người theo dõi chủ đề này, ngược lại false,
+  "matches_condition": ${hasCond ? `true nếu bài cho thấy điều kiện "${rule.condition}" đã xảy ra, ngược lại false` : "true"},
+  "value": "số liệu chính trong bài kèm đơn vị nếu có, \\"\\" nếu không",
+  "changed": ${prevVal ? `true nếu "value" khác đáng kể so với "${prevVal}"` : "true"}
+}`,
+      json: true,
+      temperature: 0.2,
+      model: "gemini-2.5-flash-lite",
+    });
+    await logUsage(supabase, rule.id, true);
+    const d = parseJsonLoose<Partial<RssPick>>(text);
+    return {
+      index: Number.isFinite(Number(d?.index)) ? Number(d?.index) : -1,
+      content: String(d?.content ?? ""),
+      ai_summary: String(d?.ai_summary ?? ""),
+      sentiment: String(d?.sentiment ?? "neutral"),
+      is_important: toBool(d?.is_important),
+      matches_condition: toBool(d?.matches_condition),
+      value: String(d?.value ?? ""),
+      changed: toBool(d?.changed),
+    };
+  } catch (e) {
+    await logUsage(supabase, rule.id, false, (e as Error).message);
+    throw e;
+  }
+}
+
+// Quét rule tin tức bằng RSS. Trả null = hạ tầng RSS/AI hỏng → caller dùng grounding.
+// Có kết quả (kể cả skipped/filler) = ĐÃ xử lý xong, KHÔNG đốt grounding.
+// deno-lint-ignore no-explicit-any
+async function monitorRssPath(
+  supabase: any,
+  rule: Rule,
+  ctx: GateCtx,
+  seenTitles: Set<string>,
+  prev: PrevNotif | undefined,
+): Promise<MonitorRuleResult | null> {
+  const items = await fetchRssItems(rule.category);
+  if (!items || items.length === 0) return null;
+
+  // Dedup TRƯỚC khi hỏi AI: tiêu đề feed ổn định tuyệt đối nên lọc thẳng bài đã gửi.
+  const unseen = items.filter((it) => !seenTitles.has(normTitle(it.title))).slice(0, 25);
+  if (unseen.length === 0) {
+    // Feed không có gì mới → filler theo luật chung, khỏi tốn grounding.
+    return await sendFallback(supabase, rule, ctx, prev, null);
+  }
+
+  let pick: RssPick;
+  try {
+    pick = await pickRssItemAI(supabase, rule, unseen);
+  } catch {
+    return null; // flash-lite lỗi → thử đường grounding (lỗi khác nhau, đáng thử)
+  }
+
+  const chosen = pick.index >= 0 ? unseen[pick.index] : undefined;
+  if (!chosen) {
+    // Không bài nào liên quan chủ đề → filler, không đốt grounding.
+    return await sendFallback(supabase, rule, ctx, prev, null);
+  }
+
+  const v = pick.value.trim();
+  const value = v ? v.slice(0, 200) : undefined;
+  const condOk = !ctx.hasCond || pick.matches_condition;
+  const changeOk = !ctx.changeGate || pick.changed;
+  const importantOk = !ctx.importantOnly || pick.is_important || (ctx.hasCond && pick.matches_condition);
+
+  if (condOk && changeOk && importantOk) {
+    const inserted = await insertNotif(supabase, rule, {
+      title: chosen.title,
+      content: pick.content || chosen.description,
+      details: "",
+      ai_summary: pick.ai_summary,
+      source: sourceFromLink(chosen.link),
+      source_url: chosen.link, // link THẬT từ feed — hết cảnh link bịa/sai bài
+      sentiment: normSentiment(pick.sentiment),
+      is_important: pick.is_important,
+    });
+    return { inserted, value, note: { title: chosen.title, kind: "real" } };
+  }
+
+  // Có bài liên quan nhưng không vượt cổng → fallback (kèm gợi ý bài đó nếu rule chưa có tb).
+  return await sendFallback(supabase, rule, ctx, prev, {
+    title: chosen.title,
+    content: pick.content || chosen.description,
+    details: "",
+    ai_summary: pick.ai_summary,
+    source: sourceFromLink(chosen.link),
+    source_url: chosen.link,
+    sentiment: normSentiment(pick.sentiment),
+    is_important: false,
+  }, value);
+}
+
+// NHẮC HẸN (Pha D): đến hẹn → push 1 thông báo nhắc rồi TỰ TẮT rule. 0 call AI.
+// deno-lint-ignore no-explicit-any
+async function monitorReminder(supabase: any, rule: Rule): Promise<MonitorRuleResult> {
+  const remindMs = Date.parse(String(rule.remind_at));
+  const lateMin = Math.max(0, Math.round((Date.now() - remindMs) / 60000));
+  const what = (rule.title || rule.keyword || "việc bạn đã hẹn").slice(0, 150);
+  const whenVn = new Date(remindMs + 7 * 3600000);
+  const whenTxt = `${String(whenVn.getUTCHours()).padStart(2, "0")}:${String(whenVn.getUTCMinutes()).padStart(2, "0")} ${String(whenVn.getUTCDate()).padStart(2, "0")}/${String(whenVn.getUTCMonth() + 1).padStart(2, "0")}`;
+  const title = `⏰ Nhắc hẹn: ${what}`;
+  const inserted = await insertNotif(supabase, rule, {
+    title,
+    content: `Bạn đã đặt nhắc "${what}" lúc ${whenTxt} (giờ VN)${lateMin > 15 ? ` — nhắc muộn ${lateMin} phút do hệ thống bận, xin lỗi nhé` : ""}.${rule.description ? `\nGhi chú: ${rule.description}` : ""}`,
+    details: "",
+    ai_summary: `Đến hẹn: ${what}.`,
+    source: "Nhắc hẹn",
+    source_url: "",
+    sentiment: "neutral",
+    is_important: true, // người dùng chủ động đặt hẹn = quan trọng
+  });
+  // Nhắc 1 lần rồi tự tắt — rule reminder không lặp (muốn nhắc lại thì tạo rule mới).
+  if (inserted > 0) {
+    await supabase.from("rules").update({ is_active: false }).eq("id", rule.id);
+  }
+  return { inserted, note: { title, kind: "real" } };
+}
+
 // deno-lint-ignore no-explicit-any
 async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult> {
+  // NHẮC HẸN: không cần nguồn tin — bắn thông báo rồi tắt rule.
+  if (isReminder(rule)) return await monitorReminder(supabase, rule);
+
   // ROUTER: rule số liệu (thời tiết/crypto/tỷ giá) đi đường provider — chính xác,
   // 0 quota grounding. Provider lỗi (API sập, không nhận diện được...) → fallback search.
   const srcType = detectSourceType(rule.keyword);
@@ -447,8 +706,15 @@ async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult
     (existing ?? []).map((n: { title: string }) => normTitle(String(n.title ?? ""))).filter(Boolean)
   );
   const avoidTitles = recentRealTitles((existing ?? []).map((n: { title: string }) => n.title));
-  const prev = (existing ?? [])[0] as
-    { id?: string; title?: string; source?: string; source_url?: string; created_at?: string } | undefined;
+  const prev = (existing ?? [])[0] as PrevNotif | undefined;
+
+  const ctx: GateCtx = { hasCond, forceSend, scheduled, importantOnly, changeGate, lastValNorm };
+
+  // ĐƯỜNG RSS TRƯỚC (Pha C): tin lấy từ feed báo VN — link luôn thật, dedup chuẩn,
+  // chỉ tốn 1 call flash-lite (không grounding). Chỉ khi hạ tầng RSS/AI hỏng mới
+  // rơi xuống Gemini + Google Search bên dưới (giữ grounding làm phương án cuối).
+  const rssResult = await monitorRssPath(supabase, rule, ctx, seenTitles, prev);
+  if (rssResult) return rssResult;
 
   // Gọi Gemini (lỗi mạng/quota sẽ THROW → caller xử lý; chỉ nuốt lỗi parse).
   // Log mỗi call vào usage_logs để theo dõi quota (kể cả khi lỗi).
@@ -508,67 +774,23 @@ async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult
     }
   }
 
-  // 2) Rule định kỳ/đặt giờ mà CHƯA gửi được tin thật → gửi 1 tb "trạng thái".
-  // Giảm rác: chỉ gửi fallback nếu đã qua đủ 1 chu kỳ của rule kể từ tb cuối.
-  // Ví dụ rule 1 tiếng → gửi fallback mỗi tiếng (không phải mỗi ngày).
-  // Tin THẬT vẫn luôn được gửi ở nhánh (1) ở trên, không bị ảnh hưởng.
-  // Chế độ "chỉ tin quan trọng" (importantOnly): BỎ HẲN fallback — không tạo "chưa có thay đổi"/
-  // "chưa tìm thấy"/gợi ý liên quan (đây chính là phần "thông báo rác" người dùng muốn tắt).
-  if (inserted === 0 && forceSend && !importantOnly) {
-    const prevMs = prev?.created_at ? Date.parse(prev.created_at) : 0;
-    const ruleInterval = intervalMs(rule.frequency);
-    if (prevMs >= Date.now() - ruleInterval) {
-      // đã có tb trong chu kỳ rule này → im, đợi đủ tần suất rồi mới gửi lại
-      return { inserted, value, note: { title: "", kind: "skipped" } };
-    }
-    const topic = (rule.keyword || rule.title || "thông tin").slice(0, 60);
-    if (prev) {
-      // Có tb trước → "tạm thời chưa có thay đổi". KHÔNG có URL bài mới → cho người dùng
-      // mở lại THÔNG BÁO TRƯỚC ngay trong app (related_notification_id), thay vì link web.
-      inserted += await insertNotif(supabase, rule, {
-        title: `Chưa có thay đổi mới: ${topic}`,
-        content: "Tạm thời chưa tìm thấy thông tin mới theo yêu cầu — chưa có thay đổi so với thông báo trước. Bạn có thể xem lại thông báo gần nhất bên dưới.",
-        details: "",
-        ai_summary: "Chưa có thay đổi so với lần trước.",
-        source: prev.source || "Web",
-        source_url: "",
-        related_notification_id: prev.id,
-        sentiment: "neutral",
-        is_important: false,
-      }, scheduled); // filler chỉ lưu in-app; RIÊNG rule đặt giờ vẫn push (bản tin đúng hẹn)
-      note = { title: `Chưa có thay đổi mới: ${topic}`, kind: "nochange" };
-    } else if (top) {
-      // Chưa có tb nào, nhưng tìm được tin liên quan/gần nhất → gửi như đề xuất.
-      const url = pool.length > 0 ? pool[0].uri : (isUrl(top.source_url) ? top.source_url : "");
-      inserted += await insertNotif(supabase, rule, {
-        title: `Gợi ý liên quan: ${String(top.title ?? topic).slice(0, 120)}`,
-        content: `Chưa tìm thấy thông tin đúng yêu cầu của bạn. Đây là thông tin liên quan/mới nhất tìm được:\n${String(top.content ?? "")}`,
-        details: String(top.details ?? ""),
-        ai_summary: String(top.ai_summary ?? "Thông tin liên quan gần nhất."),
-        source: String(top.source ?? "Web"),
-        source_url: url,
-        sentiment: normSentiment(top.sentiment),
-        is_important: false,
-      }, scheduled); // filler chỉ lưu in-app; RIÊNG rule đặt giờ vẫn push (bản tin đúng hẹn)
-      note = { title: `Gợi ý liên quan: ${String(top.title ?? topic).slice(0, 120)}`, kind: "related" };
-    } else {
-      // Hoàn toàn không có gì.
-      inserted += await insertNotif(supabase, rule, {
-        title: `Chưa tìm thấy thông tin: ${topic}`,
-        content: "Hiện chưa tìm thấy thông tin nào theo yêu cầu của bạn. Hệ thống sẽ tiếp tục theo dõi và cập nhật ở lần quét kế tiếp.",
-        details: "",
-        ai_summary: "Chưa tìm thấy thông tin theo yêu cầu.",
-        source: "Web",
-        source_url: "",
-        sentiment: "neutral",
-        is_important: false,
-      }, scheduled); // filler chỉ lưu in-app; RIÊNG rule đặt giờ vẫn push (bản tin đúng hẹn)
-      note = { title: `Chưa tìm thấy thông tin: ${topic}`, kind: "none" };
-    }
+  // 2) CHƯA gửi được tin thật → fallback "trạng thái" theo luật chung (sendFallback:
+  // chỉ rule định kỳ/đặt giờ, tôn trọng chu kỳ, filler chỉ push khi đặt giờ).
+  if (inserted === 0) {
+    const related: NotifFields | null = top
+      ? {
+          title: String(top.title ?? ""),
+          content: String(top.content ?? ""),
+          details: String(top.details ?? ""),
+          ai_summary: String(top.ai_summary ?? "Thông tin liên quan gần nhất."),
+          source: String(top.source ?? "Web"),
+          source_url: pool.length > 0 ? pool[0].uri : (isUrl(top.source_url) ? top.source_url : ""),
+          sentiment: normSentiment(top.sentiment),
+          is_important: false,
+        }
+      : null;
+    return await sendFallback(supabase, rule, ctx, prev, related, value);
   }
-
-  // Không tạo gì + không phải fallback (rule "theo điều kiện" chưa thỏa) → đánh dấu bỏ qua.
-  if (!note && inserted === 0) note = { title: "", kind: "skipped" };
 
   return { inserted, value, note };
 }
@@ -656,6 +878,56 @@ async function previewGate(supabase: any, rule: Rule): Promise<GatePreview> {
   );
   const avoidTitles = recentRealTitles((existing ?? []).map((n: { title: string }) => n.title));
   const hasPrev = (existing ?? []).length > 0;
+
+  // ĐƯỜNG RSS (giống monitorRule): soi bằng feed + flash-lite — không grounding.
+  try {
+    const rssItems = await fetchRssItems(rule.category);
+    if (rssItems && rssItems.length > 0) {
+      const unseen = rssItems.filter((it) => !seenTitles.has(normTitle(it.title))).slice(0, 25);
+      base.provider = "rss";
+      if (unseen.length === 0) {
+        base.allKind = forceSend ? (hasPrev ? "nochange" : "none") : "skipped";
+        base.importantPushed = scheduled && forceSend;
+        base.importantReason = base.importantPushed
+          ? "Rule đặt giờ: vẫn gửi bản tin fallback tại giờ hẹn."
+          : "Feed không có bài mới (tất cả đã gửi trước đó).";
+        return base;
+      }
+      const pick = await pickRssItemAI(supabase, rule, unseen);
+      const chosen = pick.index >= 0 ? unseen[pick.index] : undefined;
+      if (!chosen) {
+        base.allKind = forceSend ? (hasPrev ? "nochange" : "none") : "skipped";
+        base.importantPushed = scheduled && forceSend;
+        base.importantReason = base.importantPushed
+          ? "Rule đặt giờ: vẫn gửi bản tin fallback tại giờ hẹn."
+          : "Không bài nào trên feed liên quan chủ đề.";
+        return base;
+      }
+      base.found = true;
+      base.candidateTitle = chosen.title;
+      base.value = pick.value;
+      base.fresh = true; // đã lọc unseen từ trước
+      base.isImportant = pick.is_important;
+      base.matchesCondition = pick.matches_condition;
+      base.changed = pick.changed;
+      const condOk = !hasCond || pick.matches_condition;
+      const changeOk = !changeGate || pick.changed;
+      const importantOk = pick.is_important || (hasCond && pick.matches_condition);
+      const realPasses = condOk && changeOk;
+      base.allKind = realPasses ? "real" : (forceSend ? (hasPrev ? "nochange" : "related") : "skipped");
+      base.importantPushed = scheduled ? (realPasses || forceSend) : (realPasses && importantOk);
+      if (!base.importantPushed) {
+        if (!condOk) base.importantReason = "Chưa thỏa điều kiện của rule.";
+        else if (!changeOk) base.importantReason = "Số liệu chưa thay đổi so với lần trước.";
+        else if (!importantOk) base.importantReason = "Tin không quan trọng và không thỏa điều kiện → bị lọc.";
+        else base.importantReason = "Bị lọc.";
+      } else if (scheduled && !realPasses) {
+        base.importantReason = "Rule đặt giờ: gửi fallback (kèm push) tại giờ hẹn dù chưa có tin mới.";
+      }
+      return base;
+    }
+  } catch { /* RSS/AI lỗi → rơi xuống đường grounding bên dưới */ }
+  base.provider = undefined;
 
   // Gọi Gemini (1 call). Lỗi quota/mạng → THROW để caller báo lỗi.
   const gen = await geminiGenerate({

@@ -27,6 +27,14 @@ export interface SchedulableRule {
   frequency?: string;
   run_at?: string | null;
   last_run_at?: string | null;
+  source_type?: string | null;  // 'reminder' = rule nhắc hẹn (migration 0016)
+  remind_at?: string | null;    // thời điểm nhắc (ISO timestamptz)
+}
+
+// Rule nhắc hẹn hợp lệ? (source_type='reminder' + có remind_at parse được)
+export function isReminder(rule: SchedulableRule): boolean {
+  return rule.source_type === "reminder" &&
+    Boolean(rule.remind_at && Number.isFinite(Date.parse(rule.remind_at)));
 }
 
 // Số phút từ 0h theo GIỜ VIỆT NAM (server chạy UTC, VN = UTC+7, không có DST).
@@ -63,6 +71,13 @@ export function isDue(rule: SchedulableRule, nowMs = Date.now()): boolean {
   const interval = intervalMs(rule.frequency);
   const last = rule.last_run_at ? Date.parse(rule.last_run_at) : 0;
   const elapsed = nowMs - last;
+
+  // NHẮC HẸN: tới hạn khi ĐÃ QUA thời điểm nhắc và CHƯA quét lần nào sau mốc đó.
+  // Nhắc muộn vẫn hơn nuốt (không giới hạn catch-up); bắn xong rule tự tắt ở run-monitor.
+  if (isReminder(rule)) {
+    const remind = Date.parse(String(rule.remind_at));
+    return nowMs >= remind && last < remind;
+  }
 
   // Ghim giờ cụ thể: gửi TỪ giờ hẹn (không sớm), lỡ nhịp thì THỬ LẠI các lượt cron sau
   // trong khung catch-up [target, target+4h) cho tới khi quét thành công.

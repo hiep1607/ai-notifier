@@ -203,6 +203,7 @@ export default function RulesScreen() {
     (r) =>
       r.is_active &&
       r.frequency !== "change" &&
+      r.source_type !== "reminder" && // nhắc hẹn không phải rule tin tức
       !(r.run_at ?? "").trim() &&
       !(r.condition ?? "").trim() &&
       r.notify_mode !== "important"

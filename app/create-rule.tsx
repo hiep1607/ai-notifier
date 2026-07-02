@@ -159,6 +159,11 @@ export default function CreateRuleScreen() {
         run_at: r.run_at,
         condition: r.condition,
         notify_mode: important[i] ? "important" : "all",
+        // NHẮC HẸN: chỉ đính kèm 2 cột này khi thật sự là reminder — rule thường không
+        // gửi field nên vẫn tạo được kể cả khi migration 0016 chưa chạy.
+        ...(r.source_type === "reminder" && r.remind_at
+          ? { source_type: "reminder", remind_at: r.remind_at }
+          : {}),
         is_active: true,
         user_id: user.id,
       }))
@@ -191,12 +196,26 @@ export default function CreateRuleScreen() {
 
   const renderRuleCard = (r: RuleDraft, idx: number, total: number) => {
     const cat = findCategory(r.category);
+    const isReminder = r.source_type === "reminder" && r.remind_at;
     const rows: { icon: keyof typeof Ionicons.glyphMap; label: string; value: string }[] = [
       { icon: "pricetag-outline", label: "Tên", value: r.title },
-      { icon: "search-outline", label: "Từ khóa", value: r.keyword },
-      { icon: cat.icon, label: "Danh mục", value: cat.label },
-      { icon: "time-outline", label: "Tần suất", value: formatSchedule(r.frequency, r.run_at) },
     ];
+    if (isReminder) {
+      // Nhắc hẹn: hiện thời điểm nhắc thay cho từ khóa/tần suất (không theo dõi tin).
+      rows.push({
+        icon: "alarm-outline",
+        label: "Nhắc lúc",
+        value: new Date(r.remind_at!).toLocaleString("vi-VN", {
+          hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit", year: "numeric",
+        }),
+      });
+    } else {
+      rows.push(
+        { icon: "search-outline", label: "Từ khóa", value: r.keyword },
+        { icon: cat.icon, label: "Danh mục", value: cat.label },
+        { icon: "time-outline", label: "Tần suất", value: formatSchedule(r.frequency, r.run_at) },
+      );
+    }
     if (r.sources) rows.push({ icon: "globe-outline", label: "Nguồn", value: r.sources });
     if (r.condition) rows.push({ icon: "flash-outline", label: "Điều kiện", value: r.condition });
 

@@ -59,6 +59,7 @@ const PROVIDER_LABEL: Record<string, string> = {
   weather: "🌤 Open-Meteo (API thời tiết)",
   crypto: "🪙 CoinGecko (API giá coin)",
   fx: "💱 ExchangeRate-API (tỷ giá)",
+  rss: "📰 RSS báo VN + flash-lite (không grounding)",
 };
 
 function formatGate(g: GatePreview): string {

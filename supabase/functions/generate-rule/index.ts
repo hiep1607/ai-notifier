@@ -28,6 +28,12 @@ Một rule hoàn chỉnh gồm các trường:
       HOẶC định kỳ ĐỊNH KỲ (không phải "change", không có condition) trên chủ đề ÍT BIẾN ĐỘNG (vd thời tiết 1 thành phố, giá 1 mặt hàng ổn định) → hay phải báo "chưa có thay đổi".
     * THẤP khi: có condition cụ thể (chỉ báo khi chạm ngưỡng), HOẶC chủ đề hẹp & rõ ràng.
 - noise_reason: 1 câu NGẮN tiếng Việt giải thích vì sao noise_risk như vậy (chỉ cần khi "high"; "low" thì để "").
+- source_type: "reminder" nếu người dùng muốn ĐƯỢC NHẮC một việc vào thời điểm cụ thể (deadline, sự kiện, cuộc hẹn, sinh nhật...) — KHÔNG phải theo dõi tin tức trên mạng. Các trường hợp còn lại để "".
+- remind_at: CHỈ dùng khi source_type="reminder" — thời điểm nhắc dạng "YYYY-MM-DDTHH:mm" GIỜ VIỆT NAM (vd "2026-07-20T09:00"). Không nói giờ → "08:00". Không nói năm → năm hiện tại; nếu ngày đó ĐÃ QUA thì lấy năm sau. Người dùng KHÔNG nêu ngày cụ thể → need_info hỏi lại ngày. Không phải reminder → để "".
+
+NHẮC HẸN (source_type="reminder"):
+- title = nội dung cần nhắc (ngắn gọn), keyword = giống title, category = "other", frequency = "1440", condition = "", run_at = "", noise_risk = "low".
+- Nhắc 1 LẦN vào remind_at rồi hệ thống tự tắt. Nếu người dùng muốn nhắc LẶP LẠI hằng ngày/tuần → đó là rule đặt giờ thường (run_at + frequency), KHÔNG phải reminder.
 
 HAI KIỂU THEO DÕI — phải xác định rõ người dùng muốn kiểu nào:
   (1) ĐỊNH KỲ: báo tin mới đều đặn. → frequency = số phút (≥30), condition = "".
@@ -85,7 +91,15 @@ User: "mỗi sáng 7h báo giá vàng và giá bitcoin"
 
 VÍ DỤ F — NHIỀU chủ đề nhưng THIẾU tần suất/kiểu → HỎI cho cả cụm:
 User: "theo dõi giá vàng và bitcoin"
-→ { "status": "need_info", "message": "Bạn muốn theo dõi giá vàng và bitcoin kiểu nào: báo định kỳ (vd mỗi sáng, mỗi giờ...) hay chỉ báo khi giá biến động/chạm mức nhất định? Áp dụng cho cả hai nhé." }`;
+→ { "status": "need_info", "message": "Bạn muốn theo dõi giá vàng và bitcoin kiểu nào: báo định kỳ (vd mỗi sáng, mỗi giờ...) hay chỉ báo khi giá biến động/chạm mức nhất định? Áp dụng cho cả hai nhé." }
+
+VÍ DỤ G — NHẮC HẸN (giả sử hôm nay là 2026-07-02):
+User: "nhắc tôi nộp bài tập lớn ngày 20/7 lúc 9h sáng"
+→ { "status": "ready", "message": "Đã tạo nhắc hẹn:", "rules": [ { "title": "Nộp bài tập lớn", "description": "Nhắc nộp bài tập lớn lúc 9h sáng 20/7.", "keyword": "nộp bài tập lớn", "category": "other", "sources": "", "frequency": "1440", "run_at": "", "condition": "", "noise_risk": "low", "noise_reason": "", "source_type": "reminder", "remind_at": "2026-07-20T09:00" } ] }
+
+VÍ DỤ H — nhắc hẹn nhưng THIẾU ngày:
+User: "nhắc tôi đi khám răng"
+→ { "status": "need_info", "message": "Bạn muốn được nhắc đi khám răng vào ngày nào, lúc mấy giờ?" }`;
 
 function asText(v: unknown): string {
   if (Array.isArray(v)) return v.join(", ");
@@ -109,9 +123,13 @@ Deno.serve(async (req) => {
       )
       .join("\n");
 
+    // Ngày giờ VN hiện tại — để AI quy đổi "ngày 20/7", "thứ 6 tuần này"... ra remind_at đúng.
+    const vnNow = new Date(Date.now() + 7 * 3600000);
+    const nowTxt = `${vnNow.toISOString().slice(0, 16).replace("T", " ")} (giờ Việt Nam)`;
+
     const { text } = await geminiGenerate({
       system: RULE_SYSTEM,
-      user: `${convo}\n\nDựa trên hội thoại trên, trả về JSON đúng định dạng.`,
+      user: `(Bây giờ là ${nowTxt}.)\n\n${convo}\n\nDựa trên hội thoại trên, trả về JSON đúng định dạng.`,
       json: true,
       temperature: 0.3,
       // Task này chỉ trích xuất JSON (không cần grounding) → dùng model rẻ hơn.
@@ -136,6 +154,12 @@ Deno.serve(async (req) => {
         const risk = asText(r.noise_risk).toLowerCase() === "high" && freq !== "change" && !cond
           ? "high"
           : "low";
+        // NHẮC HẸN: chỉ nhận khi remind_at parse được; lưu kèm offset +07:00 (giờ VN)
+        // để timestamptz trong DB đúng thời điểm tuyệt đối.
+        const rawRemind = asText(r.remind_at).trim();
+        const isRem = asText(r.source_type).toLowerCase() === "reminder" &&
+          /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(rawRemind) &&
+          Number.isFinite(Date.parse(`${rawRemind.slice(0, 16)}:00+07:00`));
         return {
           title: asText(r.title),
           description: asText(r.description),
@@ -145,8 +169,10 @@ Deno.serve(async (req) => {
           frequency: freq,
           run_at: asText(r.run_at),
           condition: cond,
-          noise_risk: risk,
-          noise_reason: risk === "high" ? asText(r.noise_reason) : "",
+          noise_risk: isRem ? "low" : risk,
+          noise_reason: !isRem && risk === "high" ? asText(r.noise_reason) : "",
+          source_type: isRem ? "reminder" : "",
+          remind_at: isRem ? `${rawRemind.slice(0, 16)}:00+07:00` : "",
         };
       }).filter((r) => r.keyword); // bỏ rule rỗng (thiếu keyword)
 

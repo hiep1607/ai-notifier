@@ -202,6 +202,26 @@ describe("pickFreshItem — chọn bài chưa trùng (sửa gốc vòng lặp fi
   });
 });
 
+describe("isDue — rule NHẮC HẸN (reminder)", () => {
+  const now = Date.parse("2026-07-20T02:00:00Z"); // 09:00 VN 20/7
+
+  it("tới hạn khi ĐÃ QUA remind_at và chưa quét sau mốc đó; nhắc muộn vẫn bắn", () => {
+    const r = { frequency: "1440", source_type: "reminder", remind_at: "2026-07-20T09:00:00+07:00" };
+    expect(isDue({ ...r, last_run_at: "2026-07-19T00:00:00Z" }, now)).toBe(true);       // đúng hẹn
+    expect(isDue({ ...r, last_run_at: "2026-07-19T00:00:00Z" }, now - 3600000)).toBe(false); // chưa tới giờ
+    expect(isDue({ ...r, last_run_at: null }, now + 26 * 3600000)).toBe(true);          // muộn 1 ngày vẫn nhắc
+  });
+
+  it("đã quét SAU mốc hẹn → không bắn lại", () => {
+    const r = { frequency: "1440", source_type: "reminder", remind_at: "2026-07-20T09:00:00+07:00" };
+    expect(isDue({ ...r, last_run_at: "2026-07-20T02:05:00Z" }, now + 3600000)).toBe(false);
+  });
+
+  it("reminder thiếu/hỏng remind_at → rơi về lịch thường (không crash)", () => {
+    expect(isDue({ frequency: "1440", source_type: "reminder", remind_at: "ngày mai", last_run_at: null }, now)).toBe(true); // fallback chu kỳ thuần: chưa quét lần nào → due
+  });
+});
+
 describe("detectSourceType — router chọn nguồn dữ liệu", () => {
   it("thời tiết → weather", () => {
     expect(detectSourceType("dự báo thời tiết Thanh Hóa hôm nay")).toBe("weather");

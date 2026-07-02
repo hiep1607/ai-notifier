@@ -58,6 +58,7 @@ pg_cron (mỗi 15 phút) → run-monitor (quét nền, lọc rule tới hạn th
 - [x] **Chạy SQL `0012_admin_logs.sql`** (bảng `usage_logs` + `cron_runs`) — user đã chạy; Quota + Lịch sử cron đã hiện số liệu.
 - [ ] **Chạy SQL `0013_cron_detail.sql`** (cột `detail` cho cron_runs) — để bấm 1 dòng cron xem "đã quét rule nào". Chưa chạy thì vẫn ghi log bình thường (fallback bỏ detail), chỉ là dòng mở rộng báo "không quét rule nào".
 - [ ] **Chạy SQL `0015_rule_notify_mode.sql`** (cột `notify_mode` cho rules) — bật chế độ "chỉ tin quan trọng" (chống thông báo rác). Chưa chạy thì nút đổi chế độ ở chi tiết rule sẽ báo "cần chạy migration 0015"; rule mới vẫn tạo bình thường (mặc định 'all').
+- [ ] **Chạy SQL `0016_rule_reminder.sql`** (cột `source_type` + `remind_at`) — bật tính năng NHẮC HẸN ("nhắc tôi X ngày 20/7"). Chưa chạy thì tạo rule nhắc hẹn sẽ lỗi cột không tồn tại; rule thường không ảnh hưởng.
 
 ## 🗺 KẾ HOẠCH: Các loại theo dõi tiếp theo (lập 2026-07-02)
 > Ý tưởng xương sống: hiện MỌI rule đều đi qua Gemini + Google Search grounding — vừa tốn quota
@@ -76,14 +77,14 @@ pg_cron (mỗi 15 phút) → run-monitor (quét nền, lọc rule tới hạn th
 - [x] **Điều kiện chấm trên SỐ THẬT**: rule có condition → flash-lite (KHÔNG grounding, không đụng quota 1.500) chấm matches trên giá trị API; chống lặp trigger = cooldown 6h + bỏ cooldown khi biến động ≥3%. Rule định kỳ thường mode "chỉ tin quan trọng" → chỉ gửi khi đổi ≥1%.
 - [x] Soi bộ lọc (Trang test) hiện **nhãn nguồn** (🌤 Open-Meteo / 🪙 CoinGecko / 💱 er-api / 🔍 Gemini search) — soi rule provider giờ 0 quota. Đã verify 3 API thật (Thanh Hóa 27°C ✓, BTC $61.4k ✓, VND 26.251 ✓). 94 test pass (thêm 11: detect/extract/coin/WMO/compose/significantChange).
 
-### Pha C — Tin tức qua RSS (né grounding cho rule 'news')
-- [ ] Danh sách RSS báo VN (VnExpress, Tuổi Trẻ, Thanh Niên, CafeF, VietnamNet...) + match keyword.
-- [ ] Gemini flash-lite TÓM TẮT bài đã match (không grounding → không đụng quota 1.500; rẻ).
-- [ ] URL bài = URL thật từ feed → hết hẳn chuyện link sai/bịa; dedup theo GUID feed (chuẩn hơn tiêu đề).
+### Pha C — Tin tức qua RSS ✅ XONG 2026-07-02
+- [x] `_shared/rss.ts`: parser RSS thuần (regex, edge runtime không có DOMParser) + feed map theo category (VnExpress chuyên mục + CafeF thị trường + Tuổi Trẻ; đã verify sống). `sourceFromLink` map hostname → tên báo.
+- [x] run-monitor: đường RSS chạy TRƯỚC grounding cho mọi rule search: fetch feed song song → lọc bài CHƯA GỬI (dedup tiêu đề feed, ổn định tuyệt đối) → flash-lite CHỌN bài hợp chủ đề + tóm tắt (1 call, KHÔNG grounding) → link bài = link THẬT từ feed. Feed không có gì mới / không bài liên quan → filler theo luật chung, KHÔNG đốt grounding. Chỉ khi hạ tầng RSS/flash-lite hỏng mới rơi xuống Gemini + Google Search (grounding thành phương án cuối). Refactor: `sendFallback` dùng chung 2 đường.
+- [x] Soi bộ lọc hiện nhãn "📰 RSS báo VN". → Quota grounding 1.500/ngày giờ gần như chỉ còn dùng khi RSS sập.
 
-### Pha D — Loại rule mới không cần nguồn tin
-- [ ] **Nhắc hẹn / đếm ngược (reminder)**: "nhắc deadline bài tập 20/7", "còn 3 ngày tới X" — không gọi AI khi chạy, chỉ lịch + push. (Suggestion chip "Thông báo deadline bài tập" đã hứa sẵn tính năng này mà chưa có thật.)
-- [ ] **Bản tin gộp buổi sáng (digest)**: 1 push 7h30 gộp thời tiết + giá + tin của mọi rule trong ngày; từng rule đánh dấu "gộp vào digest" thay vì push lẻ. (Backlog cũ "digest" nằm ở đây.)
+### Pha D — Loại rule mới ✅ Nhắc hẹn XONG 2026-07-02 (digest còn lại)
+- [x] **Nhắc hẹn (reminder)**: migration `0016_rule_reminder.sql` (cột `source_type` + `remind_at` — CHỜ USER CHẠY). generate-rule nhận diện "nhắc tôi X ngày 20/7 lúc 9h" (prompt được tiêm ngày giờ VN hiện tại để quy đổi; thiếu ngày thì hỏi lại; lưu ISO +07:00). isDue: tới hạn khi QUA remind_at & chưa quét sau mốc (nhắc muộn vẫn nhắc). run-monitor: bắn push "⏰ Nhắc hẹn" (0 call AI, is_important, nêu độ trễ nếu muộn >15') rồi TỰ TẮT rule. Client: card preview hiện "Nhắc lúc"; insert chỉ đính kèm 2 cột khi là reminder (rule thường không đụng cột mới → chưa chạy 0016 vẫn tạo rule thường bình thường); banner lọc rác bỏ qua reminder.
+- [ ] **Bản tin gộp buổi sáng (digest)**: 1 push 7h30 gộp thời tiết + giá + tin của mọi rule trong ngày; từng rule đánh dấu "gộp vào digest" thay vì push lẻ. *(phần cuối còn lại của Pha D — cần chốt UX: giờ digest per-user hay per-rule)*
 
 ### Pha E — Để sau (khó / rủi ro)
 - [ ] Theo dõi URL cụ thể (fetch trang + Gemini trích giá trị, báo khi đổi) — cho trang không có RSS/API.

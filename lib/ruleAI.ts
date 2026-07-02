@@ -14,6 +14,8 @@ export interface RuleDraft {
   condition: string;
   noise_risk?: "low" | "high"; // AI chấm: "high" = chủ đề dễ ra nhiều thông báo ít giá trị
   noise_reason?: string;       // 1 câu giải thích vì sao (chỉ khi "high")
+  source_type?: string;        // "reminder" = nhắc hẹn 1 lần (không theo dõi tin); "" = thường
+  remind_at?: string;          // thời điểm nhắc ISO (+07:00) — chỉ khi reminder
 }
 
 export type RuleAIResult =
