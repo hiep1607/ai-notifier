@@ -124,6 +124,7 @@ export interface GatePreview {
   gateCheck: true;
   keyword: string;
   currentMode: string;       // "all" | "important" — chế độ rule đang đặt
+  provider?: string;         // nguồn chuyên biệt đã dùng: weather/crypto/fx ("" = Gemini search)
   found: boolean;            // Gemini có trả tin nào không
   candidateTitle: string;
   value: string;

@@ -55,9 +55,16 @@ function formatRunResult(r: RunResult, prefix?: string): string {
 }
 
 // Diễn giải kết quả "soi bộ lọc rác": so sánh quyết định của 2 chế độ thông báo.
+const PROVIDER_LABEL: Record<string, string> = {
+  weather: "🌤 Open-Meteo (API thời tiết)",
+  crypto: "🪙 CoinGecko (API giá coin)",
+  fx: "💱 ExchangeRate-API (tỷ giá)",
+};
+
 function formatGate(g: GatePreview): string {
   const modeLabel = g.currentMode === "important" ? "Chỉ tin quan trọng" : "Đầy đủ";
   const lines: string[] = [`Soi bộ lọc "${g.keyword}" (chế độ đang đặt: ${modeLabel})`];
+  lines.push(`Nguồn: ${g.provider ? PROVIDER_LABEL[g.provider] ?? g.provider : "🔍 Gemini + Google Search"}`);
 
   if (!g.found) {
     lines.push("Gemini không tìm thấy tin nào.");

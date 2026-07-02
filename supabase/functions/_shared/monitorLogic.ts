@@ -131,6 +131,165 @@ export function isTooOld(publishedDate: string | undefined, maxDays: number, now
   return nowMs - t > maxDays * 86400000;
 }
 
+// ---------- ROUTER NGUỒN DỮ LIỆU (Pha A) ----------
+// Mỗi loại theo dõi có nguồn CHUYÊN BIỆT (API thật, 0 quota grounding); "search" =
+// Gemini + Google Search như cũ, đồng thời là fallback khi provider lỗi.
+// Phân loại bằng heuristic từ keyword — chạy lúc quét nên RULE CŨ tự hưởng, không cần migration.
+export type SourceType = "search" | "weather" | "crypto" | "fx";
+
+// Coin phổ biến → id CoinGecko. Chỉ nhận khi keyword có ý "giá" (tránh cướp rule tin tức).
+export const COIN_MAP: { re: RegExp; id: string; name: string }[] = [
+  { re: /\b(btc|bitcoin)\b/i, id: "bitcoin", name: "Bitcoin" },
+  { re: /\b(eth|ethereum)\b/i, id: "ethereum", name: "Ethereum" },
+  { re: /\b(bnb)\b/i, id: "binancecoin", name: "BNB" },
+  { re: /\b(sol|solana)\b/i, id: "solana", name: "Solana" },
+  { re: /\b(xrp|ripple)\b/i, id: "ripple", name: "XRP" },
+  { re: /\b(doge|dogecoin)\b/i, id: "dogecoin", name: "Dogecoin" },
+  { re: /\b(ada|cardano)\b/i, id: "cardano", name: "Cardano" },
+  { re: /\b(ton|toncoin)\b/i, id: "the-open-network", name: "Toncoin" },
+];
+
+export function matchCoin(keyword: string): { id: string; name: string } | null {
+  const hit = COIN_MAP.find((c) => c.re.test(keyword));
+  return hit ? { id: hit.id, name: hit.name } : null;
+}
+
+export function detectSourceType(keyword?: string): SourceType {
+  const k = (keyword ?? "").toLowerCase();
+  if (!k.trim()) return "search";
+  if (/thời tiết|thoi tiet|dự báo thời tiết|nhiệt độ|nhiet do|weather/.test(k)) return "weather";
+  // crypto/fx: phải có ý "giá/tỷ giá" — "tin tức bitcoin" vẫn là rule TIN TỨC (search).
+  const priceIntent = /giá|gia\b|price|tỷ giá|ty gia/.test(k);
+  if (priceIntent && matchCoin(k)) return "crypto";
+  if (/tỷ giá|ty gia|usd\/vnd|đô la mỹ|do la my|exchange rate/.test(k)) return "fx";
+  return "search";
+}
+
+// Tách ĐỊA DANH khỏi keyword thời tiết: "dự báo thời tiết Thanh Hóa hôm nay" → "Thanh Hóa".
+// Trả "" nếu không còn gì (caller sẽ fallback search).
+export function extractWeatherLocation(keyword: string): string {
+  return keyword
+    .replace(/dự báo|du bao|thời tiết|thoi tiet|nhiệt độ|nhiet do|weather|forecast|hôm nay|hom nay|ngày mai|ngay mai|tuần này|tuan nay|hằng ngày|hang ngay|mỗi ngày|moi ngay|khu vực|khu vuc|thành phố|thanh pho|tại|\bở\b|\bo\b|có mưa không|co mua khong/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// Mã thời tiết WMO (Open-Meteo trả về) → mô tả tiếng Việt.
+export function wmoDesc(code: number): string {
+  if (code === 0) return "Trời quang";
+  if (code === 1) return "Trời quang, ít mây";
+  if (code === 2) return "Mây rải rác";
+  if (code === 3) return "Nhiều mây";
+  if (code === 45 || code === 48) return "Sương mù";
+  if (code >= 51 && code <= 57) return "Mưa phùn";
+  if (code >= 61 && code <= 67) return "Mưa";
+  if (code >= 71 && code <= 77) return "Tuyết";
+  if (code >= 80 && code <= 82) return "Mưa rào";
+  if (code === 85 || code === 86) return "Mưa tuyết";
+  if (code === 95) return "Dông";
+  if (code === 96 || code === 99) return "Dông kèm mưa đá";
+  return "Không rõ";
+}
+
+export function fmtNum(n: number, digits = 0): string {
+  return n.toLocaleString("vi-VN", { maximumFractionDigits: digits, minimumFractionDigits: 0 });
+}
+
+// Ngày dd/MM theo giờ VN — gắn vào tiêu đề bản tin cho unique theo ngày.
+export function vnDateStr(nowMs = Date.now()): string {
+  const vn = new Date(nowMs + 7 * 3600000);
+  return `${String(vn.getUTCDate()).padStart(2, "0")}/${String(vn.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+// Biến động ĐÁNG KỂ giữa 2 giá trị dạng "12345.6 USD"? Không parse được số → coi là ĐỔI
+// (an toàn: thà báo thừa 1 lần lúc chuyển định dạng còn hơn nuốt tin).
+export function significantChange(prev: string | null | undefined, cur: string, pct = 1): boolean {
+  const p = parseFloat(String(prev ?? "").match(/-?\d+(\.\d+)?/)?.[0] ?? "");
+  const c = parseFloat(String(cur).match(/-?\d+(\.\d+)?/)?.[0] ?? "");
+  if (!Number.isFinite(p) || !Number.isFinite(c)) return true;
+  if (p === 0) return c !== 0;
+  return (Math.abs(c - p) / Math.abs(p)) * 100 >= pct;
+}
+
+// ---------- COMPOSE BẢN TIN PROVIDER (Pha B — thuần, test được) ----------
+
+export interface ProviderNotif {
+  title: string;
+  content: string;
+  details: string;
+  ai_summary: string;
+  source: string;
+  source_url: string;
+  value: string; // giá trị máy-đọc-được để so biến động lần sau (số đứng đầu)
+}
+
+export interface WeatherDaily {
+  code: number;
+  tmax: number;
+  tmin: number;
+  rainPct: number;
+  windMax: number;
+}
+
+export function composeWeatherNotif(
+  place: string,
+  curTemp: number,
+  curCode: number,
+  today: WeatherDaily,
+  tomorrow: WeatherDaily | null,
+  nowMs = Date.now(),
+): ProviderNotif {
+  const desc = wmoDesc(today.code);
+  const range = `${fmtNum(today.tmin)}–${fmtNum(today.tmax)}°C`;
+  const line = (d: WeatherDaily) =>
+    `${wmoDesc(d.code)}, ${fmtNum(d.tmin)}–${fmtNum(d.tmax)}°C, xác suất mưa ${fmtNum(d.rainPct)}%, gió tối đa ${fmtNum(d.windMax)} km/h`;
+  return {
+    title: `Thời tiết ${place} ${vnDateStr(nowMs)}: ${desc}, ${range}`,
+    content: `Hiện tại ${fmtNum(curTemp)}°C (${wmoDesc(curCode).toLowerCase()}). Hôm nay: ${line(today)}.`,
+    details: tomorrow ? `Ngày mai: ${line(tomorrow)}.` : "",
+    ai_summary: `${place}: ${desc}, ${range}, mưa ${fmtNum(today.rainPct)}%.`,
+    source: "Open-Meteo",
+    source_url: "https://open-meteo.com/",
+    value: `${curTemp}°C; ${today.tmin}-${today.tmax}°C; mưa ${today.rainPct}%; ${desc}`,
+  };
+}
+
+export function composeCryptoNotif(
+  coinId: string,
+  name: string,
+  usd: number,
+  vnd: number | null,
+  chg24: number | null,
+): ProviderNotif {
+  const digits = usd < 1 ? 4 : usd < 100 ? 2 : 0;
+  const chgTxt = chg24 == null ? "" : ` (${chg24 >= 0 ? "+" : ""}${chg24.toFixed(2)}% 24h)`;
+  return {
+    title: `${name}: ${fmtNum(usd, digits)} USD${chgTxt}`,
+    content: `Giá ${name} hiện ${fmtNum(usd, digits)} USD${vnd != null ? ` (~${fmtNum(vnd)} đ)` : ""}${chg24 != null ? `, thay đổi 24 giờ ${chg24 >= 0 ? "+" : ""}${chg24.toFixed(2)}%` : ""}. Số liệu trực tiếp từ CoinGecko.`,
+    details: "",
+    ai_summary: `${name} ${fmtNum(usd, digits)} USD${chgTxt}.`,
+    source: "CoinGecko",
+    source_url: `https://www.coingecko.com/en/coins/${coinId}`,
+    value: `${usd} USD`,
+  };
+}
+
+export function composeFxNotif(vndPerUsd: number, prevValue?: string | null): ProviderNotif {
+  const prevNum = parseFloat(String(prevValue ?? "").match(/-?\d+(\.\d+)?/)?.[0] ?? "");
+  const diff = Number.isFinite(prevNum) && prevNum > 0
+    ? ` (lần trước ${fmtNum(prevNum)} đ, ${vndPerUsd >= prevNum ? "+" : ""}${fmtNum(vndPerUsd - prevNum)} đ)`
+    : "";
+  return {
+    title: `Tỷ giá USD/VND: ${fmtNum(vndPerUsd)} đ`,
+    content: `1 USD đổi được khoảng ${fmtNum(vndPerUsd)} đồng${diff}. Tỷ giá THAM KHẢO thị trường (không phải giá niêm yết ngân hàng).`,
+    details: "",
+    ai_summary: `USD/VND ${fmtNum(vndPerUsd)} đ${diff ? " — có thay đổi so với lần trước" : ""}.`,
+    source: "ExchangeRate-API",
+    source_url: "https://open.er-api.com/",
+    value: `${vndPerUsd} VND`,
+  };
+}
+
 // Item tối thiểu mà bộ chọn cần (NewsItem đầy đủ ở run-monitor thỏa interface này).
 export interface PickableItem {
   title?: string;

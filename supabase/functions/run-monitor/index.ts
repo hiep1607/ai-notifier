@@ -29,7 +29,12 @@ import {
   normVal,
   recentRealTitles,
   pickFreshItem,
+  detectSourceType,
+  significantChange,
+  type SourceType,
+  type ProviderNotif,
 } from "../_shared/monitorLogic.ts";
+import { fetchWeatherNotif, fetchCryptoNotif, fetchFxNotif } from "../_shared/providers.ts";
 
 // Lỗi hết quota / quá tải tạm thời từ Gemini → nên DỪNG sớm thay vì đốt thêm request.
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -331,8 +336,92 @@ async function maybeAlertQuota(supabase: any, callsThisRun: number) {
   } catch { /* usage_logs chưa có / lỗi phụ → bỏ qua */ }
 }
 
+// ---- ROUTER PROVIDER (Pha A+B): nguồn dữ liệu chuyên biệt, 0 quota grounding ----
+
+// Lấy bản tin từ provider tương ứng. THROW nếu lỗi → caller fallback về search.
+function fetchProviderNotif(rule: Rule, srcType: SourceType): Promise<ProviderNotif> {
+  if (srcType === "weather") return fetchWeatherNotif(rule.keyword);
+  if (srcType === "crypto") return fetchCryptoNotif(rule.keyword);
+  return fetchFxNotif(rule.last_value);
+}
+
+// Chấm điều kiện tự do ("khi giá vượt 80 triệu"...) trên SỐ THẬT từ provider bằng
+// flash-lite (KHÔNG grounding → không đụng quota 1.500; rẻ). Lỗi → throw → fallback search.
+// deno-lint-ignore no-explicit-any
+async function evalConditionAI(supabase: any, rule: Rule, currentValue: string): Promise<boolean> {
+  try {
+    const { text } = await geminiGenerate({
+      system: "Bạn đánh giá điều kiện số liệu. Chỉ trả JSON thuần, không giải thích.",
+      user: `Điều kiện người dùng: "${rule.condition}".\nGiá trị HIỆN TẠI (số liệu thật từ API): "${currentValue}".\nGiá trị lần trước: "${rule.last_value?.trim() || "chưa có"}".\nĐiều kiện đã THỎA chưa? Trả JSON: {"matches": true/false}`,
+      json: true,
+      temperature: 0,
+      model: "gemini-2.5-flash-lite",
+    });
+    await logUsage(supabase, rule.id, true);
+    const d = parseJsonLoose<{ matches?: unknown }>(text);
+    return toBool(d?.matches);
+  } catch (e) {
+    await logUsage(supabase, rule.id, false, (e as Error).message);
+    throw e;
+  }
+}
+
+// Quét 1 rule bằng PROVIDER: dữ liệu chính xác từ API thật, bản tin dựng bằng template
+// (rule không điều kiện thì 0 call AI). Cổng gửi:
+//  - có condition  → chỉ gửi khi AI chấm THỎA trên số thật; chống lặp trigger bằng
+//                    cooldown 6h + bỏ cooldown nếu biến động ≥3%.
+//  - đặt giờ       → luôn gửi bản tin (lịch hẹn).
+//  - định kỳ thường→ gửi mỗi kỳ; nếu rule ở chế độ "chỉ tin quan trọng" thì chỉ gửi khi
+//                    số liệu đổi ≥1% so với lần trước.
+// deno-lint-ignore no-explicit-any
+async function monitorProvider(supabase: any, rule: Rule, srcType: SourceType): Promise<MonitorRuleResult> {
+  const p = await fetchProviderNotif(rule, srcType);
+  const hasCond = Boolean(rule.condition && rule.condition.trim());
+  const scheduled = isScheduled(rule);
+  const skipped: MonitorRuleResult = { inserted: 0, value: p.value, note: { title: "", kind: "skipped" } };
+
+  if (hasCond) {
+    const matches = await evalConditionAI(supabase, rule, p.value);
+    if (!matches) return skipped; // chưa thỏa → im (baseline vẫn cập nhật theo value trả về)
+    // Điều kiện vẫn đang thỏa liên tục → không bắn lại mỗi lượt quét: cooldown 6h,
+    // trừ khi biến động ≥3% so với lần trước (tin lớn thì không đợi).
+    const { data: prevRows } = await supabase
+      .from("notifications").select("created_at").eq("rule_id", rule.id)
+      .order("created_at", { ascending: false }).limit(1);
+    const prevMs = prevRows?.[0]?.created_at ? Date.parse(prevRows[0].created_at) : 0;
+    const recentAlert = prevMs > Date.now() - 6 * 3600000;
+    if (recentAlert && !significantChange(rule.last_value, p.value, 3)) return skipped;
+  } else if (!scheduled && rule.notify_mode === "important") {
+    // Định kỳ thường + chế độ "chỉ tin quan trọng": số liệu gần như đứng yên thì im.
+    if (!significantChange(rule.last_value, p.value, 1)) return skipped;
+  }
+
+  const inserted = await insertNotif(supabase, rule, {
+    title: p.title,
+    content: p.content,
+    details: p.details,
+    ai_summary: p.ai_summary,
+    source: p.source,
+    source_url: p.source_url,
+    sentiment: "neutral",
+    is_important: hasCond, // chạm điều kiện người dùng đặt = tin quan trọng
+  });
+  return { inserted, value: p.value, note: { title: p.title, kind: "real" } };
+}
+
 // deno-lint-ignore no-explicit-any
 async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult> {
+  // ROUTER: rule số liệu (thời tiết/crypto/tỷ giá) đi đường provider — chính xác,
+  // 0 quota grounding. Provider lỗi (API sập, không nhận diện được...) → fallback search.
+  const srcType = detectSourceType(rule.keyword);
+  if (srcType !== "search") {
+    try {
+      return await monitorProvider(supabase, rule, srcType);
+    } catch (e) {
+      console.log(`Provider ${srcType} lỗi (${(e as Error).message}) → fallback Gemini search.`);
+    }
+  }
+
   const hasCond = Boolean(rule.condition && rule.condition.trim());
   // KHÔNG có điều kiện (định kỳ / đặt giờ) → LUÔN gửi 1 tb khi tới hạn, kể cả khi
   // không tìm thấy tin mới. CÓ điều kiện ("theo đk") → chỉ gửi khi thỏa, không thì im.
@@ -491,6 +580,7 @@ interface GatePreview {
   gateCheck: true;
   keyword: string;
   currentMode: string;       // notify_mode hiện tại của rule
+  provider?: string;         // nguồn dữ liệu đã dùng: weather/crypto/fx (không có = Gemini search)
   found: boolean;            // Gemini có trả tin nào không
   candidateTitle: string;
   value: string;
@@ -526,6 +616,36 @@ async function previewGate(supabase: any, rule: Rule): Promise<GatePreview> {
     importantPushed: false,
     importantReason: "",
   };
+
+  // ROUTER: rule số liệu → soi bằng PROVIDER (giống monitorRule; 0 quota grounding).
+  const srcType = detectSourceType(rule.keyword);
+  if (srcType !== "search") {
+    try {
+      const p = await fetchProviderNotif(rule, srcType);
+      base.provider = srcType;
+      base.found = true;
+      base.candidateTitle = p.title;
+      base.value = p.value;
+      base.fresh = true;
+      base.changed = significantChange(rule.last_value, p.value, 1);
+      if (hasCond) {
+        const matches = await evalConditionAI(supabase, rule, p.value);
+        base.matchesCondition = matches;
+        base.isImportant = matches;
+        base.allKind = matches ? "real" : "skipped";
+        base.importantPushed = matches;
+        base.importantReason = matches ? "" : "Chưa thỏa điều kiện (chấm trên số thật từ API).";
+      } else {
+        base.matchesCondition = true;
+        base.allKind = "real";
+        base.importantPushed = scheduled || base.changed;
+        base.importantReason = base.importantPushed
+          ? ""
+          : "Số liệu chưa đổi ≥1% → chế độ 'chỉ tin quan trọng' im (chế độ Đầy đủ vẫn gửi).";
+      }
+      return base;
+    } catch { /* provider lỗi → rơi xuống đường Gemini search bên dưới */ }
+  }
 
   // Lấy tiêu đề đã có TRƯỚC khi gọi Gemini (giống monitorRule): dedup + đưa vào prompt để né.
   const { data: existing } = await supabase

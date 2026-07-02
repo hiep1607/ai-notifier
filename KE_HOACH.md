@@ -65,15 +65,16 @@ pg_cron (mỗi 15 phút) → run-monitor (quét nền, lọc rule tới hạn th
 > run-monitor thành ROUTER — mỗi loại có nguồn dữ liệu CHUYÊN BIỆT (API thật, 0 quota grounding),
 > Gemini search chỉ là fallback cho chủ đề tự do.
 
-### Pha A — Nền tảng router (làm trước, mọi pha sau đứng trên nó)
-- [ ] Migration 0016: cột `rules.source_type` text default 'search' ('search' | 'weather' | 'crypto' | 'fx' | 'rss' | 'reminder').
-- [ ] generate-rule: AI phân loại rule vào source_type lúc tạo (thời tiết→weather, BTC/ETH→crypto, tỷ giá→fx, nhắc hẹn→reminder, còn lại→search). Rule cũ giữ 'search'.
-- [ ] run-monitor: switch theo source_type; provider lỗi → fallback 'search' (không chết rule).
+### Pha A — Nền tảng router ✅ XONG 2026-07-02
+- [x] **KHÔNG cần migration** (đổi so với kế hoạch): phân loại bằng `detectSourceType(keyword)` — hàm thuần chạy LÚC QUÉT nên rule cũ tự hưởng, user khỏi chạy SQL. Cột `source_type` override để dành khi cần (UI chọn tay / loại rss·reminder sau).
+- [x] run-monitor router: weather/crypto/fx → provider; lỗi → fallback 'search' (không chết rule). Quy tắc chống-cướp-rule: crypto/fx chỉ nhận khi keyword có ý "giá/tỷ giá" ("tin tức bitcoin" vẫn là rule tin tức).
 
-### Pha B — Provider 0-quota cho dữ liệu SỐ (giá trị cao nhất / công ít nhất)
-- [ ] **Thời tiết: Open-Meteo API** (free, không cần key): geocoding city → forecast ngày. Bản tin 8h thời tiết Thanh Hóa thành CHÍNH XÁC + đúng giờ tuyệt đối (không phụ thuộc quota Gemini). Nội dung format bằng template, không cần AI.
-- [ ] **Crypto: CoinGecko API** (free): giá BTC/ETH... chính xác từng phút → rule "theo điều kiện" so ngưỡng bằng SỐ THẬT thay vì nhờ AI đọc báo đoán. Hết cảnh trigger sai.
-- [ ] **Tỷ giá/vàng: API tỷ giá** (exchangerate.host / feed VCB; vàng SJC cân nhắc nguồn sau). value/last_value thành số thật.
+### Pha B — Provider 0-quota cho dữ liệu SỐ ✅ XONG 2026-07-02
+- [x] **Thời tiết: Open-Meteo** (free, no key): tách địa danh từ keyword (`extractWeatherLocation`) → geocoding → forecast 2 ngày (hiện tại + hôm nay + ngày mai, mã WMO → tiếng Việt). Bản tin dựng bằng TEMPLATE — 0 call AI. Tiêu đề kèm ngày dd/MM → unique mỗi ngày.
+- [x] **Crypto: CoinGecko** (free): map coin phổ biến (BTC/ETH/BNB/SOL/XRP/DOGE/ADA/TON) → giá USD + quy đổi VND + %24h. `value` máy-đọc ("67123.45 USD") để so biến động chuẩn.
+- [x] **Tỷ giá: open.er-api.com** (free, no key): USD/VND tham khảo, nêu chênh so lần trước. (Vàng SJC chưa có API sạch → vẫn đi search.)
+- [x] **Điều kiện chấm trên SỐ THẬT**: rule có condition → flash-lite (KHÔNG grounding, không đụng quota 1.500) chấm matches trên giá trị API; chống lặp trigger = cooldown 6h + bỏ cooldown khi biến động ≥3%. Rule định kỳ thường mode "chỉ tin quan trọng" → chỉ gửi khi đổi ≥1%.
+- [x] Soi bộ lọc (Trang test) hiện **nhãn nguồn** (🌤 Open-Meteo / 🪙 CoinGecko / 💱 er-api / 🔍 Gemini search) — soi rule provider giờ 0 quota. Đã verify 3 API thật (Thanh Hóa 27°C ✓, BTC $61.4k ✓, VND 26.251 ✓). 94 test pass (thêm 11: detect/extract/coin/WMO/compose/significantChange).
 
 ### Pha C — Tin tức qua RSS (né grounding cho rule 'news')
 - [ ] Danh sách RSS báo VN (VnExpress, Tuổi Trẻ, Thanh Niên, CafeF, VietnamNet...) + match keyword.

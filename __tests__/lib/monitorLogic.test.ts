@@ -13,6 +13,14 @@ import {
   recentRealTitles,
   isTooOld,
   pickFreshItem,
+  detectSourceType,
+  matchCoin,
+  extractWeatherLocation,
+  wmoDesc,
+  significantChange,
+  composeWeatherNotif,
+  composeCryptoNotif,
+  composeFxNotif,
 } from "../../supabase/functions/_shared/monitorLogic";
 
 describe("intervalMs", () => {
@@ -191,5 +199,94 @@ describe("pickFreshItem — chọn bài chưa trùng (sửa gốc vòng lặp fi
     const r = pickFreshItem(items, new Set<string>(), "", 7, now);
     expect(r.top?.title).toBe("Bài duy nhất");
     expect(r.fresh).toBe(true);
+  });
+});
+
+describe("detectSourceType — router chọn nguồn dữ liệu", () => {
+  it("thời tiết → weather", () => {
+    expect(detectSourceType("dự báo thời tiết Thanh Hóa hôm nay")).toBe("weather");
+    expect(detectSourceType("thời tiết Hà Nội")).toBe("weather");
+  });
+
+  it("giá coin → crypto; TIN TỨC về coin vẫn là search (không cướp rule tin tức)", () => {
+    expect(detectSourceType("giá Bitcoin BTC hôm nay")).toBe("crypto");
+    expect(detectSourceType("giá ETH Ethereum")).toBe("crypto");
+    expect(detectSourceType("tin tức bitcoin mới nhất")).toBe("search");
+  });
+
+  it("tỷ giá → fx; giá vàng/xăng KHÔNG có provider → search", () => {
+    expect(detectSourceType("tỷ giá USD/VND hôm nay")).toBe("fx");
+    expect(detectSourceType("giá vàng SJC hôm nay")).toBe("search");
+    expect(detectSourceType("giá xăng dầu Việt Nam")).toBe("search");
+  });
+
+  it("chủ đề tự do / rỗng → search", () => {
+    expect(detectSourceType("tin công nghệ AI")).toBe("search");
+    expect(detectSourceType("")).toBe("search");
+    expect(detectSourceType(undefined)).toBe("search");
+  });
+});
+
+describe("matchCoin & extractWeatherLocation", () => {
+  it("nhận diện coin theo tên/ký hiệu, không dính từ chứa chuỗi con", () => {
+    expect(matchCoin("giá bitcoin")?.id).toBe("bitcoin");
+    expect(matchCoin("giá ETH")?.id).toBe("ethereum");
+    expect(matchCoin("method testing")).toBeNull(); // "eth" trong "method" không tính
+  });
+
+  it("tách địa danh khỏi keyword thời tiết", () => {
+    expect(extractWeatherLocation("dự báo thời tiết Thanh Hóa hôm nay")).toBe("Thanh Hóa");
+    expect(extractWeatherLocation("thời tiết Hà Nội ngày mai")).toBe("Hà Nội");
+    expect(extractWeatherLocation("thời tiết")).toBe(""); // không còn gì → caller fallback search
+  });
+});
+
+describe("wmoDesc & significantChange", () => {
+  it("map mã WMO sang tiếng Việt", () => {
+    expect(wmoDesc(0)).toBe("Trời quang");
+    expect(wmoDesc(3)).toBe("Nhiều mây");
+    expect(wmoDesc(63)).toBe("Mưa");
+    expect(wmoDesc(95)).toBe("Dông");
+    expect(wmoDesc(1234)).toBe("Không rõ");
+  });
+
+  it("significantChange: so % trên số đứng đầu; không parse được → coi là ĐỔI", () => {
+    expect(significantChange("100 USD", "102 USD", 1)).toBe(true);   // +2%
+    expect(significantChange("100 USD", "100.5 USD", 1)).toBe(false); // +0.5%
+    expect(significantChange(null, "100 USD", 1)).toBe(true);        // chưa có mốc
+    expect(significantChange("75,2 triệu/lượng", "100 USD", 1)).toBe(true); // format cũ lệch → đổi
+  });
+});
+
+describe("compose bản tin provider", () => {
+  const now = Date.parse("2026-07-02T02:00:00Z"); // 09:00 VN ngày 02/07
+
+  it("thời tiết: tiêu đề có địa danh + NGÀY (unique mỗi ngày), nội dung đủ số liệu", () => {
+    const today = { code: 80, tmax: 33, tmin: 25, rainPct: 70, windMax: 12 };
+    const p = composeWeatherNotif("Thanh Hóa", 29, 3, today, { code: 61, tmax: 31, tmin: 24, rainPct: 90, windMax: 15 }, now);
+    expect(p.title).toBe("Thời tiết Thanh Hóa 02/07: Mưa rào, 25–33°C");
+    expect(p.content).toContain("Hiện tại 29°C");
+    expect(p.content).toContain("xác suất mưa 70%");
+    expect(p.details).toContain("Ngày mai: Mưa");
+    expect(p.value).toContain("25-33°C");
+    expect(p.source).toBe("Open-Meteo");
+  });
+
+  it("crypto: giá USD + quy đổi VND + biến động 24h; value là số máy-đọc", () => {
+    const p = composeCryptoNotif("bitcoin", "Bitcoin", 67123.45, 1700000000, -2.34);
+    expect(p.title).toContain("Bitcoin");
+    expect(p.title).toContain("-2.34% 24h");
+    expect(p.content).toContain("CoinGecko");
+    expect(p.value).toBe("67123.45 USD");
+    expect(p.source_url).toContain("coingecko.com/en/coins/bitcoin");
+  });
+
+  it("tỷ giá: nêu chênh so với lần trước nếu có mốc cũ", () => {
+    const p = composeFxNotif(26150, "26100 VND");
+    expect(p.title).toContain("USD/VND");
+    expect(p.content).toContain("lần trước");
+    expect(p.value).toBe("26150 VND");
+    // Chưa có mốc cũ → không nêu chênh.
+    expect(composeFxNotif(26150, null).content).not.toContain("lần trước");
   });
 });
