@@ -49,3 +49,4 @@ app-example
 
 # Supabase CLI temp
 supabase/.temp/
+scripts/scenario-results.json

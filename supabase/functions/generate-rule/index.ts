@@ -238,6 +238,16 @@ Deno.serve(async (req) => {
       message: asText(data.message) || "Bạn có thể cho tôi biết thêm chi tiết không?",
     });
   } catch (err) {
-    return json({ error: (err as Error).message }, 500);
+    // AI quá tải / hết lượt (503/429): trả lời THÂN THIỆN trong chat thay vì ném nguyên
+    // cục JSON lỗi của Gemini cho người dùng (phát hiện từ đợt test kịch bản 2026-07-03).
+    const msg = (err as Error).message;
+    if (/429|quota|resource_exhausted|503|overloaded|unavailable/i.test(msg)) {
+      return json({
+        status: "need_info",
+        message:
+          "⏳ Hệ thống AI đang quá tải hoặc tạm hết lượt miễn phí — bạn thử lại sau vài phút nhé. Các rule đã tạo trước đó vẫn chạy bình thường.",
+      });
+    }
+    return json({ error: msg }, 500);
   }
 });
