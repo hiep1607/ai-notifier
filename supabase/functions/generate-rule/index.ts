@@ -264,6 +264,15 @@ Deno.serve(async (req) => {
     // AI quá tải / hết lượt (503/429): trả lời THÂN THIỆN trong chat thay vì ném nguyên
     // cục JSON lỗi của Gemini cho người dùng (phát hiện từ đợt test kịch bản 2026-07-03).
     const msg = (err as Error).message;
+    // 429 kèm "retry in Xs" = chạm giới hạn TỐC ĐỘ mỗi phút (không phải hết lượt ngày!)
+    // — gemini.ts đã tự chờ + thử lại 1 lần; vẫn lọt tới đây thì bảo người dùng chờ ngắn.
+    const rateM = msg.match(/retry in (\d+(?:\.\d+)?)\s*s/i);
+    if (rateM && parseFloat(rateM[1]) <= 120) {
+      return json({
+        status: "need_info",
+        message: `⏳ AI đang bận tức thời (chạm giới hạn số lượt gọi mỗi PHÚT — quota ngày vẫn còn). Bạn chờ khoảng ${Math.max(5, Math.ceil(parseFloat(rateM[1])))} giây rồi gửi lại nhé.`,
+      });
+    }
     if (/429|quota|resource_exhausted|503|overloaded|unavailable/i.test(msg)) {
       return json({
         status: "need_info",

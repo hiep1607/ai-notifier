@@ -33,7 +33,29 @@ interface GeminiOpts {
   model?: string;
 }
 
+// 429 có 2 loại RẤT khác nhau: (a) chạm giới hạn TỐC ĐỘ mỗi phút (vd flash-lite free
+// 20 lượt/phút) — Gemini kèm "Please retry in Xs", chờ X giây là chạy tiếp, quota ngày
+// vẫn còn; (b) hết quota NGÀY — không có gợi ý retry ngắn. Loại (a) tự hấp thụ ở đây:
+// chờ đúng X giây rồi thử lại 1 lần, các caller không thấy lỗi.
+function rateLimitDelayMs(errText: string): number | null {
+  const m = errText.match(/retry in (\d+(?:\.\d+)?)\s*s/i);
+  if (!m) return null;
+  const sec = parseFloat(m[1]);
+  return sec > 0 && sec <= 30 ? Math.ceil((sec + 1) * 1000) : null;
+}
+
 export async function geminiGenerate(opts: GeminiOpts): Promise<GeminiResult> {
+  try {
+    return await geminiOnce(opts);
+  } catch (e) {
+    const wait = rateLimitDelayMs(e instanceof Error ? e.message : String(e));
+    if (wait === null) throw e; // lỗi thật (hết quota ngày / 5xx / mạng) → caller xử lý
+    await new Promise((r) => setTimeout(r, wait));
+    return await geminiOnce(opts);
+  }
+}
+
+async function geminiOnce(opts: GeminiOpts): Promise<GeminiResult> {
   const key = Deno.env.get("GEMINI_API_KEY");
   if (!key) throw new Error("Thiếu GEMINI_API_KEY (đặt qua supabase secrets set)");
   const model = opts.model ?? MODEL;

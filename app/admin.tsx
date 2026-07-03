@@ -284,6 +284,11 @@ export default function AdminScreen() {
                 <Text style={styles.quotaSub}>
                   Tính theo mốc reset của Gemini — reset lúc ~14–15h VN (nửa đêm giờ Mỹ).
                 </Text>
+                <Text style={styles.quotaSub}>
+                  Lưu ý: ngoài trần NGÀY còn trần TỐC ĐỘ ~20 lượt/PHÚT (flash-lite). Lỗi 429
+                  kèm &quot;retry in Xs&quot; chỉ là nghẽn tức thời vài giây — KHÔNG phải hết lượt
+                  ngày; hệ thống tự chờ rồi thử lại.
+                </Text>
                 {(usage.days?.length ?? 0) > 1 && (
                   <Text style={styles.quotaSub}>
                     Mấy ngày gần đây: {usage.days!.map((d) => d.total).join(" · ")}
