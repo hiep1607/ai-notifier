@@ -1,7 +1,7 @@
 # Kế hoạch & Tiến độ — AI Notifier
 
 > File này theo dõi: kiến trúc, việc ĐÃ LÀM, việc CẦN LÀM. Cập nhật sau mỗi task.
-> Cập nhật lần cuối: 2026-07-03 (Pha E: theo dõi trang web theo URL + cấp quyền đăng nhập — chờ user chạy SQL 0018 + deploy web/OTA)
+> Cập nhật lần cuối: 2026-07-03 (Pha E xong toàn bộ + đã deploy web/OTA; MỌI migration đã chạy — còn verify key cron 0017 bằng nhắc hẹn thử)
 > Chi tiết CÁCH HOẠT ĐỘNG + KHẢ NĂNG của từng chức năng (loại rule, ví dụ cụ thể...): xem **[TINH_NANG.md](TINH_NANG.md)** — cập nhật file đó mỗi khi xong 1 chức năng mới.
 
 ## Mục tiêu sản phẩm
@@ -62,7 +62,7 @@ pg_cron (mỗi 15 phút) → run-monitor (quét nền, lọc rule tới hạn th
 - [x] **Chạy SQL `0016_rule_reminder.sql`** (cột `source_type` + `remind_at`) — user xác nhận đã chạy 2026-07-02. Nhắc hẹn ("nhắc tôi X ngày 20/7") đã hoạt động đủ; đẩy lại web (EAS Hosting) + OTA (branch preview) để xác nhận bản mới nhất.
 - [x] **Chạy SQL `0017_reminder_tick.sql`** (cron phụ 'reminder-tick' MỖI PHÚT, SQL-gated) — user xác nhận đã chạy 2026-07-03. **CẦN VERIFY key đúng** (lần trước dán nhầm ANON key → 401): tạo thử nhắc hẹn "nhắc tôi 3 phút nữa" xem có bắn đúng phút không; nghi ngờ thì soi `select status_code, content from net._http_response order by created desc limit 5` (mong 200, không phải 401).
 - [x] **Chạy SQL `0018_url_watch.sql`** (cột `watch_url` + `watch_auth`) — user xác nhận đã chạy 2026-07-03; theo dõi trang web theo URL (TINH_NANG.md §3g) dùng được đầy đủ.
-- [ ] **Deploy web + OTA** cho bản URL-watch (tôi bị chặn quyền `eas deploy --prod`): chạy `npx eas-cli deploy --prod` (dist đã export sẵn) và `npx eas-cli update --branch preview`.
+- [x] **Deploy web + OTA** cho bản URL-watch — xong 2026-07-03 sau khi user cho phép tiếp tục: web live https://ai-notifier-new.expo.app (200), OTA update group ea18bda9 (android+iOS, runtime 1.0.0, branch preview).
 
 ## 🗺 KẾ HOẠCH: Các loại theo dõi tiếp theo (lập 2026-07-02)
 > Ý tưởng xương sống: hiện MỌI rule đều đi qua Gemini + Google Search grounding — vừa tốn quota
