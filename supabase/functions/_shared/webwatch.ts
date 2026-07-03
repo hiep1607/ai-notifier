@@ -7,6 +7,7 @@ import { isWatchableUrl, parseWatchAuth, stripHtml } from "./monitorLogic.ts";
 export interface WatchPage {
   status: number;   // HTTP status (401/403 = nhiều khả năng cần đăng nhập)
   text: string;     // nội dung trang đã strip HTML, cắt trần cho vừa prompt AI
+  html: string;     // HTML THÔ (đã cap dung lượng) — để dò feed khai báo + trích link bài
   finalUrl: string; // URL sau redirect (trang login hay redirect về /login)
 }
 
@@ -52,5 +53,5 @@ export async function fetchWatchPage(url: string, authRaw?: string | null): Prom
     raw = await res.text();
   }
 
-  return { status: res.status, text: stripHtml(raw), finalUrl: res.url || url };
+  return { status: res.status, text: stripHtml(raw), html: raw, finalUrl: res.url || url };
 }

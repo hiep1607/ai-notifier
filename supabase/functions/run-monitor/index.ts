@@ -33,6 +33,10 @@ import {
   significantChange,
   isReminder,
   extractWatchUrl,
+  discoverFeedUrl,
+  extractPageLinks,
+  isWatchableUrl,
+  type PageLink,
   type SourceType,
   type ProviderNotif,
 } from "../_shared/monitorLogic.ts";
@@ -436,14 +440,19 @@ interface UrlExtract {
   changed: boolean;         // khác đáng kể so với giá trị lần trước?
   matches_condition: boolean;
   is_important: boolean;
+  link_index: number;       // link bài viết khớp thông tin (trong danh sách đưa vào); -1 = không có
 }
 
 // flash-lite ĐỌC text trang đã strip HTML → trích đúng thông tin rule cần (KHÔNG grounding,
-// không đụng quota 1.500). Lỗi → throw để caller xử lý.
+// không đụng quota 1.500). links = link bài trên trang để AI CHỌN (thông báo trỏ đúng bài
+// thay vì trang chủ — quan trọng với trang tin tức). Lỗi → throw để caller xử lý.
 // deno-lint-ignore no-explicit-any
-async function extractUrlAI(supabase: any, rule: Rule, page: WatchPage): Promise<UrlExtract> {
+async function extractUrlAI(supabase: any, rule: Rule, page: WatchPage, links: PageLink[] = []): Promise<UrlExtract> {
   const hasCond = Boolean(rule.condition && rule.condition.trim());
   const prev = rule.last_value?.trim() ?? "";
+  const linkList = links.length
+    ? `\nCÁC LINK BÀI VIẾT TRÊN TRANG (đánh số):\n${links.map((l, i) => `[${i}] ${l.text}`).join("\n")}\n`
+    : "";
   try {
     const { text } = await geminiGenerate({
       system:
@@ -455,9 +464,9 @@ ${prev ? `Giá trị ghi nhận LẦN TRƯỚC: "${prev}".` : ""}
 
 NỘI DUNG TRANG (đã bỏ HTML):
 """
-${page.text.slice(0, 11000)}
+${page.text.slice(0, 10000)}
 """
-
+${linkList}
 Trả JSON:
 {
   "found": true nếu trang CÓ thông tin người dùng cần, false nếu không thấy,
@@ -468,7 +477,8 @@ Trả JSON:
   "ai_summary": "1 câu ngắn ~15 từ điểm mấu chốt",
   "changed": ${prev ? `true nếu "value" mới KHÁC đáng kể so với "${prev}", false nếu gần như không đổi` : "true"},
   "matches_condition": ${hasCond ? `true nếu nội dung trang cho thấy điều kiện "${rule.condition}" đã xảy ra, ngược lại false` : "true"},
-  "is_important": true nếu thông tin này đáng chú ý với người theo dõi, ngược lại false
+  "is_important": true nếu thông tin này đáng chú ý với người theo dõi, ngược lại false${links.length ? `,
+  "link_index": số thứ tự link bài viết KHỚP với thông tin bạn trích (0-${links.length - 1}), hoặc -1 nếu thông tin không thuộc bài cụ thể nào` : ""}
 }`,
       json: true,
       temperature: 0.2,
@@ -486,6 +496,7 @@ Trả JSON:
       changed: toBool(d?.changed),
       matches_condition: toBool(d?.matches_condition),
       is_important: toBool(d?.is_important),
+      link_index: Number.isFinite(Number(d?.link_index)) ? Number(d?.link_index) : -1,
     };
   } catch (e) {
     await logUsage(supabase, rule.id, false, (e as Error).message);
@@ -519,11 +530,82 @@ async function notifyLoginNeeded(supabase: any, rule: Rule, host: string, expire
   return { inserted, note: { title, kind: "real" } };
 }
 
+// Cổng gửi dùng chung cho 2 đường của rule url (feed / đọc trang).
+interface UrlGates {
+  hasCond: boolean;
+  scheduled: boolean;
+  importantOnly: boolean;
+  changeGate: boolean;
+}
+
+// ĐƯỜNG FEED cho rule url (trang tin tức/blog): trang tự khai báo RSS trong <head>
+// (Tuổi Trẻ, CafeF, WordPress...) → đọc feed thay vì bóc HTML — tiêu đề + link bài
+// CHUẨN, dedup ổn định, cùng chất lượng đường RSS Pha C nhưng cho TRANG BẤT KỲ.
+// Trả null = không dùng được feed (không khai báo / feed hỏng / không bài mới liên quan)
+// → caller đọc HTML như thường (rule giá trên trang có feed blog không bị cướp).
+// deno-lint-ignore no-explicit-any
+async function monitorUrlViaFeed(
+  supabase: any,
+  rule: Rule,
+  page: WatchPage,
+  seenTitles: Set<string>,
+  g: UrlGates,
+): Promise<MonitorRuleResult | null> {
+  const feedUrl = discoverFeedUrl(page.html, page.finalUrl);
+  if (!feedUrl || !isWatchableUrl(feedUrl)) return null;
+
+  let items: RssItem[];
+  try {
+    const res = await fetch(feedUrl, {
+      headers: { "Accept": "application/rss+xml, application/xml, text/xml" },
+    });
+    if (!res.ok) return null;
+    items = parseRss(await res.text());
+  } catch {
+    return null;
+  }
+  if (items.length === 0) return null;
+
+  const unseen = items.filter((it) => !seenTitles.has(normTitle(it.title))).slice(0, 25);
+  if (unseen.length === 0) return null; // feed không có bài mới → vẫn thử đọc trang
+
+  let pick: RssPick;
+  try {
+    pick = await pickRssItemAI(supabase, rule, unseen);
+  } catch {
+    return null;
+  }
+  const chosen = pick.index >= 0 ? unseen[pick.index] : undefined;
+  if (!chosen) return null; // bài mới nhưng không liên quan chủ đề → đọc trang như thường
+
+  const value = pick.value.trim() ? pick.value.trim().slice(0, 200) : undefined;
+  const condOk = !g.hasCond || pick.matches_condition;
+  const changeOk = !g.changeGate || pick.changed;
+  const importantOk = !g.importantOnly || pick.is_important || (g.hasCond && pick.matches_condition);
+  if (!condOk || !changeOk || !importantOk) {
+    // Có bài liên quan nhưng chưa vượt cổng → lượt này xong (đọc trang cũng cùng nội dung thôi).
+    return { inserted: 0, value, note: { title: "", kind: "skipped" } };
+  }
+
+  const inserted = await insertNotif(supabase, rule, {
+    title: chosen.title,
+    content: pick.content || chosen.description,
+    details: "",
+    ai_summary: pick.ai_summary,
+    source: sourceFromLink(chosen.link),
+    source_url: chosen.link, // link BÀI THẬT từ feed
+    sentiment: normSentiment(pick.sentiment),
+    is_important: g.hasCond ? true : pick.is_important,
+  });
+  return { inserted, value, note: { title: chosen.title, kind: "real" } };
+}
+
 // Quét 1 rule THEO DÕI TRANG WEB: fetch URL (kèm quyền đăng nhập nếu người dùng đã cấp)
-// → flash-lite trích giá trị → cổng gửi giống provider:
+// → ưu tiên FEED trang khai báo (tin tức) → không thì flash-lite đọc HTML. Cổng gửi:
 //  - có condition   → chỉ gửi khi thỏa; chống lặp = cooldown 6h + bỏ cooldown khi đổi ≥3%.
 //  - đặt giờ        → luôn gửi bản tin.
-//  - định kỳ thường → gửi mỗi kỳ; chế độ "chỉ tin quan trọng" thì chỉ gửi khi giá trị ĐỔI.
+//  - định kỳ thường → chỉ gửi khi có NỘI DUNG MỚI (bài chưa gửi / giá trị đổi) — đọc lại
+//                     trang mà y nguyên thì im, khỏi spam cùng 1 bài.
 // deno-lint-ignore no-explicit-any
 async function monitorUrl(supabase: any, rule: Rule): Promise<MonitorRuleResult> {
   const url = ruleWatchUrl(rule);
@@ -540,7 +622,28 @@ async function monitorUrl(supabase: any, rule: Rule): Promise<MonitorRuleResult>
   if (page.status >= 400) throw new Error(`Trang trả HTTP ${page.status}`);
   if (!page.text.trim()) throw new Error("Trang không có nội dung đọc được");
 
-  const ex = await extractUrlAI(supabase, rule, page);
+  const hasCond = Boolean(rule.condition && rule.condition.trim());
+  const scheduled = isScheduled(rule);
+  const importantOnly = rule.notify_mode === "important" && !scheduled;
+  const changeGate = rule.frequency === "change" && Boolean(rule.last_value && rule.last_value.trim());
+  const gates: UrlGates = { hasCond, scheduled, importantOnly, changeGate };
+  const prevNorm = normVal(String(rule.last_value ?? ""));
+
+  // Tiêu đề đã gửi — chống báo lại cùng 1 bài (giữa 2 bài mới, đọc lại trang vẫn thấy bài cũ).
+  const { data: existing } = await supabase
+    .from("notifications").select("title").eq("rule_id", rule.id)
+    .order("created_at", { ascending: false }).limit(60);
+  const seenTitles = new Set<string>(
+    (existing ?? []).map((n: { title: string }) => normTitle(String(n.title ?? ""))).filter(Boolean),
+  );
+
+  // ƯU TIÊN FEED trang tự khai báo (tin tức/blog) — link bài thật, dedup chuẩn.
+  const viaFeed = await monitorUrlViaFeed(supabase, rule, page, seenTitles, gates);
+  if (viaFeed) return viaFeed;
+
+  // ĐỌC TRANG: kèm danh sách link bài để AI chọn — thông báo trỏ đúng BÀI thay vì trang chủ.
+  const links = extractPageLinks(page.html, page.finalUrl);
+  const ex = await extractUrlAI(supabase, rule, page, links);
 
   // Nhiều trang trả 200 nhưng nội dung chính bị che sau form login → AI phát hiện.
   if (ex.login_required && !ex.found) {
@@ -554,12 +657,14 @@ async function monitorUrl(supabase: any, rule: Rule): Promise<MonitorRuleResult>
   };
   if (!ex.found) return skipped; // trang không có thông tin cần — im, chờ lượt sau
 
-  const hasCond = Boolean(rule.condition && rule.condition.trim());
-  const scheduled = isScheduled(rule);
-  const prevNorm = normVal(String(rule.last_value ?? ""));
   const curNorm = normVal(ex.value);
   // "Thực sự đổi": lần đầu (chưa có mốc) = đổi; còn lại tin AI + so sánh giá trị chuẩn hóa.
   const reallyChanged = prevNorm === "" || (curNorm !== "" && curNorm !== prevNorm) || ex.changed;
+  const title = ex.title.trim() || `Cập nhật từ ${host}`;
+  // CHỐNG TRÙNG: tiêu đề đã gửi + giá trị không đổi = nội dung y nguyên lần trước → im
+  // (trừ rule đặt giờ — bản tin đúng hẹn luôn giao).
+  const fresh = !seenTitles.has(normTitle(title)) || (curNorm !== "" && curNorm !== prevNorm);
+  if (!fresh && !scheduled) return skipped;
 
   if (hasCond) {
     if (!ex.matches_condition) return skipped;
@@ -569,18 +674,18 @@ async function monitorUrl(supabase: any, rule: Rule): Promise<MonitorRuleResult>
     const prevMs = prevRows?.[0]?.created_at ? Date.parse(prevRows[0].created_at) : 0;
     const recentAlert = prevMs > Date.now() - 6 * 3600000;
     if (recentAlert && !significantChange(rule.last_value, ex.value, 3)) return skipped;
-  } else if (!scheduled && rule.notify_mode === "important") {
-    if (!reallyChanged) return skipped; // trang chưa đổi gì → im
+  } else if (importantOnly && !reallyChanged) {
+    return skipped; // trang chưa đổi gì → im
   }
 
-  const title = ex.title.trim() || `Cập nhật từ ${host}`;
+  const articleUrl = ex.link_index >= 0 && links[ex.link_index] ? links[ex.link_index].url : url;
   const inserted = await insertNotif(supabase, rule, {
     title,
     content: ex.content,
     details: "",
     ai_summary: ex.ai_summary,
     source: host,
-    source_url: url,
+    source_url: articleUrl,
     sentiment: "neutral",
     is_important: hasCond ? true : ex.is_important,
   });
@@ -1057,7 +1162,9 @@ async function previewGate(supabase: any, rule: Rule): Promise<GatePreview> {
         base.importantReason = `Trang ${host} đòi đăng nhập (HTTP ${page.status}) — cần cấp quyền (dán Cookie) trong chi tiết rule.`;
         return base;
       }
-      const ex = await extractUrlAI(supabase, rule, page);
+      // Soi theo đường ĐỌC TRANG (kèm link bài để giống hành vi thật). Đường feed của
+      // trang tin không soi ở đây (không insert nên không tính được dedup) — chấp nhận.
+      const ex = await extractUrlAI(supabase, rule, page, extractPageLinks(page.html, page.finalUrl));
       if (ex.login_required && !ex.found) {
         base.importantReason = `Nội dung trang ${host} bị che sau đăng nhập — cần cấp quyền (dán Cookie) trong chi tiết rule.`;
         return base;

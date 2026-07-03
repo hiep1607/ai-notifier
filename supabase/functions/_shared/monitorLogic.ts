@@ -405,6 +405,54 @@ export function stripHtml(html: string, maxChars = 12000): string {
   return text.length > maxChars ? text.slice(0, maxChars) : text;
 }
 
+// Feed RSS/Atom mà TRANG TỰ KHAI BÁO trong <head> (rel="alternate" type="application/rss+xml").
+// Trang tin tức (Tuổi Trẻ, CafeF, blog WordPress...) đa số có — ưu tiên đọc feed thay vì
+// bóc HTML: tiêu đề + link bài CHUẨN, dedup ổn định. Trả "" nếu trang không khai báo.
+export function discoverFeedUrl(html: string, baseUrl: string): string {
+  const tags = String(html ?? "").match(/<link\b[^>]*>/gi) ?? [];
+  for (const tag of tags) {
+    if (!/rel=["']?alternate["']?/i.test(tag)) continue;
+    if (!/type=["']?application\/(rss|atom)\+xml/i.test(tag)) continue;
+    const href = tag.match(/href=["']([^"']+)["']/i)?.[1];
+    if (!href) continue;
+    try {
+      return new URL(href, baseUrl).toString();
+    } catch { /* href hỏng → thử tag sau */ }
+  }
+  return "";
+}
+
+// Link bài viết trên trang (anchor có text đủ dài = khả năng cao là TIÊU ĐỀ bài).
+// Dùng cho trang tin KHÔNG khai báo feed: đưa danh sách cho AI chọn → thông báo
+// trỏ về link BÀI THẬT thay vì trang chủ. Bóc từ HTML thô (trước khi stripHtml xóa tag).
+export interface PageLink {
+  text: string;
+  url: string;
+}
+
+export function extractPageLinks(html: string, baseUrl: string, max = 25, minTextLen = 20): PageLink[] {
+  const out: PageLink[] = [];
+  const seen = new Set<string>();
+  const re = /<a\b[^>]*href=["']([^"'#]+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(String(html ?? ""))) && out.length < max) {
+    const text = m[2].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+    if (text.length < minTextLen) continue; // menu/nút ngắn → bỏ, chỉ giữ tiêu đề bài
+    let url: string;
+    try {
+      url = new URL(m[1], baseUrl).toString();
+    } catch {
+      continue;
+    }
+    if (!/^https?:/i.test(url)) continue;
+    const key = normTitle(text);
+    if (seen.has(key)) continue; // trang hay lặp link (ảnh + tiêu đề cùng bài)
+    seen.add(key);
+    out.push({ text: text.slice(0, 200), url });
+  }
+  return out;
+}
+
 export function pickFreshItem<T extends PickableItem>(
   items: T[],
   seenTitles: Set<string>,

@@ -141,12 +141,18 @@ khi thêm loại mới dựa-trên-heuristic. Provider lỗi → tự rơi về 
 - **Cách tạo:** chat kèm link, vd "báo tôi khi sản phẩm này giảm dưới 500k https://shop.vn/ao-khoac".
   AI đặt `source_type='url'` + `watch_url`; muốn theo dõi trang cụ thể mà chưa đưa link → AI hỏi xin link.
   Rule cũ/gõ tay có URL nằm ngay trong keyword cũng tự được nhận diện (không cần migration cho phần này).
-- **Cách hoạt động mỗi lượt quét:** server fetch trang (UA trình duyệt, timeout 15s, đọc tối đa 400KB)
-  → bỏ HTML lấy text → **flash-lite** (KHÔNG grounding, không đụng quota 1.500) trích đúng thông tin
-  cần theo dõi thành `value` + tóm tắt → cổng gửi giống provider:
-  - có điều kiện → chỉ báo khi AI chấm THỎA trên nội dung trang thật; cooldown 6h, bỏ cooldown khi đổi ≥3%;
-  - đặt giờ → luôn giao bản tin đúng hẹn;
-  - định kỳ thường ở chế độ "chỉ tin quan trọng" → chỉ báo khi nội dung trang THỰC SỰ đổi so với lần trước.
+- **Cách hoạt động mỗi lượt quét:** server fetch trang (UA trình duyệt, timeout 15s, đọc tối đa 400KB), rồi:
+  1. **Ưu tiên FEED trang tự khai báo** (nâng cấp 2026-07-03, cho trang TIN TỨC/blog): nếu trang khai
+     `<link rel="alternate" type="application/rss+xml">` trong HTML (Tuổi Trẻ, CafeF, WordPress...) →
+     đọc feed đó: bài CHƯA GỬI → flash-lite chọn bài hợp chủ đề + tóm tắt → thông báo có **link bài
+     THẬT** + chống trùng tuyệt đối theo tiêu đề feed. Feed không có/không bài mới liên quan → bước 2
+     (rule giá trên trang có feed blog không bị "cướp").
+  2. **Đọc HTML trang**: bỏ tag lấy text + trích danh sách **link bài trên trang** đưa cho
+     **flash-lite** (KHÔNG grounding, không đụng quota 1.500) → AI trích `value` + tóm tắt + CHỌN link
+     bài khớp → thông báo trỏ đúng bài viết thay vì trang chủ.
+  - Cổng gửi: có điều kiện → chỉ báo khi AI chấm THỎA trên nội dung trang thật (cooldown 6h, bỏ khi đổi
+    ≥3%); đặt giờ → luôn giao bản tin đúng hẹn; định kỳ thường → **chỉ báo khi có NỘI DUNG MỚI** (bài
+    chưa gửi / giá trị đổi — đọc lại trang mà y nguyên thì im, không spam cùng 1 bài).
 - **Trang cần ĐĂNG NHẬP — "cấp quyền":** gặp HTTP 401/403 hoặc AI thấy nội dung bị che sau form login →
   gửi 1 thông báo "🔒 Trang cần đăng nhập" (không spam lặp) hướng dẫn: mở **chi tiết rule → mục "Cấp
   quyền đăng nhập"** → dán **Cookie** (lấy từ trình duyệt sau khi đăng nhập: F12 → Network → copy header

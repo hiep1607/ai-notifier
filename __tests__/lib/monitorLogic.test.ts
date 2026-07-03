@@ -26,6 +26,8 @@ import {
   isWatchableUrl,
   parseWatchAuth,
   stripHtml,
+  discoverFeedUrl,
+  extractPageLinks,
 } from "../../supabase/functions/_shared/monitorLogic";
 
 describe("intervalMs", () => {
@@ -404,5 +406,50 @@ describe("stripHtml", () => {
 
   it("cắt trần độ dài để vừa prompt AI", () => {
     expect(stripHtml("a".repeat(20000), 12000).length).toBe(12000);
+  });
+});
+
+describe("discoverFeedUrl — feed trang tự khai báo", () => {
+  it("bắt link rel=alternate type=rss+xml, resolve URL tương đối", () => {
+    const html = `<head>
+      <link rel="alternate" href="https://x.vn/vi" hreflang="vi-vn"/>
+      <link rel="alternate" type="application/rss+xml" href="/cong-nghe.rss" title="CN" />
+    </head>`;
+    expect(discoverFeedUrl(html, "https://tuoitre.vn/cong-nghe.htm")).toBe("https://tuoitre.vn/cong-nghe.rss");
+  });
+
+  it("không có feed khai báo (chỉ alternate hreflang) → chuỗi rỗng", () => {
+    const html = `<link rel="alternate" href="https://vnexpress.net/kinh-doanh" hreflang="vi-vn"/>`;
+    expect(discoverFeedUrl(html, "https://vnexpress.net/kinh-doanh")).toBe("");
+    expect(discoverFeedUrl("", "https://a.com")).toBe("");
+  });
+
+  it("nhận cả atom+xml và href tuyệt đối", () => {
+    const html = `<link type="application/atom+xml" rel="alternate" href="https://blog.vn/atom.xml">`;
+    expect(discoverFeedUrl(html, "https://blog.vn/post")).toBe("https://blog.vn/atom.xml");
+  });
+});
+
+describe("extractPageLinks — link bài viết trên trang", () => {
+  const html = `
+    <a href="/menu">Menu</a>
+    <a href="/bai-1.html"><h3>Giá vàng SJC sáng nay tăng vọt lên 82 triệu</h3></a>
+    <a href="https://x.vn/bai-2">Tỷ giá USD ngân hàng đồng loạt giảm mạnh</a>
+    <a href="/bai-1.html">Giá vàng SJC sáng nay tăng vọt lên 82 triệu</a>
+    <a href="javascript:void(0)">Bài viết có link javascript không hợp lệ nhé</a>`;
+
+  it("giữ anchor text dài (tiêu đề bài), resolve tương đối, bỏ trùng + link rác", () => {
+    const links = extractPageLinks(html, "https://x.vn/kinh-doanh");
+    expect(links).toHaveLength(2);
+    expect(links[0]).toEqual({
+      text: "Giá vàng SJC sáng nay tăng vọt lên 82 triệu",
+      url: "https://x.vn/bai-1.html",
+    });
+    expect(links[1].url).toBe("https://x.vn/bai-2");
+  });
+
+  it("bỏ anchor ngắn (menu/nút); tôn trọng max", () => {
+    expect(extractPageLinks(`<a href="/a">Ngắn</a>`, "https://x.vn")).toHaveLength(0);
+    expect(extractPageLinks(html, "https://x.vn", 1)).toHaveLength(1);
   });
 });
