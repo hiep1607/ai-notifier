@@ -153,13 +153,18 @@ khi thêm loại mới dựa-trên-heuristic. Provider lỗi → tự rơi về 
   - Cổng gửi: có điều kiện → chỉ báo khi AI chấm THỎA trên nội dung trang thật (cooldown 6h, bỏ khi đổi
     ≥3%); đặt giờ → luôn giao bản tin đúng hẹn; định kỳ thường → **chỉ báo khi có NỘI DUNG MỚI** (bài
     chưa gửi / giá trị đổi — đọc lại trang mà y nguyên thì im, không spam cùng 1 bài).
-- **Trang cần ĐĂNG NHẬP — "cấp quyền":** gặp HTTP 401/403 hoặc AI thấy nội dung bị che sau form login →
-  gửi 1 thông báo "🔒 Trang cần đăng nhập" (không spam lặp) hướng dẫn: mở **chi tiết rule → mục "Cấp
-  quyền đăng nhập"** → dán **Cookie** (lấy từ trình duyệt sau khi đăng nhập: F12 → Network → copy header
-  Cookie) hoặc từng dòng `Tên-Header: giá trị` (vd `Authorization: Bearer ...`). Từ đó server fetch kèm
-  các header này. Cookie hết hạn → tự báo "🔒 Quyền đăng nhập hết hạn" nhắc dán lại; nút "Thu hồi quyền"
-  xóa cookie đã lưu. Cookie nằm ở cột `watch_auth` bảng rules — RLS chặn user khác đọc, chỉ chủ rule +
-  hệ thống quét (service_role) thấy.
+- **Trang cần ĐĂNG NHẬP — flow "cấp quyền" (làm lại 2026-07-03 cho dễ dùng):** app TỰ phát hiện trang
+  đòi đăng nhập (HTTP 401/403 hoặc AI thấy nội dung che sau form login) → gửi 1 thông báo "🔒" (không
+  spam lặp). Trên thông báo có **nút "Cấp quyền truy cập"** đi thẳng tới khối cấp quyền của rule (viền
+  nổi). Tại đó người dùng chọn: **"Mở trang để đăng nhập"** → copy Cookie → dán → bấm **"Cho phép"**;
+  hoặc bấm **"Không cho phép"** = tạm dừng rule, hệ thống thôi nhắc (bật lại bằng công tắc). Đã cấp thì
+  có "Thu hồi quyền"/"Cập nhật". Cookie hết hạn → tự báo "🔒 Quyền đăng nhập hết hạn". Cookie nằm ở cột
+  `watch_auth` — RLS chặn user khác đọc, chỉ chủ rule + hệ thống quét (service_role) thấy. *(Hạn chế
+  hiện tại: bước copy Cookie vẫn thủ công — đăng nhập 1-chạm qua WebView cần build APK mới, để sau.)*
+- **Nội dung thông báo ĐẦY ĐỦ (2026-07-03):** với tin từ RSS/feed, sau khi chọn bài hệ thống **fetch
+  BÀI GỐC** và để flash-lite viết bản tin 4-6 câu + mục "Phân tích chi tiết" từ text thật của bài
+  (trước chỉ tóm 1-2 câu từ mô tả feed nên sơ sài). Bài gốc chặn bot/quá nghèo → giữ bản tóm tắt cũ.
+  Đường đọc-trang cũng trả thêm `details`.
 - **Hiểu yêu cầu tự nhiên — BẢN ĐỒ NGUỒN (thêm 2026-07-03):** AI tạo rule TỰ DỰNG link cho nguồn phổ
   biến, người dùng không cần biết link kỹ thuật: "dự án nổi bật GitHub mỗi sáng" → `github.com/trending`
   (+ biến thể ngôn ngữ/tuần), release repo → `releases.atom`, "bài hot r/xyz" → Reddit `.rss`, kênh

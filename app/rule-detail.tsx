@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 
 import {
   ActivityIndicator,
+  Linking,
   ScrollView,
   StyleSheet,
   Switch,
@@ -26,7 +27,8 @@ import { Notification } from "../types/Notification";
 import { RADIUS, type AppColors } from "../lib/theme";
 
 export default function RuleDetailScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  // grant=1: đến từ nút "Cấp quyền truy cập" trên thông báo 🔒 → làm nổi khối cấp quyền.
+  const { id, grant } = useLocalSearchParams<{ id: string; grant?: string }>();
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
   const styles = useMemo(() => createStyles(colors), [colors]);
@@ -136,12 +138,12 @@ export default function RuleDetailScreen() {
     }
   };
 
-  // Lưu quyền đăng nhập (Cookie/headers) cho trang cần login. Xóa trắng = thu hồi quyền.
-  const saveWatchAuth = async () => {
+  // Lưu quyền truy cập (Cookie/headers) cho trang cần đăng nhập. Chuỗi rỗng = thu hồi.
+  const saveWatchAuthWith = async (raw: string) => {
     if (!rule) return;
     setSavingAuth(true);
 
-    const value = authDraft.trim() || null;
+    const value = raw.trim() || null;
     const { error } = await supabase
       .from("rules")
       .update({ watch_auth: value })
@@ -155,10 +157,23 @@ export default function RuleDetailScreen() {
     }
     setRule({ ...rule, watch_auth: value ?? undefined });
     alertMessage(
-      value ? "Đã cấp quyền" : "Đã thu hồi quyền",
+      value ? "Đã cho phép" : "Đã thu hồi quyền",
       value
-        ? "Hệ thống sẽ dùng Cookie này khi đọc trang ở các lần quét tới. Cookie hết hạn thì bạn sẽ nhận thông báo nhắc dán lại."
-        : "Đã xóa Cookie đã lưu. Trang cần đăng nhập sẽ không đọc được nữa."
+        ? "Hệ thống sẽ đọc trang bằng phiên đăng nhập của bạn từ các lần quét tới. Phiên hết hạn thì app sẽ tự báo để bạn cấp lại."
+        : "Đã xóa phiên đăng nhập đã lưu. Trang cần đăng nhập sẽ không đọc được nữa."
+    );
+  };
+
+  const saveWatchAuth = () => saveWatchAuthWith(authDraft);
+
+  // "Không cho phép": tạm dừng rule — hệ thống ngừng quét trang này và thôi nhắc cấp quyền.
+  const denyWatchAuth = async () => {
+    if (!rule) return;
+    setRule({ ...rule, is_active: false });
+    await supabase.from("rules").update({ is_active: false }).eq("id", rule.id);
+    alertMessage(
+      "Đã tạm dừng rule",
+      "Rule sẽ không theo dõi trang này nữa và bạn sẽ không bị nhắc cấp quyền. Muốn theo dõi lại, bật công tắc của rule bất cứ lúc nào."
     );
   };
 
@@ -542,28 +557,40 @@ export default function RuleDetailScreen() {
             </Text>
           </TouchableOpacity>
 
-          {/* CẤP QUYỀN ĐĂNG NHẬP — chỉ rule theo dõi trang web: dán Cookie cho trang cần login */}
+          {/* CẤP QUYỀN TRUY CẬP — chỉ rule theo dõi trang web. Flow: app tự phát hiện trang
+              cần đăng nhập rồi báo; người dùng vào đây chọn CHO PHÉP (dán Cookie) hoặc
+              KHÔNG (tạm dừng rule, hết bị nhắc). */}
           {isUrlRule && (
-            <View style={styles.authCard}>
+            <View style={[styles.authCard, grant === "1" && styles.authCardFocused]}>
               <View style={styles.authHeader}>
                 <Ionicons
                   name={rule.watch_auth ? "lock-open-outline" : "lock-closed-outline"}
                   size={18}
-                  color={rule.watch_auth ? colors.success : colors.subText}
+                  color={rule.watch_auth ? colors.success : colors.warning}
                 />
-                <Text style={styles.authTitle}>Cấp quyền đăng nhập</Text>
-                {rule.watch_auth ? <Text style={styles.authGranted}>Đã cấp</Text> : null}
+                <Text style={styles.authTitle}>Cấp quyền truy cập trang</Text>
+                {rule.watch_auth ? <Text style={styles.authGranted}>Đã cho phép</Text> : null}
               </View>
               <Text style={styles.authHint}>
-                Trang cần đăng nhập mới xem được? Đăng nhập trang đó trên trình duyệt → F12 →
-                tab Network → copy giá trị header Cookie rồi dán vào đây (hoặc từng dòng
-                &quot;Tên-Header: giá trị&quot;). Chỉ mình bạn và hệ thống quét đọc được.
+                {rule.watch_auth
+                  ? "Hệ thống đang đọc trang bằng phiên đăng nhập bạn đã cấp. Hết hạn thì app sẽ tự báo để bạn cấp lại."
+                  : "Trang này cần đăng nhập mới xem được. Cho phép app đọc bằng tài khoản của bạn: (1) bấm “Mở trang” và đăng nhập; (2) copy Cookie của trang (trên máy tính: F12 → Network → chọn request đầu → copy dòng Cookie); (3) dán vào ô dưới rồi bấm Cho phép. Cookie chỉ mình bạn và hệ thống quét đọc được."}
               </Text>
+              {rule.watch_url ? (
+                <TouchableOpacity
+                  style={styles.authOpenBtn}
+                  onPress={() => Linking.openURL(rule.watch_url!)}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="open-outline" size={16} color={colors.primary} />
+                  <Text style={styles.authOpenText}>Mở trang để đăng nhập</Text>
+                </TouchableOpacity>
+              ) : null}
               <TextInput
                 style={styles.authInput}
                 value={authDraft}
                 onChangeText={setAuthDraft}
-                placeholder="VD: session=abc123; token=xyz..."
+                placeholder="Dán Cookie vào đây (VD: session=abc123; token=xyz...)"
                 placeholderTextColor={colors.subText}
                 multiline
                 autoCapitalize="none"
@@ -571,21 +598,31 @@ export default function RuleDetailScreen() {
               />
               <View style={styles.authActions}>
                 {rule.watch_auth ? (
+                  // Đã cấp: cho thu hồi (xóa cookie đã lưu) hoặc cập nhật cookie mới.
                   <TouchableOpacity
                     style={styles.authClearBtn}
-                    onPress={() => { setAuthDraft(""); }}
+                    onPress={() => { setAuthDraft(""); saveWatchAuthWith(""); }}
                     disabled={savingAuth}
                   >
-                    <Text style={styles.authClearText}>Xóa</Text>
+                    <Text style={styles.authClearText}>Thu hồi quyền</Text>
                   </TouchableOpacity>
-                ) : null}
+                ) : (
+                  // Chưa cấp: "Không cho phép" = tạm dừng rule để hệ thống thôi nhắc.
+                  <TouchableOpacity
+                    style={styles.authClearBtn}
+                    onPress={denyWatchAuth}
+                    disabled={savingAuth}
+                  >
+                    <Text style={styles.authClearText}>Không cho phép</Text>
+                  </TouchableOpacity>
+                )}
                 <TouchableOpacity
-                  style={[styles.authSaveBtn, savingAuth && { opacity: 0.6 }]}
+                  style={[styles.authSaveBtn, (savingAuth || !authDraft.trim()) && { opacity: 0.6 }]}
                   onPress={saveWatchAuth}
-                  disabled={savingAuth || (!authDraft.trim() && !rule.watch_auth)}
+                  disabled={savingAuth || !authDraft.trim()}
                 >
                   <Text style={styles.authSaveText}>
-                    {savingAuth ? "Đang lưu..." : authDraft.trim() ? "Lưu quyền" : "Thu hồi quyền"}
+                    {savingAuth ? "Đang lưu..." : rule.watch_auth ? "Cập nhật" : "Cho phép"}
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -930,6 +967,28 @@ function createStyles(C: AppColors) {
       padding: 16,
       marginTop: 12,
       marginBottom: 8,
+    },
+    authCardFocused: {
+      borderColor: C.primary,
+      borderWidth: 2,
+    },
+    authOpenBtn: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+      alignSelf: "flex-start",
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: C.primary,
+      backgroundColor: C.primary + "11",
+      marginBottom: 10,
+    },
+    authOpenText: {
+      color: C.primary,
+      fontSize: 13,
+      fontWeight: "600",
     },
     authHeader: {
       flexDirection: "row",

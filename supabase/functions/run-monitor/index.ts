@@ -441,6 +441,7 @@ interface UrlExtract {
   title: string;
   value: string;            // giá trị chính trích được (máy-đọc, để so lần sau)
   content: string;
+  details: string;          // phân tích/bối cảnh thêm từ trang (có thể rỗng)
   ai_summary: string;
   changed: boolean;         // khác đáng kể so với giá trị lần trước?
   matches_condition: boolean;
@@ -478,7 +479,8 @@ Trả JSON:
   "login_required": true nếu nội dung chính bị che vì trang đòi đăng nhập/paywall (chỉ thấy form login, "vui lòng đăng nhập"...), ngược lại false,
   "title": "tiêu đề ngắn cho thông báo, nêu thông tin chính (vd 'Đơn hàng #123: Đang giao')",
   "value": "giá trị chính trích được, ngắn gọn máy-đọc (vd '1.250.000 đ' | 'Đang giao' | 'Chương 105'). \\"\\" nếu không có",
-  "content": "3-5 câu tóm tắt thông tin tìm được trên trang, số liệu cụ thể, tiếng Việt${prev ? "; nếu có thay đổi nêu RÕ 'từ [cũ] → [mới]'" : ""}",
+  "content": "4-6 câu tóm tắt ĐẦY ĐỦ thông tin tìm được trên trang, số liệu cụ thể, tiếng Việt${prev ? "; nếu có thay đổi nêu RÕ 'từ [cũ] → [mới]'" : ""}",
+  "details": "2-4 câu phân tích/bối cảnh thêm rút từ trang (nguyên nhân, diễn biến, so sánh...) — KHÔNG bịa; để \\"\\" nếu trang không có gì thêm",
   "ai_summary": "1 câu ngắn ~15 từ điểm mấu chốt",
   "changed": ${prev ? `true nếu "value" mới KHÁC đáng kể so với "${prev}", false nếu gần như không đổi` : "true"},
   "matches_condition": ${hasCond ? `true nếu nội dung trang cho thấy điều kiện "${rule.condition}" đã xảy ra, ngược lại false` : "true"},
@@ -497,6 +499,7 @@ Trả JSON:
       title: String(d?.title ?? ""),
       value: String(d?.value ?? ""),
       content: String(d?.content ?? ""),
+      details: String(d?.details ?? ""),
       ai_summary: String(d?.ai_summary ?? ""),
       changed: toBool(d?.changed),
       matches_condition: toBool(d?.matches_condition),
@@ -543,6 +546,60 @@ interface UrlGates {
   changeGate: boolean;
 }
 
+// LÀM GIÀU NỘI DUNG: fetch BÀI GỐC rồi để flash-lite viết bản tin đầy đủ (content 4-6 câu
+// + details phân tích + ai_summary) từ TEXT THẬT của bài — thay vì tóm 2 dòng từ mô tả
+// feed vốn rất ngắn (nguyên nhân thông báo "sơ sài"). Best-effort: bài không fetch được /
+// AI lỗi → trả null, caller giữ bản tóm tắt từ mô tả như cũ.
+interface RichNotif {
+  content: string;
+  details: string;
+  ai_summary: string;
+}
+
+// deno-lint-ignore no-explicit-any
+async function enrichFromArticle(
+  supabase: any,
+  rule: Rule,
+  articleUrl: string,
+  title: string,
+): Promise<RichNotif | null> {
+  try {
+    if (!isWatchableUrl(articleUrl)) return null;
+    const page = await fetchWatchPage(articleUrl);
+    if (page.status >= 400 || page.text.length < 300) return null; // trang chặn/quá nghèo
+    const { text } = await geminiGenerate({
+      system:
+        "Bạn viết bản tin tiếng Việt từ nội dung bài viết cho trước. TUYỆT ĐỐI không bịa thông tin/số liệu ngoài bài. Chỉ trả JSON thuần.",
+      user: `Người dùng theo dõi: "${rule.keyword}"${rule.condition?.trim() ? ` (điều kiện quan tâm: ${rule.condition})` : ""}.
+Bài viết: "${title}"
+NỘI DUNG BÀI (đã bỏ HTML):
+"""
+${page.text.slice(0, 9000)}
+"""
+Trả JSON:
+{
+  "content": "4-6 câu tóm tắt ĐẦY ĐỦ: chuyện gì xảy ra, số liệu cụ thể trong bài; có thay đổi/biến động thì nêu rõ 'từ [mức cũ] → [mức mới]'; ưu tiên đơn vị/tiền tệ Việt Nam",
+  "details": "3-5 câu PHÂN TÍCH thêm từ bài: nguyên nhân, bối cảnh, tác động, dự báo nếu bài có nêu (không bịa)",
+  "ai_summary": "1 câu ~15 từ điểm mấu chốt"
+}`,
+      json: true,
+      temperature: 0.2,
+      model: "gemini-2.5-flash-lite",
+    });
+    await logUsage(supabase, rule.id, true);
+    const d = parseJsonLoose<Partial<RichNotif>>(text);
+    const content = String(d?.content ?? "").trim();
+    if (!content) return null;
+    return {
+      content,
+      details: String(d?.details ?? "").trim(),
+      ai_summary: String(d?.ai_summary ?? "").trim(),
+    };
+  } catch {
+    return null; // enrich chỉ là cộng thêm — lỗi gì cũng không được làm hỏng thông báo
+  }
+}
+
 // Xử lý danh sách bài từ FEED cho rule url (dùng chung: feed trang khai báo + watch_url
 // là feed trực tiếp). Trả null = không có bài mới liên quan → caller quyết định tiếp.
 // deno-lint-ignore no-explicit-any
@@ -576,11 +633,13 @@ async function monitorFeedItems(
     return { inserted: 0, value, note: { title: "", kind: "skipped" } };
   }
 
+  // Đọc BÀI GỐC để viết bản tin đầy đủ + phân tích (mô tả feed quá ngắn → sơ sài).
+  const rich = await enrichFromArticle(supabase, rule, chosen.link, chosen.title);
   const inserted = await insertNotif(supabase, rule, {
     title: chosen.title,
-    content: pick.content || chosen.description,
-    details: "",
-    ai_summary: pick.ai_summary,
+    content: rich?.content || pick.content || chosen.description,
+    details: rich?.details ?? "",
+    ai_summary: rich?.ai_summary || pick.ai_summary,
     source: sourceFromLink(chosen.link),
     source_url: chosen.link, // link BÀI THẬT từ feed
     sentiment: normSentiment(pick.sentiment),
@@ -709,7 +768,7 @@ async function monitorUrl(supabase: any, rule: Rule): Promise<MonitorRuleResult>
   const inserted = await insertNotif(supabase, rule, {
     title,
     content: ex.content,
-    details: "",
+    details: ex.details,
     ai_summary: ex.ai_summary,
     source: host,
     source_url: articleUrl,
@@ -917,11 +976,14 @@ async function monitorRssPath(
   const importantOk = !ctx.importantOnly || pick.is_important || (ctx.hasCond && pick.matches_condition);
 
   if (condOk && changeOk && importantOk) {
+    // Đọc BÀI GỐC để viết bản tin đầy đủ + mục phân tích (trước đây chỉ tóm từ mô tả
+    // feed 1-2 câu nên thông báo sơ sài, mục "Phân tích chi tiết" trống).
+    const rich = await enrichFromArticle(supabase, rule, chosen.link, chosen.title);
     const inserted = await insertNotif(supabase, rule, {
       title: chosen.title,
-      content: pick.content || chosen.description,
-      details: "",
-      ai_summary: pick.ai_summary,
+      content: rich?.content || pick.content || chosen.description,
+      details: rich?.details ?? "",
+      ai_summary: rich?.ai_summary || pick.ai_summary,
       source: sourceFromLink(chosen.link),
       source_url: chosen.link, // link THẬT từ feed — hết cảnh link bịa/sai bài
       sentiment: normSentiment(pick.sentiment),

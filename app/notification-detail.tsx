@@ -191,6 +191,21 @@ export default function NotificationDetailScreen() {
         </View>
       ) : null}
 
+      {/* THÔNG BÁO "CẦN CẤP QUYỀN" (🔒 từ rule theo dõi trang web): nút đi thẳng tới màn
+          cấp quyền của rule — người dùng bấm Cho phép/Không, khỏi tự mò đường. */}
+      {notification.title?.startsWith("🔒") && notification.rule_id ? (
+        <TouchableOpacity
+          style={styles.sourceButton}
+          onPress={() =>
+            router.push({ pathname: "/rule-detail", params: { id: notification.rule_id, grant: "1" } })
+          }
+          activeOpacity={0.85}
+        >
+          <Ionicons name="key-outline" size={20} color="white" />
+          <Text style={styles.sourceButtonText}>Cấp quyền truy cập</Text>
+        </TouchableOpacity>
+      ) : null}
+
       {/* ĐỌC BÀI GỐC — hoặc, nếu không có URL, mở thông báo trước (fallback "chưa có thay đổi") */}
       {notification.source_url ? (
         <TouchableOpacity
