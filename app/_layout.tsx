@@ -173,6 +173,11 @@ function RootNavigator() {
           options={{ headerShown: false }}
         />
 
+        <Stack.Screen
+          name="grant-login"
+          options={{ headerShown: false }}
+        />
+
 
       </Stack>
 

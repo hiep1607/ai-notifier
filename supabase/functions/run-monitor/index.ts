@@ -1065,13 +1065,10 @@ async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult
   // vì search không đọc được trang cụ thể, chỉ tốn quota và trả tin lạc đề.
   const srcType: SourceType = ruleWatchUrl(rule) ? "url" : detectSourceType(rule.keyword);
   if (srcType === "url") {
-    try {
-      return await monitorUrl(supabase, rule);
-    } catch (e) {
-      if (isQuotaErr(e)) throw e; // quota AI → để vòng ngoài dừng sớm như các đường khác
-      console.log(`URL watch lỗi (${(e as Error).message}) → bỏ lượt này, chờ lượt sau.`);
-      return { inserted: 0, note: { title: "", kind: "skipped" } };
-    }
+    // Lỗi (trang sập/URL hỏng) NÉM LÊN vòng ngoài: vẫn "bỏ lượt này chờ lượt sau"
+    // (vòng ngoài bắt + tiếp tục rule khác) nhưng được ghi vào rules.last_error
+    // để người dùng thấy vì sao rule im — thay vì nuốt im ở đây.
+    return await monitorUrl(supabase, rule);
   }
 
   // Rule số liệu (thời tiết/crypto/tỷ giá) đi đường provider — chính xác,
@@ -1586,6 +1583,7 @@ Deno.serve(async (req) => {
       checked++;
       if (rule.keyword) scannedNames.push(rule.keyword);
       let newValue: string | undefined;
+      let scanError: string | null = null; // lỗi lượt này (null = quét êm) → rules.last_error
       try {
         const res = await monitorRule(supabase, rule);
         inserted += res.inserted;
@@ -1599,12 +1597,22 @@ Deno.serve(async (req) => {
           checked--; // rule này coi như chưa quét
           break;
         }
+        scanError = String((e as Error).message ?? e).slice(0, 300);
       }
       // Đánh dấu đã quét (kể cả khi không có tin mới) để tính lịch lần sau;
       // cập nhật baseline số liệu nếu lần này tìm được giá trị mới (trigger "thay đổi").
-      const upd: Record<string, string> = { last_run_at: new Date().toISOString() };
+      const upd: Record<string, string | null> = {
+        last_run_at: new Date().toISOString(),
+        last_error: scanError,
+      };
       if (newValue) upd.last_value = newValue;
-      await supabase.from("rules").update(upd).eq("id", rule.id);
+      const { error: updErr } = await supabase.from("rules").update(upd).eq("id", rule.id);
+      if (updErr) {
+        // Cột last_error chưa có (migration 0020 chưa chạy) → ghi lại không kèm nó,
+        // tuyệt đối không để mất last_run_at (mất là loạn lịch quét).
+        delete upd.last_error;
+        await supabase.from("rules").update(upd).eq("id", rule.id);
+      }
     }
 
     await logCronRun(

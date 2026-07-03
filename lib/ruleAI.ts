@@ -36,10 +36,23 @@ function isNonRetryable(msg: string): boolean {
 }
 
 export async function chatRule(history: ChatTurn[]): Promise<RuleAIResult> {
+  return invokeGenerateRule({ history });
+}
+
+// SỬA rule có sẵn bằng chat: gửi kèm rule hiện tại, AI chỉ đổi phần được yêu cầu và
+// trả về bản đầy đủ (luôn 1 rule) — client so sánh rồi update các cột thay đổi.
+export async function editRuleAI(rule: Record<string, unknown>, instruction: string): Promise<RuleAIResult> {
+  return invokeGenerateRule({
+    history: [{ role: "user", content: instruction }],
+    edit_rule: rule,
+  });
+}
+
+async function invokeGenerateRule(body: Record<string, unknown>): Promise<RuleAIResult> {
   let data: any, lastErr: unknown;
   // Tối đa 3 lần, backoff 1s/2s — tránh fail vì Gemini trục trặc tạm thời.
   for (let attempt = 0; attempt < 3; attempt++) {
-    const res = await supabase.functions.invoke("generate-rule", { body: { history } });
+    const res = await supabase.functions.invoke("generate-rule", { body });
     const err = res.error || (res.data?.error ? new Error(res.data.error) : null);
     if (!err) { data = res.data; lastErr = null; break; }
     lastErr = err;

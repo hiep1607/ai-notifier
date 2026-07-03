@@ -6,7 +6,8 @@ import { Alert, Platform } from "react-native";
  */
 export function confirmAsync(
   title: string,
-  message: string
+  message: string,
+  confirmText = "Xóa" // nhãn nút xác nhận (mặc định giữ "Xóa" cho các chỗ gọi cũ)
 ): Promise<boolean> {
   if (Platform.OS === "web") {
     const ok =
@@ -19,7 +20,11 @@ export function confirmAsync(
   return new Promise((resolve) => {
     Alert.alert(title, message, [
       { text: "Hủy", style: "cancel", onPress: () => resolve(false) },
-      { text: "Xóa", style: "destructive", onPress: () => resolve(true) },
+      {
+        text: confirmText,
+        style: confirmText === "Xóa" ? "destructive" : "default",
+        onPress: () => resolve(true),
+      },
     ]);
   });
 }

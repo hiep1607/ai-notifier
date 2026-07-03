@@ -149,14 +149,37 @@ function asText(v: unknown): string {
   return String(v);
 }
 
+// CHẾ ĐỘ SỬA RULE (2026-07-03): client gửi kèm edit_rule = rule hiện tại → AI chỉ đổi
+// đúng phần người dùng yêu cầu, giữ nguyên phần còn lại, trả về bản đầy đủ (1 rule).
+function editRulePrompt(editRule: Record<string, unknown>): string {
+  const keep = [
+    "title", "description", "keyword", "category", "sources", "frequency",
+    "run_at", "condition", "source_type", "remind_at", "watch_url",
+  ];
+  const cur: Record<string, string> = {};
+  for (const k of keep) cur[k] = asText(editRule[k]);
+  return `NGƯỜI DÙNG ĐANG SỬA MỘT RULE CÓ SẴN (không phải tạo mới). Rule hiện tại:
+${JSON.stringify(cur)}
+
+QUY TẮC SỬA:
+- CHỈ thay đổi đúng những trường người dùng yêu cầu; MỌI trường khác GIỮ NGUYÊN Y HỆT giá trị hiện tại (kể cả watch_url, source_type, remind_at).
+- Trả về "ready" với "rules" = [bản rule ĐÃ SỬA, ĐẦY ĐỦ mọi trường]; "message" = 1 câu tóm tắt đã đổi gì (vd "Đã đổi giờ báo từ 08:00 sang 07:00.").
+- Yêu cầu mơ hồ/không hiểu → "need_info" hỏi lại. Yêu cầu vi phạm quy tắc (vd định kỳ < 30 phút) → "need_info" giải thích như thường.
+- Người dùng đòi đổi sang nguồn không hỗ trợ (Facebook/IG/TikTok/X) → "need_info" giải thích + gợi ý như quy tắc chung.
+- KHÔNG tách thành nhiều rule khi đang sửa — luôn đúng 1 rule.`;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
-    const { history } = await req.json();
+    const { history, edit_rule } = await req.json();
     if (!Array.isArray(history) || history.length === 0) {
       return json({ error: "Thiếu history" }, 400);
     }
+    const editing = edit_rule && typeof edit_rule === "object"
+      ? editRulePrompt(edit_rule as Record<string, unknown>)
+      : "";
 
     // Gom hội thoại thành 1 prompt (model nhỏ task này không cần multi-turn API).
     const convo = history
@@ -171,7 +194,7 @@ Deno.serve(async (req) => {
 
     const { text } = await geminiGenerate({
       system: RULE_SYSTEM,
-      user: `(Bây giờ là ${nowTxt}.)\n\n${convo}\n\nDựa trên hội thoại trên, trả về JSON đúng định dạng.`,
+      user: `(Bây giờ là ${nowTxt}.)\n${editing ? `\n${editing}\n` : ""}\n${convo}\n\nDựa trên hội thoại trên, trả về JSON đúng định dạng.`,
       json: true,
       temperature: 0.3,
       // Task này chỉ trích xuất JSON (không cần grounding) → dùng model rẻ hơn.

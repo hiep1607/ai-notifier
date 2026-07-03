@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Linking,
+  Platform,
   ScrollView,
   StyleSheet,
   Switch,
@@ -20,11 +21,37 @@ import { router, useLocalSearchParams } from "expo-router";
 import { supabase } from "../lib/supabase";
 import { confirmAsync, alertMessage } from "../lib/dialog";
 import { runMonitorForRule } from "../lib/monitor";
+import { editRuleAI, RuleDraft } from "../lib/ruleAI";
 import { CATEGORIES, FREQUENCIES, findCategory, formatSchedule, toFreqKey } from "../lib/ruleOptions";
 import { useTheme } from "../contexts/ThemeContext";
 import { Rule } from "../types/Rule";
 import { Notification } from "../types/Notification";
 import { RADIUS, type AppColors } from "../lib/theme";
+
+// "x phút/giờ/ngày trước" cho dòng "Quét lần cuối" — người dùng thấy ngay rule còn sống không.
+function timeAgoVi(iso?: string | null): string {
+  if (!iso) return "Chưa quét lần nào";
+  const diffMs = Date.now() - Date.parse(iso);
+  if (!Number.isFinite(diffMs)) return "Chưa quét lần nào";
+  const m = Math.floor(diffMs / 60000);
+  if (m < 1) return "Vừa xong";
+  if (m < 60) return `${m} phút trước`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h} giờ trước`;
+  return `${Math.floor(h / 24)} ngày trước`;
+}
+
+// Nhãn tiếng Việt cho bản tóm tắt "AI định đổi gì" trước khi áp dụng.
+const EDIT_LABELS: Record<string, string> = {
+  title: "Tên",
+  description: "Mô tả",
+  keyword: "Từ khóa",
+  category: "Danh mục",
+  sources: "Nguồn",
+  condition: "Điều kiện",
+  remind_at: "Thời điểm nhắc",
+  watch_url: "Trang theo dõi",
+};
 
 export default function RuleDetailScreen() {
   // grant=1: đến từ nút "Cấp quyền truy cập" trên thông báo 🔒 → làm nổi khối cấp quyền.
@@ -53,6 +80,11 @@ export default function RuleDetailScreen() {
   // dán Cookie/headers → server fetch trang kèm các header này. Lưu ở cột watch_auth.
   const [authDraft, setAuthDraft] = useState("");
   const [savingAuth, setSavingAuth] = useState(false);
+
+  // "Sửa nhanh bằng chat": gõ yêu cầu tự nhiên ("đổi sang 7h sáng") → AI trả bản rule
+  // đã sửa → xem tóm tắt thay đổi → xác nhận là lưu, khỏi chỉnh từng ô tay.
+  const [aiDraft, setAiDraft] = useState("");
+  const [aiEditing, setAiEditing] = useState(false);
 
   useEffect(() => {
     if (id) fetchData();
@@ -175,6 +207,90 @@ export default function RuleDetailScreen() {
       "Đã tạm dừng rule",
       "Rule sẽ không theo dõi trang này nữa và bạn sẽ không bị nhắc cấp quyền. Muốn theo dõi lại, bật công tắc của rule bất cứ lúc nào."
     );
+  };
+
+  // Sửa rule bằng chat: gửi rule hiện tại + yêu cầu → AI trả bản đầy đủ đã sửa →
+  // chỉ update những cột THỰC SỰ đổi (kèm xác nhận). Mơ hồ thì AI hỏi lại.
+  const handleAiEdit = async () => {
+    if (!rule || !aiDraft.trim()) return;
+    setAiEditing(true);
+    try {
+      const res = await editRuleAI(
+        {
+          title: rule.title,
+          description: rule.description,
+          keyword: rule.keyword,
+          category: rule.category ?? "other",
+          sources: rule.sources ?? "",
+          frequency: rule.frequency ?? "1440",
+          run_at: rule.run_at ?? "",
+          condition: rule.condition ?? "",
+          source_type: rule.source_type ?? "",
+          remind_at: rule.remind_at ?? "",
+          watch_url: rule.watch_url ?? "",
+        },
+        aiDraft.trim(),
+      );
+
+      if (res.status !== "ready" || res.rules.length === 0) {
+        alertMessage("AI cần hỏi lại", res.message);
+        return;
+      }
+      const d: RuleDraft = res.rules[0];
+
+      // So từng trường với giá trị hiện tại — chỉ đổi cái khác.
+      const upd: Record<string, string> = {};
+      const plain: (keyof RuleDraft & keyof Rule)[] = [
+        "title", "description", "keyword", "category", "sources", "frequency", "run_at", "condition",
+      ];
+      for (const k of plain) {
+        const next = String(d[k] ?? "").trim();
+        if (next !== String(rule[k] ?? "").trim()) upd[k] = next;
+      }
+      // remind_at so theo THỜI ĐIỂM (DB trả UTC, AI trả +07:00 — cùng khoảnh khắc thì thôi).
+      if (rule.source_type === "reminder" && d.remind_at &&
+          Date.parse(d.remind_at) !== Date.parse(rule.remind_at ?? "")) {
+        upd.remind_at = d.remind_at;
+      }
+      // watch_url chỉ đổi khi vẫn là rule url (không cho chat đổi loại rule).
+      if (rule.source_type === "url" && d.watch_url && d.watch_url !== (rule.watch_url ?? "")) {
+        upd.watch_url = d.watch_url;
+      }
+
+      if (Object.keys(upd).length === 0) {
+        alertMessage("Không có gì để đổi", res.message || "Rule đã đúng như yêu cầu rồi.");
+        return;
+      }
+
+      // Tóm tắt thay đổi cho người dùng duyệt. Tần suất + giờ gộp thành 1 dòng "Lịch" dễ hiểu.
+      const lines: string[] = [];
+      if (upd.frequency !== undefined || upd.run_at !== undefined) {
+        lines.push(`• Lịch: ${formatSchedule(rule.frequency, rule.run_at)} → ${formatSchedule(d.frequency, d.run_at)}`);
+      }
+      for (const [k, v] of Object.entries(upd)) {
+        if (k === "frequency" || k === "run_at") continue;
+        lines.push(`• ${EDIT_LABELS[k] ?? k}: ${String((rule as unknown as Record<string, unknown>)[k] ?? "") || "(trống)"} → ${v}`);
+      }
+      const ok = await confirmAsync("Áp dụng thay đổi?", `${res.message}\n\n${lines.join("\n")}`, "Áp dụng");
+      if (!ok) return;
+
+      const { error } = await supabase.from("rules").update(upd).eq("id", rule.id);
+      if (error) {
+        alertMessage("Chưa lưu được", error.message);
+        return;
+      }
+      setRule({ ...rule, ...upd });
+      setAiDraft("");
+      alertMessage("Đã cập nhật rule", res.message);
+    } catch (err) {
+      const msg = String((err as Error).message ?? err);
+      alertMessage(
+        "Lỗi",
+        /fetch|network/i.test(msg) ? "Không kết nối được máy chủ. Kiểm tra mạng rồi thử lại." : msg,
+      );
+    } finally {
+      setAiEditing(false);
+    }
   };
 
   const startEditing = () => {
@@ -506,7 +622,51 @@ export default function RuleDetailScreen() {
             </Text>
           </View>
         )}
+
+        {/* SỨC KHỎE RULE: lần quét gần nhất + lỗi (nếu có) — trả lời câu "sao rule im?" */}
+        {!isEditing && rule.source_type !== "reminder" && (
+          <View style={styles.infoRow}>
+            <Text style={styles.label}>Quét lần cuối</Text>
+            <Text style={styles.value}>{timeAgoVi(rule.last_run_at)}</Text>
+          </View>
+        )}
+        {!isEditing && rule.last_error ? (
+          <View style={styles.errorBox}>
+            <Ionicons name="warning-outline" size={16} color={colors.warning} />
+            <Text style={styles.errorText}>
+              Lần quét gần nhất gặp lỗi: {rule.last_error}. Hệ thống sẽ tự thử lại theo lịch — lỗi lặp lại nhiều lần thì kiểm tra lại nguồn/link của rule.
+            </Text>
+          </View>
+        ) : null}
       </View>
+
+      {/* SỬA NHANH BẰNG CHAT — gõ yêu cầu tự nhiên, AI tự đổi đúng phần cần đổi */}
+      {!isEditing && (
+        <View style={styles.aiEditCard}>
+          <View style={styles.authHeader}>
+            <Ionicons name="sparkles-outline" size={18} color={colors.primary} />
+            <Text style={styles.authTitle}>Sửa nhanh bằng chat</Text>
+          </View>
+          <TextInput
+            style={styles.authInput}
+            value={aiDraft}
+            onChangeText={setAiDraft}
+            placeholder={'VD: "đổi sang 7h sáng", "chỉ báo khi giảm hơn 3%", "thêm nguồn CafeF"...'}
+            placeholderTextColor={colors.subText}
+            multiline
+            editable={!aiEditing}
+          />
+          <View style={styles.authActions}>
+            <TouchableOpacity
+              style={[styles.authSaveBtn, (aiEditing || !aiDraft.trim()) && { opacity: 0.6 }]}
+              onPress={handleAiEdit}
+              disabled={aiEditing || !aiDraft.trim()}
+            >
+              <Text style={styles.authSaveText}>{aiEditing ? "Đang xử lý..." : "Sửa rule"}</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
 
       {isEditing && (
         <TouchableOpacity
@@ -579,11 +739,23 @@ export default function RuleDetailScreen() {
               {rule.watch_url ? (
                 <TouchableOpacity
                   style={styles.authOpenBtn}
-                  onPress={() => Linking.openURL(rule.watch_url!)}
+                  onPress={() =>
+                    // Mobile: mở trang TRONG APP (WebView) — đăng nhập xong bấm 1 nút là
+                    // cấp quyền, khỏi copy Cookie tay. Web: trình duyệt chặn đọc phiên
+                    // trang khác → vẫn mở tab mới + dán Cookie thủ công.
+                    Platform.OS === "web"
+                      ? Linking.openURL(rule.watch_url!)
+                      : router.push({
+                          pathname: "/grant-login",
+                          params: { id: rule.id, url: rule.watch_url! },
+                        })
+                  }
                   activeOpacity={0.8}
                 >
                   <Ionicons name="open-outline" size={16} color={colors.primary} />
-                  <Text style={styles.authOpenText}>Mở trang để đăng nhập</Text>
+                  <Text style={styles.authOpenText}>
+                    {Platform.OS === "web" ? "Mở trang để đăng nhập" : "Đăng nhập trong app (1 chạm)"}
+                  </Text>
                 </TouchableOpacity>
               ) : null}
               <TextInput
@@ -967,6 +1139,31 @@ function createStyles(C: AppColors) {
       padding: 16,
       marginTop: 12,
       marginBottom: 8,
+    },
+    aiEditCard: {
+      backgroundColor: C.card,
+      borderRadius: RADIUS.lg,
+      borderWidth: 1,
+      borderColor: C.border,
+      padding: 16,
+      marginBottom: 22,
+    },
+    errorBox: {
+      flexDirection: "row",
+      gap: 8,
+      alignItems: "flex-start",
+      backgroundColor: C.warning + "15",
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: C.warning + "55",
+      padding: 12,
+      marginTop: 4,
+    },
+    errorText: {
+      flex: 1,
+      color: C.text,
+      fontSize: 13,
+      lineHeight: 19,
     },
     authCardFocused: {
       borderColor: C.primary,
