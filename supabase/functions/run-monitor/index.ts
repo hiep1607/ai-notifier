@@ -467,11 +467,11 @@ async function extractUrlAI(supabase: any, rule: Rule, page: WatchPage, links: P
 Điều họ quan tâm: "${rule.keyword}"${rule.description ? ` (${rule.description})` : ""}.
 ${hasCond ? `Điều kiện để báo: "${rule.condition}".` : ""}
 ${prev ? `Giá trị ghi nhận LẦN TRƯỚC: "${prev}".` : ""}
-QUY TẮC TRANG DANH SÁCH: nếu trang là DANH SÁCH/BẢNG XẾP HẠNG nhiều mục (trending, top, kết quả...) và người dùng muốn biết "những mục nào" — "content" PHẢI LIỆT KÊ CỤ THỂ 5-8 mục nổi bật nhất, mỗi mục 1 dòng dạng "• Tên — mô tả ngắn (số liệu nếu có)"; "title" nêu đích danh 1-2 cái tên dẫn đầu. TUYỆT ĐỐI không tóm tắt chung chung kiểu "trang có nhiều dự án đáng chú ý".
+QUY TẮC TRANG DANH SÁCH: nếu trang là DANH SÁCH/BẢNG XẾP HẠNG nhiều mục (trending, top, kết quả...) và người dùng muốn biết "những mục nào" — "content" PHẢI LIỆT KÊ CỤ THỂ 5-8 mục nổi bật nhất, mỗi mục 1 dòng dạng "• Tên — [nó LÀ GÌ / DÙNG ĐỂ LÀM GÌ: 1 câu tiếng Việt dịch từ mô tả trên trang] (số liệu nếu có, vd ⭐ 12.300)". Người đọc KHÔNG biết các tên trong danh sách — chỉ liệt kê tên mà không giải thích công dụng là VÔ DỤNG; mô tả tiếng Anh phải DỊCH sang tiếng Việt; mục nào trang không ghi mô tả thì chú "(trang không mô tả)", không được bịa. Khi đó "details" KHÔNG lặp lại danh sách mà rút ra xu hướng chung (vd "4/7 dự án hôm nay xoay quanh AI agent; X tăng sao nhanh nhất..."); "title" nêu đích danh 1-2 cái tên dẫn đầu. TUYỆT ĐỐI không tóm tắt chung chung kiểu "trang có nhiều dự án đáng chú ý".
 
 NỘI DUNG TRANG (đã bỏ HTML):
 """
-${page.text.slice(0, 10000)}
+${page.text.slice(0, 12000)}
 """
 ${linkList}
 Trả JSON:

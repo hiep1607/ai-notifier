@@ -164,7 +164,11 @@ khi thêm loại mới dựa-trên-heuristic. Provider lỗi → tự rơi về 
 - **Nội dung thông báo ĐẦY ĐỦ (2026-07-03):** với tin từ RSS/feed, sau khi chọn bài hệ thống **fetch
   BÀI GỐC** và để flash-lite viết bản tin 4-6 câu + mục "Phân tích chi tiết" từ text thật của bài
   (trước chỉ tóm 1-2 câu từ mô tả feed nên sơ sài). Bài gốc chặn bot/quá nghèo → giữ bản tóm tắt cũ.
-  Đường đọc-trang cũng trả thêm `details`.
+  Đường đọc-trang cũng trả thêm `details`. **Trang DANH SÁCH (trending/top/BXH — siết 2026-07-03):**
+  mỗi mục liệt kê BẮT BUỘC kèm 1 câu tiếng Việt giải thích **nó là gì / dùng để làm gì** (dịch từ mô tả
+  trên trang, không bịa; trang không ghi thì chú "(trang không mô tả)") + số liệu (⭐ sao...), vd
+  "• browser-use — thư viện Python cho AI agent tự điều khiển trình duyệt (⭐ 12.300)"; mục "Phân tích
+  chi tiết" không lặp danh sách mà rút xu hướng chung (vd "4/7 dự án hôm nay về AI agent").
 - **Hiểu yêu cầu tự nhiên — BẢN ĐỒ NGUỒN (thêm 2026-07-03):** AI tạo rule TỰ DỰNG link cho nguồn phổ
   biến, người dùng không cần biết link kỹ thuật: "dự án nổi bật GitHub mỗi sáng" → `github.com/trending`
   (+ biến thể ngôn ngữ/tuần), release repo → `releases.atom`, "bài hot r/xyz" → Reddit `.rss`, kênh
