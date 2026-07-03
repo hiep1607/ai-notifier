@@ -25,7 +25,9 @@ select cron.schedule(
     url     := 'https://idtibfiyfywcugdvlqal.supabase.co/functions/v1/run-monitor',
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
-      'Authorization', 'Bearer ***JWT-DA-XOA-KHOI-LICH-SU***'
+      -- LƯU Ý: từng bị dán nhầm ANON key ở đây ("role":"anon" → 401, tick chết im).
+      -- Phải là legacy SERVICE_ROLE JWT. Bản chuẩn mới nhất: dùng 0019_fix_cron_keys.sql.
+      'Authorization', 'Bearer <SERVICE_ROLE_KEY>'
     ),
     -- reminderOnly: tick CHỈ xử lý nhắc hẹn, KHÔNG quét rule tin tức (tránh chạy chồng
     -- với cron chính 15' gây thông báo trùng + đỡ tốn quota).

@@ -467,6 +467,7 @@ async function extractUrlAI(supabase: any, rule: Rule, page: WatchPage, links: P
 Điều họ quan tâm: "${rule.keyword}"${rule.description ? ` (${rule.description})` : ""}.
 ${hasCond ? `Điều kiện để báo: "${rule.condition}".` : ""}
 ${prev ? `Giá trị ghi nhận LẦN TRƯỚC: "${prev}".` : ""}
+QUY TẮC TRANG DANH SÁCH: nếu trang là DANH SÁCH/BẢNG XẾP HẠNG nhiều mục (trending, top, kết quả...) và người dùng muốn biết "những mục nào" — "content" PHẢI LIỆT KÊ CỤ THỂ 5-8 mục nổi bật nhất, mỗi mục 1 dòng dạng "• Tên — mô tả ngắn (số liệu nếu có)"; "title" nêu đích danh 1-2 cái tên dẫn đầu. TUYỆT ĐỐI không tóm tắt chung chung kiểu "trang có nhiều dự án đáng chú ý".
 
 NỘI DUNG TRANG (đã bỏ HTML):
 """
@@ -476,7 +477,7 @@ ${linkList}
 Trả JSON:
 {
   "found": true nếu trang CÓ thông tin người dùng cần, false nếu không thấy,
-  "login_required": true nếu nội dung chính bị che vì trang đòi đăng nhập/paywall (chỉ thấy form login, "vui lòng đăng nhập"...), ngược lại false,
+  "login_required": true CHỈ KHI nội dung chính KHÔNG XEM ĐƯỢC vì trang bắt đăng nhập/paywall (gần như chỉ thấy form login, "vui lòng đăng nhập"...). Trang CÔNG KHAI có nút "Đăng nhập/Sign in" trên menu nhưng nội dung vẫn đọc được bình thường → false,
   "title": "tiêu đề ngắn cho thông báo, nêu thông tin chính (vd 'Đơn hàng #123: Đang giao')",
   "value": "giá trị chính trích được, ngắn gọn máy-đọc (vd '1.250.000 đ' | 'Đang giao' | 'Chương 105'). \\"\\" nếu không có",
   "content": "4-6 câu tóm tắt ĐẦY ĐỦ thông tin tìm được trên trang, số liệu cụ thể, tiếng Việt${prev ? "; nếu có thay đổi nêu RÕ 'từ [cũ] → [mới]'" : ""}",
@@ -732,7 +733,9 @@ async function monitorUrl(supabase: any, rule: Rule): Promise<MonitorRuleResult>
   const ex = await extractUrlAI(supabase, rule, page, links);
 
   // Nhiều trang trả 200 nhưng nội dung chính bị che sau form login → AI phát hiện.
-  if (ex.login_required && !ex.found) {
+  // CHỐT CHẶN chống hỏi quyền oan: trang có NHIỀU text đọc được (>6000 ký tự) gần như
+  // chắc chắn là trang công khai (nút "Đăng nhập" trên menu làm AI nhận nhầm) → không hỏi.
+  if (ex.login_required && !ex.found && page.text.length < 6000) {
     return await notifyLoginNeeded(supabase, rule, host, hasAuth);
   }
 
@@ -1254,7 +1257,7 @@ async function previewGate(supabase: any, rule: Rule): Promise<GatePreview> {
       // Soi theo đường ĐỌC TRANG (kèm link bài để giống hành vi thật). Đường feed của
       // trang tin không soi ở đây (không insert nên không tính được dedup) — chấp nhận.
       const ex = await extractUrlAI(supabase, rule, page, extractPageLinks(page.html, page.finalUrl));
-      if (ex.login_required && !ex.found) {
+      if (ex.login_required && !ex.found && page.text.length < 6000) {
         base.importantReason = `Nội dung trang ${host} bị che sau đăng nhập — cần cấp quyền (dán Cookie) trong chi tiết rule.`;
         return base;
       }
