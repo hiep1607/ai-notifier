@@ -130,8 +130,8 @@ khi thêm loại mới dựa-trên-heuristic. Provider lỗi → tự rơi về 
   Đồng thời bấm "Kiểm tra tin ngay" với nhắc hẹn CHƯA tới giờ sẽ không bắn sớm nữa (trả "bỏ qua").
 - **Ví dụ:** "nhắc tôi nộp bài tập lớn ngày 20/7 lúc 9h sáng", "nhắc tôi uống thuốc 9h tối nay",
   "nhắc tôi 5 phút nữa tắt bếp".
-- **YÊU CẦU:** migration `0016_rule_reminder.sql` (✅ đã chạy) + `0017_reminder_tick.sql` (cron mỗi phút
-  — chưa chạy thì nhắc hẹn vẫn hoạt động nhưng độ trễ tối đa ~15 phút theo cron chính).
+- **YÊU CẦU:** migration `0016_rule_reminder.sql` (✅ đã chạy) + `0017_reminder_tick.sql` (✅ đã chạy
+  2026-07-03 — nếu nhắc hẹn vẫn trễ ~15' thì nghi key cron dán nhầm anon, xem mục 8).
 
 ### 3g. 🌐 Theo dõi TRANG WEB/APP CỤ THỂ theo URL (Pha E — thêm 2026-07-03)
 - **Dùng khi:** người dùng muốn theo dõi 1 TRANG cụ thể do mình chọn (giá 1 sản phẩm trên shop,
@@ -159,8 +159,7 @@ khi thêm loại mới dựa-trên-heuristic. Provider lỗi → tự rơi về 
   đỡ tin lạc đề). "Soi bộ lọc" ở Trang test hỗ trợ rule url (nhãn 🌐).
 - **Ví dụ:** "theo dõi https://truyen.vn/abc, báo khi có chương mới" (change + condition), "mỗi sáng 8h
   báo giá phòng trên https://hotel.vn/x" (1440 + run_at 08:00).
-- **YÊU CẦU:** migration `0018_url_watch.sql` (cột `watch_url` + `watch_auth`). Chưa chạy thì rule url
-  do AI tạo sẽ lỗi insert cột lạ; rule thường không ảnh hưởng.
+- **YÊU CẦU:** migration `0018_url_watch.sql` (✅ đã chạy 2026-07-03) — tính năng dùng được đầy đủ.
 
 ---
 
@@ -239,10 +238,12 @@ Công cụ kiểm thử nhanh, tách khỏi trang quản trị:
 
 | File | Bật tính năng | Trạng thái |
 |---|---|---|
-| `0015_rule_notify_mode.sql` | Chế độ "Chỉ tin quan trọng" per-rule | Chưa chạy → nút đổi chế độ báo lỗi; rule vẫn tạo/chạy bình thường ở chế độ Đầy đủ |
+| `0015_rule_notify_mode.sql` | Chế độ "Chỉ tin quan trọng" per-rule | ✅ Đã chạy (2026-07-03) |
 | `0016_rule_reminder.sql` | Nhắc hẹn (reminder) | ✅ Đã chạy (2026-07-02) — nhắc hẹn hoạt động đủ |
-| `0017_reminder_tick.sql` | Nhắc hẹn chính xác tới PHÚT (cron phụ mỗi phút, SQL-gated) | Chưa chạy → nhắc hẹn vẫn chạy nhưng trễ tối đa ~15' theo cron chính. Cần thay `<PROJECT_REF>` + `<SERVICE_ROLE_KEY>` (legacy JWT eyJ...) trước khi chạy |
-| `0018_url_watch.sql` | Theo dõi trang web cụ thể theo URL (mục 3g) + cấp quyền đăng nhập | Chưa chạy → rule url do AI tạo sẽ lỗi insert; nút "Lưu quyền" báo cần migration |
+| `0017_reminder_tick.sql` | Nhắc hẹn chính xác tới PHÚT (cron phụ mỗi phút, SQL-gated) | ✅ Đã chạy (2026-07-03) — cần verify key service_role đúng (lần trước dán nhầm anon → 401): thử "nhắc tôi 3 phút nữa" |
+| `0018_url_watch.sql` | Theo dõi trang web cụ thể theo URL (mục 3g) + cấp quyền đăng nhập | ✅ Đã chạy (2026-07-03) |
+
+→ Mọi migration đã chạy đủ. Tính năng mới chỉ còn phụ thuộc bản web/OTA mới nhất được deploy.
 
 ---
 
