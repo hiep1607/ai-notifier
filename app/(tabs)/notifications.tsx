@@ -18,6 +18,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import ReanimatedSwipeable from "react-native-gesture-handler/ReanimatedSwipeable";
 
 import { supabase } from "../../lib/supabase";
+import { fetchNotificationsFor } from "../../lib/notifQuery";
 import { useAuth } from "../../contexts/AuthContext";
 import { useTheme } from "../../contexts/ThemeContext";
 import { Notification } from "../../types/Notification";
@@ -84,25 +85,9 @@ export default function NotificationsScreen() {
     });
     setRuleNames(nameMap);
 
-    if (ruleIds.length === 0) {
-      setNotifications([]);
-      return;
-    }
-
-    const { data, error } = await supabase
-      .from("notifications")
-      .select("*")
-      .in("rule_id", ruleIds)
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      console.log(error);
-      return;
-    }
-
-    if (data) {
-      setNotifications(data as Notification[]);
-    }
+    // Lọc theo user_id (0021) để thấy cả thông báo "mồ côi rule" (nhắc hẹn đã tự xóa
+    // rule); chưa chạy 0021 thì helper tự rơi về lọc theo rule_id như cũ.
+    setNotifications(await fetchNotificationsFor(user.id, ruleIds));
   };
 
   const tabFiltered =
@@ -310,7 +295,7 @@ export default function NotificationsScreen() {
             <IconBadge category={item.category} size={48} />
 
             <View style={styles.cardBody}>
-              {ruleNames[item.rule_id] ? (
+              {item.rule_id && ruleNames[item.rule_id] ? (
                 <View style={styles.ruleChip}>
                   <Ionicons name="pricetag" size={11} color={colors.primary} />
                   <Text style={styles.ruleChipText} numberOfLines={1}>

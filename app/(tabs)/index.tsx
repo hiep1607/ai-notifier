@@ -17,6 +17,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import { supabase } from "../../lib/supabase";
+import { fetchNotificationsFor } from "../../lib/notifQuery";
 import { runMonitorForActiveRules } from "../../lib/monitor";
 import { useAuth } from "../../contexts/AuthContext";
 import { useTheme } from "../../contexts/ThemeContext";
@@ -95,27 +96,13 @@ export default function HomeScreen() {
 
     const ruleIds = (rulesData ?? []).map((r) => r.id);
 
-    if (ruleIds.length > 0) {
-      const { data: notificationsData } = await supabase
-        .from("notifications")
-        .select("*")
-        .in("rule_id", ruleIds)
-        .order("created_at", { ascending: false });
-
-      if (notificationsData) {
-        const typed = notificationsData as Notification[];
-        setNotificationsCount(typed.length);
-        const important = typed.filter((n) => n.is_important);
-        setImportantCount(important.length);
-        setLatestImportant(important[0] ?? null);
-        setLatestNotif(typed[0] ?? null);
-      }
-    } else {
-      setNotificationsCount(0);
-      setImportantCount(0);
-      setLatestImportant(null);
-      setLatestNotif(null);
-    }
+    // Lọc theo user_id (0021) để tính cả thông báo "mồ côi rule" (nhắc hẹn đã tự xóa rule).
+    const typed = await fetchNotificationsFor(user.id, ruleIds);
+    setNotificationsCount(typed.length);
+    const important = typed.filter((n) => n.is_important);
+    setImportantCount(important.length);
+    setLatestImportant(important[0] ?? null);
+    setLatestNotif(typed[0] ?? null);
   };
 
   const activeRules = rules.filter((r) => r.is_active);

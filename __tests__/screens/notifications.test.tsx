@@ -92,24 +92,17 @@ describe("Notifications Screen", () => {
     expect(rulesChain.eq).toHaveBeenCalledWith("user_id", mockUser.id);
   });
 
-  it("query notifications qua .in('rule_id') KHÔNG phải .eq('user_id')", async () => {
+  // Từ 0021 notifications có CHỦ SỞ HỮU trực tiếp (cột user_id) — phải lọc theo nó để
+  // thấy cả thông báo "mồ côi rule" (nhắc hẹn tự xóa rule sau khi nhắc). Lọc theo
+  // rule_id chỉ còn là fallback khi cột chưa tồn tại (lib/notifQuery).
+  it("query notifications theo user_id (0021 — thấy cả thông báo mồ côi rule)", async () => {
     render(<NotificationsScreen />);
 
     await waitFor(() => {
       expect(mockFrom).toHaveBeenCalledWith("notifications");
     });
 
-    // Phải dùng .in('rule_id', ...) — đây là fix chính của B1
-    expect(notificationsChain.in).toHaveBeenCalledWith(
-      "rule_id",
-      expect.any(Array)
-    );
-
-    // Bảng notifications KHÔNG có cột user_id — không được gọi .eq('user_id')
-    const userIdCalls = (notificationsChain.eq as jest.Mock).mock.calls.filter(
-      ([col]: [string]) => col === "user_id"
-    );
-    expect(userIdCalls).toHaveLength(0);
+    expect(notificationsChain.eq).toHaveBeenCalledWith("user_id", mockUser.id);
   });
 
   // ── Hiển thị dữ liệu ─────────────────────────────────────────────────────

@@ -1,6 +1,7 @@
 export interface Notification {
   id: string;
-  rule_id: string;
+  rule_id: string | null; // null = "mồ côi rule" (nhắc hẹn đã tự xóa rule — 0021)
+  user_id?: string;       // chủ sở hữu trực tiếp (migration 0021)
   title: string;
   content: string;
   ai_summary?: string;

@@ -4,6 +4,7 @@ import { Tabs, usePathname } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
 
 import { supabase } from "../../lib/supabase";
+import { countNotificationsFor } from "../../lib/notifQuery";
 import { useAuth } from "../../contexts/AuthContext";
 import { useTheme } from "../../contexts/ThemeContext";
 
@@ -38,18 +39,10 @@ export default function TabLayout() {
       .select("id")
       .eq("user_id", user!.id);
 
-    if (!ruleRows?.length) {
-      setUnreadCount(0);
-      return;
-    }
-
-    const { count } = await supabase
-      .from("notifications")
-      .select("*", { count: "exact", head: true })
-      .in("rule_id", ruleRows.map((r) => r.id))
-      .eq("is_read", false);
-
-    setUnreadCount(count ?? 0);
+    // Đếm theo user_id (0021) để tính cả thông báo "mồ côi rule" (nhắc hẹn đã tự xóa rule).
+    setUnreadCount(
+      await countNotificationsFor(user!.id, (ruleRows ?? []).map((r) => r.id), true),
+    );
   };
 
   return (

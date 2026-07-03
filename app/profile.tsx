@@ -13,6 +13,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 
 import { supabase } from "../lib/supabase";
+import { countNotificationsFor } from "../lib/notifQuery";
 import { alertMessage, confirmAsync } from "../lib/dialog";
 import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";
@@ -53,20 +54,14 @@ export default function ProfileScreen() {
 
     setRulesCount(rc ?? 0);
 
-    if (rc && rc > 0) {
-      const { data: ruleRows } = await supabase
-        .from("rules")
-        .select("id")
-        .eq("user_id", user!.id);
-
-      if (ruleRows && ruleRows.length > 0) {
-        const { count: nc } = await supabase
-          .from("notifications")
-          .select("*", { count: "exact", head: true })
-          .in("rule_id", ruleRows.map((r) => r.id));
-        setNotificationsCount(nc ?? 0);
-      }
-    }
+    // Đếm theo user_id (0021) — tính cả thông báo "mồ côi rule" (nhắc hẹn đã tự xóa rule).
+    const { data: ruleRows } = await supabase
+      .from("rules")
+      .select("id")
+      .eq("user_id", user!.id);
+    setNotificationsCount(
+      await countNotificationsFor(user!.id, (ruleRows ?? []).map((r) => r.id)),
+    );
   };
 
   // Avatar: 1-2 chữ cái đầu của họ tên, fallback là chữ cái đầu email

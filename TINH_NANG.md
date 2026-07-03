@@ -130,10 +130,12 @@ khi thêm loại mới dựa-trên-heuristic. Provider lỗi → tự rơi về 
   run-monitor (không thì 0 tốn gì). Reminder tới hạn được ưu tiên quét ĐẦU TIÊN trong hàng đợi.
 - **Khác biệt với rule đặt giờ (mục 4c):** nhắc hẹn chỉ bắn **ĐÚNG 1 LẦN** rồi rule **tự tắt**; rule đặt
   giờ là lịch hẹn LẶP LẠI (hằng ngày/tuần) để theo dõi tin.
-- **Sau khi nhắc xong (2026-07-03):** rule KHÔNG còn nằm lẫn trong danh sách chính ở tab Rules nữa —
-  gom vào mục gấp gọn **"Nhắc hẹn đã xong (n)"** cuối trang (hiện "Đã nhắc lúc HH:MM dd/mm", bấm mở
-  chi tiết được, trạng thái ghi "Đã nhắc xong"). Xóa từng cái hoặc "Xóa tất cả" — xóa rule sẽ xóa kèm
-  thông báo nhắc của nó (FK cascade) nên app không tự xóa hộ, để người dùng quyết.
+- **Sau khi nhắc xong (nâng cấp 2026-07-03, cần migration 0021):** rule **TỰ XÓA HẲN** — không còn
+  nằm ở tab Rules nữa, nhưng **thông báo nhắc VẪN CÒN** trong app (bằng chứng "app đã nhắc gì, lúc
+  nào"). Kỹ thuật: notifications có cột chủ sở hữu trực tiếp `user_id` (0021); server gán user_id +
+  gỡ `rule_id` cho thông báo TRƯỚC khi xóa rule → FK cascade không kéo thông báo theo; RLS + mọi màn
+  client lọc theo user_id (lib/notifQuery, có fallback rule_id khi 0021 chưa chạy → khi đó giữ hành
+  vi cũ: tắt rule + gom vào mục "Nhắc hẹn đã xong" ở tab Rules).
 - **Cách hoạt động khi tới hạn:** không gọi AI — push thẳng "⏰ Nhắc hẹn: [nội dung]" kèm giờ hẹn; nếu
   hệ thống bận nên nhắc muộn thì nêu rõ số phút trễ trong nội dung (không bao giờ bỏ qua, dù muộn bao lâu).
 - **Chống bắn TRÙNG (fix 2026-07-03):** nhiều lượt quét có thể chạy chồng nhau (cron 15' + tick mỗi
@@ -291,8 +293,10 @@ Công cụ kiểm thử nhanh, tách khỏi trang quản trị:
 | `0018_url_watch.sql` | Theo dõi trang web cụ thể theo URL (mục 3g) + cấp quyền đăng nhập | ✅ Đã chạy (2026-07-03) |
 | `0019_fix_cron_keys.sql` | Sửa key 2 cron job (sau sự cố chạy lại migration) | ✅ Đã chạy + verify 200 (2026-07-03) |
 | `0020_rule_health.sql` | Sức khỏe rule (`last_error`) + watchdog báo cron chết | ✅ Đã chạy (2026-07-03) |
+| `0021_notifications_user_id.sql` | Nhắc hẹn tự xóa hẳn sau khi nhắc (giữ thông báo) + dọn nhắc hẹn sót | ⏳ CHỜ CHẠY — không cần thay key gì |
 
-→ Mọi migration đã chạy đủ — không còn việc SQL nào treo.
+→ Còn `0021_notifications_user_id.sql` chưa chạy; chưa chạy thì nhắc hẹn giữ hành vi cũ (tắt rule,
+gom vào mục "Nhắc hẹn đã xong"), không hỏng gì.
 
 ---
 

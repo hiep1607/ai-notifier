@@ -255,6 +255,7 @@ async function insertNotif(supabase: any, rule: Rule, f: NotifFields, push = tru
   // deno-lint-ignore no-explicit-any
   const row: Record<string, any> = {
     rule_id: rule.id,
+    user_id: rule.user_id, // chủ sở hữu trực tiếp (0021) — thông báo sống sót khi rule bị xóa
     title,
     content: f.content ?? "",
     details: f.details ?? "",
@@ -268,8 +269,13 @@ async function insertNotif(supabase: any, rule: Rule, f: NotifFields, push = tru
   };
   // Chỉ set khi có (tránh tham chiếu cột nếu migration 0009 chưa chạy).
   if (f.related_notification_id) row.related_notification_id = f.related_notification_id;
-  const { data: ins, error } = await supabase.from("notifications")
+  let { data: ins, error } = await supabase.from("notifications")
     .insert([row]).select("id").single();
+  if (error) {
+    // Cột user_id chưa có (0021 chưa chạy) → ghi lại không kèm, tuyệt đối không mất thông báo.
+    delete row.user_id;
+    ({ data: ins, error } = await supabase.from("notifications").insert([row]).select("id").single());
+  }
   if (error || !ins) return 0;
   // Rule "để êm" (muted) HOẶC filler (push=false): vẫn lưu để xem trong app, KHÔNG đẩy push.
   if (!rule.muted && push) {
@@ -1048,9 +1054,20 @@ async function monitorReminder(supabase: any, rule: Rule): Promise<MonitorRuleRe
     sentiment: "neutral",
     is_important: true, // người dùng chủ động đặt hẹn = quan trọng
   });
-  // Nhắc 1 lần rồi tự tắt — rule reminder không lặp (muốn nhắc lại thì tạo rule mới).
+  // Nhắc 1 lần rồi TỰ XÓA HẲN rule (user chọn 2026-07-03) — nhưng GIỮ thông báo nhắc:
+  // gán chủ sở hữu trực tiếp + gỡ rule_id TRƯỚC khi xóa để FK cascade không kéo nó theo.
+  // Migration 0021 chưa chạy (thiếu cột user_id) → update lỗi → giữ hành vi cũ: tắt rule
+  // (client vẫn gom vào mục "Nhắc hẹn đã xong").
   if (inserted > 0) {
-    await supabase.from("rules").update({ is_active: false }).eq("id", rule.id);
+    const { error: detachErr } = await supabase
+      .from("notifications")
+      .update({ user_id: rule.user_id, rule_id: null })
+      .eq("rule_id", rule.id);
+    if (!detachErr) {
+      await supabase.from("rules").delete().eq("id", rule.id);
+    } else {
+      await supabase.from("rules").update({ is_active: false }).eq("id", rule.id);
+    }
   }
   return { inserted, note: { title, kind: "real" } };
 }
