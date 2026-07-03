@@ -28,7 +28,10 @@ import {
   stripHtml,
   discoverFeedUrl,
   extractPageLinks,
+  normalizeWatchUrl,
+  looksLikeFeed,
 } from "../../supabase/functions/_shared/monitorLogic";
+import { parseRss } from "../../supabase/functions/_shared/rss";
 
 describe("intervalMs", () => {
   it("đổi số phút dạng chuỗi sang ms, tối thiểu 30 phút", () => {
@@ -451,5 +454,76 @@ describe("extractPageLinks — link bài viết trên trang", () => {
   it("bỏ anchor ngắn (menu/nút); tôn trọng max", () => {
     expect(extractPageLinks(`<a href="/a">Ngắn</a>`, "https://x.vn")).toHaveLength(0);
     expect(extractPageLinks(html, "https://x.vn", 1)).toHaveLength(1);
+  });
+});
+
+describe("normalizeWatchUrl — quy đổi link MXH dạng thường sang link đọc được", () => {
+  it("t.me/kênh → t.me/s/kênh; đã /s/ hoặc link mời thì giữ nguyên", () => {
+    expect(normalizeWatchUrl("https://t.me/telegram")).toBe("https://t.me/s/telegram");
+    expect(normalizeWatchUrl("https://t.me/s/telegram")).toBe("https://t.me/s/telegram");
+    expect(normalizeWatchUrl("https://t.me/+Abc123")).toBe("https://t.me/+Abc123");
+  });
+
+  it("reddit sub/user → .rss", () => {
+    expect(normalizeWatchUrl("https://www.reddit.com/r/vietnam")).toBe("https://www.reddit.com/r/vietnam/.rss");
+    expect(normalizeWatchUrl("https://reddit.com/r/vietnam/")).toBe("https://www.reddit.com/r/vietnam/.rss");
+    expect(normalizeWatchUrl("https://old.reddit.com/user/spez")).toBe("https://www.reddit.com/user/spez/.rss");
+    // Link bài viết cụ thể (sâu hơn 2 cấp) → giữ nguyên.
+    expect(normalizeWatchUrl("https://www.reddit.com/r/vietnam/comments/abc/x")).toBe("https://www.reddit.com/r/vietnam/comments/abc/x");
+  });
+
+  it("bsky profile → /rss; youtube /channel/UC… → feed videos.xml", () => {
+    expect(normalizeWatchUrl("https://bsky.app/profile/bsky.app")).toBe("https://bsky.app/profile/bsky.app/rss");
+    expect(normalizeWatchUrl("https://www.youtube.com/channel/UCBR8-60-B28hp2BmDPdntcQ"))
+      .toBe("https://www.youtube.com/feeds/videos.xml?channel_id=UCBR8-60-B28hp2BmDPdntcQ");
+    // @handle không suy ra channel_id được → giữ nguyên.
+    expect(normalizeWatchUrl("https://www.youtube.com/@MixiGaming")).toBe("https://www.youtube.com/@MixiGaming");
+  });
+
+  it("trang thường / chuỗi rác → giữ nguyên", () => {
+    expect(normalizeWatchUrl("https://vnexpress.net/kinh-doanh")).toBe("https://vnexpress.net/kinh-doanh");
+    expect(normalizeWatchUrl("không phải url")).toBe("không phải url");
+  });
+});
+
+describe("looksLikeFeed — body là feed XML hay trang HTML", () => {
+  it("nhận rss/atom, từ chối html", () => {
+    expect(looksLikeFeed('<?xml version="1.0"?><rss version="2.0"><channel>')).toBe(true);
+    expect(looksLikeFeed('<feed xmlns="http://www.w3.org/2005/Atom"><entry>')).toBe(true);
+    expect(looksLikeFeed("<!doctype html><html><head><rss-widget>")).toBe(false);
+    expect(looksLikeFeed("chỉ là text thường")).toBe(false);
+  });
+});
+
+describe("parseRss — hỗ trợ ATOM (Reddit/YouTube/GitHub)", () => {
+  it("entry Atom: link ở attribute href (ưu tiên rel=alternate), summary/updated", () => {
+    const atom = `<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom">
+      <entry>
+        <title>Expo SDK 53</title>
+        <link rel="alternate" href="https://github.com/expo/expo/releases/tag/sdk-53"/>
+        <summary>Bản phát hành mới với nhiều cải tiến lớn cho web</summary>
+        <updated>2026-07-01T00:00:00Z</updated>
+      </entry>
+      <entry>
+        <title>Video mới</title>
+        <link href="https://www.youtube.com/watch?v=abc123"/>
+        <media:description>Mô tả video</media:description>
+        <published>2026-07-02T00:00:00Z</published>
+      </entry>
+    </feed>`;
+    const items = parseRss(atom);
+    expect(items).toHaveLength(2);
+    expect(items[0].title).toBe("Expo SDK 53");
+    expect(items[0].link).toBe("https://github.com/expo/expo/releases/tag/sdk-53");
+    expect(items[0].description).toContain("cải tiến lớn");
+    expect(items[1].link).toBe("https://www.youtube.com/watch?v=abc123");
+    expect(items[1].pubDate).toBe("2026-07-02T00:00:00Z");
+  });
+
+  it("RSS 2.0 cũ vẫn parse như trước (không vỡ đường RSS báo VN)", () => {
+    const rss = `<rss><channel><item><title>Bài A</title><link>https://x.vn/a</link><description>Mô tả A</description><pubDate>Wed, 01 Jul 2026 00:00:00 +0700</pubDate></item></channel></rss>`;
+    const items = parseRss(rss);
+    expect(items).toHaveLength(1);
+    expect(items[0].link).toBe("https://x.vn/a");
   });
 });

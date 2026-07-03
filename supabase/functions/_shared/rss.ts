@@ -44,7 +44,9 @@ function pickTag(block: string, tag: string): string {
   return decodeEntities(v).replace(/\s+/g, " ").trim();
 }
 
-// Parse RSS 2.0 bằng regex (edge runtime không có DOMParser; format feed VN đơn giản, đủ dùng).
+// Parse RSS 2.0 + ATOM bằng regex (edge runtime không có DOMParser; đủ dùng).
+// Atom (<entry>) cần cho nguồn MXH/dev: Reddit .rss, YouTube feeds/videos.xml,
+// GitHub releases.atom đều là Atom chứ không phải RSS 2.0.
 export function parseRss(xml: string, limit = 30): RssItem[] {
   const out: RssItem[] = [];
   const blocks = xml.match(/<item(?:\s[^>]*)?>[\s\S]*?<\/item>/gi) ?? [];
@@ -54,6 +56,24 @@ export function parseRss(xml: string, limit = 30): RssItem[] {
       link: pickTag(b, "link"),
       description: pickTag(b, "description").slice(0, 500),
       pubDate: pickTag(b, "pubDate"),
+    };
+    if (item.title && item.link) out.push(item);
+    if (out.length >= limit) break;
+  }
+  if (out.length > 0) return out;
+
+  // ATOM: link nằm ở ATTRIBUTE href (ưu tiên rel="alternate"), không phải text trong tag.
+  const entries = xml.match(/<entry(?:\s[^>]*)?>[\s\S]*?<\/entry>/gi) ?? [];
+  for (const b of entries) {
+    const linkTags = b.match(/<link\b[^>]*>/gi) ?? [];
+    const alt = linkTags.find((t) => /rel=["']alternate["']/i.test(t)) ?? linkTags[0];
+    const link = decodeEntities(alt?.match(/href=["']([^"']+)["']/i)?.[1] ?? "");
+    const item: RssItem = {
+      title: pickTag(b, "title"),
+      link,
+      description: (pickTag(b, "summary") || pickTag(b, "content") || pickTag(b, "media:description"))
+        .slice(0, 500),
+      pubDate: pickTag(b, "published") || pickTag(b, "updated"),
     };
     if (item.title && item.link) out.push(item);
     if (out.length >= limit) break;

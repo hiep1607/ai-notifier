@@ -405,6 +405,53 @@ export function stripHtml(html: string, maxChars = 12000): string {
   return text.length > maxChars ? text.slice(0, maxChars) : text;
 }
 
+// QUY ĐỔI link người dùng dán dạng "thường" sang link ĐỌC ĐƯỢC bằng fetch tĩnh.
+// Đã kiểm chứng thực tế 2026-07-03:
+//  - t.me/kênh chỉ có card giới thiệu, bản t.me/s/kênh mới hiện nội dung bài;
+//  - reddit HTML mới là SPA không khai feed, nhưng thêm /.rss là có feed chuẩn;
+//  - bsky.app/profile/x có feed tại .../rss (trang cũng khai báo, đổi thẳng đỡ 1 fetch);
+//  - youtube.com/channel/UC… bị chặn bot nhưng feeds/videos.xml?channel_id=UC… mở tự do.
+// Không khớp mẫu nào → giữ nguyên (trang thường đã có auto-discovery feed lo).
+export function normalizeWatchUrl(url: string): string {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return url;
+  }
+  const host = u.hostname.replace(/^www\./i, "").toLowerCase();
+  const path = u.pathname.replace(/\/+$/, "");
+
+  // Telegram: kênh công khai (1 segment, không phải link mời "+xxx" hay đã /s/).
+  if (host === "t.me" && /^\/[A-Za-z0-9_]+$/.test(path) && !path.startsWith("/s/")) {
+    return `https://t.me/s${path}`;
+  }
+  // Reddit: subreddit / trang user → feed .rss.
+  if ((host === "reddit.com" || host.endsWith(".reddit.com")) && /^\/(r|user)\/[^/]+$/.test(path)) {
+    return `https://www.reddit.com${path}/.rss`;
+  }
+  // Bluesky: profile → feed RSS chính chủ.
+  if (host === "bsky.app") {
+    const m = path.match(/^\/profile\/([^/]+)$/);
+    if (m) return `https://bsky.app/profile/${m[1]}/rss`;
+  }
+  // YouTube: link kênh dạng /channel/UC… → feed video chính thức (dạng /@tên KHÔNG đổi
+  // được — không suy ra channel_id nếu không fetch, mà trang @tên lại chặn bot).
+  if (host === "youtube.com" || host === "m.youtube.com") {
+    const m = path.match(/^\/channel\/(UC[\w-]+)/);
+    if (m) return `https://www.youtube.com/feeds/videos.xml?channel_id=${m[1]}`;
+  }
+  return url;
+}
+
+// Body fetch về là FEED (XML) chứ không phải trang HTML? — người dùng/normalizeWatchUrl
+// có thể đưa thẳng link .rss/.atom/feeds/videos.xml → xử lý dạng feed, khỏi bóc HTML.
+export function looksLikeFeed(body: string): boolean {
+  const head = String(body ?? "").slice(0, 1000).toLowerCase();
+  if (head.includes("<html")) return false;
+  return /<rss[\s>]|<feed[\s>]|<rdf:rdf/.test(head);
+}
+
 // Feed RSS/Atom mà TRANG TỰ KHAI BÁO trong <head> (rel="alternate" type="application/rss+xml").
 // Trang tin tức (Tuổi Trẻ, CafeF, blog WordPress...) đa số có — ưu tiên đọc feed thay vì
 // bóc HTML: tiêu đề + link bài CHUẨN, dedup ổn định. Trả "" nếu trang không khai báo.

@@ -47,6 +47,16 @@ THEO DÕI TRANG WEB CỤ THỂ (source_type="url"):
 - Trang cần ĐĂNG NHẬP mới xem được (trang cá nhân, đơn hàng, nhóm kín...) → VẪN tạo rule bình thường, và trong "message" nhắc thêm: sau khi tạo, mở chi tiết rule → mục "Cấp quyền đăng nhập" để dán Cookie thì hệ thống mới đọc được.
 - App di động thuần (không có bản web/URL) thì KHÔNG theo dõi được → giải thích và gợi ý dùng bản web của dịch vụ đó nếu có.
 
+BẢN ĐỒ NGUỒN PHỔ BIẾN — các yêu cầu sau TỰ DỰNG được watch_url, KHÔNG cần bắt người dùng đưa link:
+- "Dự án nổi bật/trending trên GitHub" → "https://github.com/trending" (theo ngôn ngữ: "https://github.com/trending/python?since=daily"; theo tuần: "?since=weekly").
+- "Bản phát hành/release mới của repo GitHub owner/tên" → "https://github.com/owner/tên/releases.atom".
+- "Bài hot trên subreddit r/xyz" → "https://www.reddit.com/r/xyz/.rss".
+- Kênh Telegram công khai tên "xyz" → "https://t.me/s/xyz".
+- Tài khoản Bluesky "tên.bsky.social" → "https://bsky.app/profile/tên.bsky.social/rss".
+- Tài khoản Mastodon "@user@instance" → "https://instance/@user.rss".
+- Kênh YouTube: người dùng đưa link dạng youtube.com/channel/UC... thì dùng thẳng link đó; chỉ có tên kênh/@handle → hỏi xin link kênh (mở kênh trên web, copy URL trên thanh địa chỉ).
+- KHÔNG hỗ trợ: Facebook, Instagram, Threads, TikTok, Zalo (các trang này chặn máy đọc, kể cả có đăng nhập), và X/Twitter (chỉ cho đọc qua API trả phí). Người dùng đòi các nguồn này → "need_info": giải thích ngắn gọn + gợi ý nguồn thay thế theo dõi được (kênh Telegram/YouTube/website của người hay trang đó nếu có).
+
 HAI KIỂU THEO DÕI — phải xác định rõ người dùng muốn kiểu nào:
   (1) ĐỊNH KỲ: báo tin mới đều đặn. → frequency = số phút (≥30), condition = "".
   (2) THEO ĐIỀU KIỆN: chỉ báo KHI chạm yêu cầu (ngưỡng/biến động). → frequency = "change", condition = mô tả điều kiện cụ thể.
@@ -123,7 +133,15 @@ User: "báo tôi khi sản phẩm này giảm dưới 500k https://shop.example.
 
 VÍ DỤ K — muốn theo dõi trang cụ thể nhưng CHƯA đưa link:
 User: "theo dõi trạng thái đơn hàng của tôi trên Shopee"
-→ { "status": "need_info", "message": "Bạn dán link trang đơn hàng cần theo dõi giúp mình nhé (URL đầy đủ bắt đầu bằng https://). Lưu ý: trang cần đăng nhập thì sau khi tạo rule, bạn mở chi tiết rule → \\"Cấp quyền đăng nhập\\" để dán Cookie." }`;
+→ { "status": "need_info", "message": "Bạn dán link trang đơn hàng cần theo dõi giúp mình nhé (URL đầy đủ bắt đầu bằng https://). Lưu ý: trang cần đăng nhập thì sau khi tạo rule, bạn mở chi tiết rule → \\"Cấp quyền đăng nhập\\" để dán Cookie." }
+
+VÍ DỤ L — nguồn PHỔ BIẾN trong bản đồ: TỰ dựng link, không hỏi lại:
+User: "gửi tôi các dự án nổi bật trên GitHub vào mỗi sáng"
+→ { "status": "ready", "message": "Đã tạo rule bản tin GitHub trending mỗi sáng:", "rules": [ { "title": "GitHub trending mỗi sáng", "description": "Tóm tắt các dự án nổi bật trên GitHub lúc 8h sáng hằng ngày.", "keyword": "dự án mã nguồn mở nổi bật trong ngày", "category": "tech", "sources": "", "frequency": "1440", "run_at": "08:00", "condition": "", "noise_risk": "low", "noise_reason": "", "source_type": "url", "watch_url": "https://github.com/trending" } ] }
+
+VÍ DỤ M — nguồn KHÔNG hỗ trợ → giải thích + gợi ý thay thế:
+User: "theo dõi trang Facebook của Sơn Tùng, báo tôi khi có bài mới"
+→ { "status": "need_info", "message": "Facebook chặn hệ thống máy đọc nội dung (kể cả khi đăng nhập) nên mình chưa theo dõi được trang Facebook. Nếu người đó có kênh YouTube, kênh Telegram hoặc website riêng thì gửi mình link — các nguồn đó theo dõi tốt. Bạn muốn dùng nguồn nào?" }`;
 
 function asText(v: unknown): string {
   if (Array.isArray(v)) return v.join(", ");

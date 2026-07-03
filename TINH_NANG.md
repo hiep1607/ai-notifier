@@ -160,6 +160,14 @@ khi thêm loại mới dựa-trên-heuristic. Provider lỗi → tự rơi về 
   các header này. Cookie hết hạn → tự báo "🔒 Quyền đăng nhập hết hạn" nhắc dán lại; nút "Thu hồi quyền"
   xóa cookie đã lưu. Cookie nằm ở cột `watch_auth` bảng rules — RLS chặn user khác đọc, chỉ chủ rule +
   hệ thống quét (service_role) thấy.
+- **Hiểu yêu cầu tự nhiên — BẢN ĐỒ NGUỒN (thêm 2026-07-03):** AI tạo rule TỰ DỰNG link cho nguồn phổ
+  biến, người dùng không cần biết link kỹ thuật: "dự án nổi bật GitHub mỗi sáng" → `github.com/trending`
+  (+ biến thể ngôn ngữ/tuần), release repo → `releases.atom`, "bài hot r/xyz" → Reddit `.rss`, kênh
+  Telegram/Bluesky/Mastodon → link feed đúng. Server cũng **tự quy đổi link dán dạng thường**
+  (`normalizeWatchUrl`): `t.me/kênh`→`t.me/s/kênh`, `reddit.com/r/x`→`.rss`, `bsky.app/profile/x`→`/rss`,
+  `youtube.com/channel/UC…`→feed video. `parseRss` hiểu cả **Atom** (Reddit/YouTube/GitHub); watch_url
+  là feed trực tiếp thì xử lý thẳng dạng feed. Người dùng đòi Facebook/Instagram/Threads/TikTok/Zalo/X
+  → AI giải thích không hỗ trợ (chặn máy đọc / X đọc phải trả phí API) + gợi ý nguồn thay thế.
 - **An toàn:** chặn SSRF (chỉ http/https tới host công khai — localhost/IP nội bộ/metadata cloud bị từ
   chối); trang sập/URL hỏng thì bỏ lượt đó chờ lượt sau, KHÔNG rơi xuống Gemini search (đỡ tốn quota,
   đỡ tin lạc đề). "Soi bộ lọc" ở Trang test hỗ trợ rule url (nhãn 🌐).

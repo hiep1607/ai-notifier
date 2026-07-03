@@ -36,6 +36,8 @@ import {
   discoverFeedUrl,
   extractPageLinks,
   isWatchableUrl,
+  normalizeWatchUrl,
+  looksLikeFeed,
   type PageLink,
   type SourceType,
   type ProviderNotif,
@@ -426,8 +428,11 @@ async function monitorProvider(supabase: any, rule: Rule, srcType: SourceType): 
 // ---- THEO DÕI TRANG WEB CỤ THỂ (Pha E): fetch URL người dùng đưa, AI trích giá trị ----
 
 // URL của rule: cột watch_url (tường minh) hoặc URL nằm ngay trong keyword (rule cũ/gõ tay).
+// Quy đổi link MXH dạng "thường" sang link đọc được (t.me/s/, reddit .rss, bsky /rss,
+// youtube channel → feed) — người dùng dán link nào quen tay cũng chạy.
 function ruleWatchUrl(rule: Rule): string {
-  return (rule.watch_url ?? "").trim() || extractWatchUrl(rule.keyword);
+  const raw = (rule.watch_url ?? "").trim() || extractWatchUrl(rule.keyword);
+  return raw ? normalizeWatchUrl(raw) : "";
 }
 
 interface UrlExtract {
@@ -538,32 +543,16 @@ interface UrlGates {
   changeGate: boolean;
 }
 
-// ĐƯỜNG FEED cho rule url (trang tin tức/blog): trang tự khai báo RSS trong <head>
-// (Tuổi Trẻ, CafeF, WordPress...) → đọc feed thay vì bóc HTML — tiêu đề + link bài
-// CHUẨN, dedup ổn định, cùng chất lượng đường RSS Pha C nhưng cho TRANG BẤT KỲ.
-// Trả null = không dùng được feed (không khai báo / feed hỏng / không bài mới liên quan)
-// → caller đọc HTML như thường (rule giá trên trang có feed blog không bị cướp).
+// Xử lý danh sách bài từ FEED cho rule url (dùng chung: feed trang khai báo + watch_url
+// là feed trực tiếp). Trả null = không có bài mới liên quan → caller quyết định tiếp.
 // deno-lint-ignore no-explicit-any
-async function monitorUrlViaFeed(
+async function monitorFeedItems(
   supabase: any,
   rule: Rule,
-  page: WatchPage,
+  items: RssItem[],
   seenTitles: Set<string>,
   g: UrlGates,
 ): Promise<MonitorRuleResult | null> {
-  const feedUrl = discoverFeedUrl(page.html, page.finalUrl);
-  if (!feedUrl || !isWatchableUrl(feedUrl)) return null;
-
-  let items: RssItem[];
-  try {
-    const res = await fetch(feedUrl, {
-      headers: { "Accept": "application/rss+xml, application/xml, text/xml" },
-    });
-    if (!res.ok) return null;
-    items = parseRss(await res.text());
-  } catch {
-    return null;
-  }
   if (items.length === 0) return null;
 
   const unseen = items.filter((it) => !seenTitles.has(normTitle(it.title))).slice(0, 25);
@@ -598,6 +587,33 @@ async function monitorUrlViaFeed(
     is_important: g.hasCond ? true : pick.is_important,
   });
   return { inserted, value, note: { title: chosen.title, kind: "real" } };
+}
+
+// ĐƯỜNG FEED cho rule url (trang tin tức/blog): trang tự khai báo RSS trong <head>
+// (Tuổi Trẻ, CafeF, WordPress, Bluesky, GitHub...) → đọc feed thay vì bóc HTML.
+// Trả null = không dùng được feed → caller đọc HTML như thường.
+// deno-lint-ignore no-explicit-any
+async function monitorUrlViaFeed(
+  supabase: any,
+  rule: Rule,
+  page: WatchPage,
+  seenTitles: Set<string>,
+  g: UrlGates,
+): Promise<MonitorRuleResult | null> {
+  const feedUrl = discoverFeedUrl(page.html, page.finalUrl);
+  if (!feedUrl || !isWatchableUrl(feedUrl)) return null;
+
+  let items: RssItem[];
+  try {
+    const res = await fetch(feedUrl, {
+      headers: { "Accept": "application/rss+xml, application/xml, text/xml" },
+    });
+    if (!res.ok) return null;
+    items = parseRss(await res.text());
+  } catch {
+    return null;
+  }
+  return await monitorFeedItems(supabase, rule, items, seenTitles, g);
 }
 
 // Quét 1 rule THEO DÕI TRANG WEB: fetch URL (kèm quyền đăng nhập nếu người dùng đã cấp)
@@ -636,6 +652,17 @@ async function monitorUrl(supabase: any, rule: Rule): Promise<MonitorRuleResult>
   const seenTitles = new Set<string>(
     (existing ?? []).map((n: { title: string }) => normTitle(String(n.title ?? ""))).filter(Boolean),
   );
+
+  // watch_url là FEED TRỰC TIẾP (reddit .rss / youtube feeds/videos.xml / github .atom —
+  // người dùng dán thẳng hoặc normalizeWatchUrl quy đổi) → xử lý dạng feed, khỏi bóc HTML.
+  if (looksLikeFeed(page.html)) {
+    const items = parseRss(page.html);
+    if (items.length > 0) {
+      const viaSelf = await monitorFeedItems(supabase, rule, items, seenTitles, gates);
+      // Feed là TOÀN BỘ nội dung nguồn: không bài mới/liên quan → im, chờ lượt sau.
+      return viaSelf ?? { inserted: 0, note: { title: "", kind: "skipped" } };
+    }
+  }
 
   // ƯU TIÊN FEED trang tự khai báo (tin tức/blog) — link bài thật, dedup chuẩn.
   const viaFeed = await monitorUrlViaFeed(supabase, rule, page, seenTitles, gates);
