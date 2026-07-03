@@ -297,10 +297,9 @@ Công cụ kiểm thử nhanh, tách khỏi trang quản trị:
 | `0018_url_watch.sql` | Theo dõi trang web cụ thể theo URL (mục 3g) + cấp quyền đăng nhập | ✅ Đã chạy (2026-07-03) |
 | `0019_fix_cron_keys.sql` | Sửa key 2 cron job (sau sự cố chạy lại migration) | ✅ Đã chạy + verify 200 (2026-07-03) |
 | `0020_rule_health.sql` | Sức khỏe rule (`last_error`) + watchdog báo cron chết | ✅ Đã chạy (2026-07-03) |
-| `0021_notifications_user_id.sql` | Nhắc hẹn tự xóa hẳn sau khi nhắc (giữ thông báo) + dọn nhắc hẹn sót | ⏳ CHỜ CHẠY — không cần thay key gì |
+| `0021_notifications_user_id.sql` | Nhắc hẹn tự xóa hẳn sau khi nhắc (giữ thông báo) + dọn nhắc hẹn sót | ✅ Đã chạy (2026-07-03) |
 
-→ Còn `0021_notifications_user_id.sql` chưa chạy; chưa chạy thì nhắc hẹn giữ hành vi cũ (tắt rule,
-gom vào mục "Nhắc hẹn đã xong"), không hỏng gì.
+→ Mọi migration đã chạy đủ — không còn việc SQL nào treo.
 
 ---
 

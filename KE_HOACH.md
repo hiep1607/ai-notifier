@@ -64,7 +64,7 @@ pg_cron (mỗi 15 phút) → run-monitor (quét nền, lọc rule tới hạn th
 - [x] **Chạy SQL `0018_url_watch.sql`** (cột `watch_url` + `watch_auth`) — user xác nhận đã chạy 2026-07-03; theo dõi trang web theo URL (TINH_NANG.md §3g) dùng được đầy đủ.
 - [x] **Deploy web + OTA** cho bản URL-watch — xong 2026-07-03 sau khi user cho phép tiếp tục: web live https://ai-notifier-new.expo.app (200), OTA update group ea18bda9 (android+iOS, runtime 1.0.0, branch preview).
 - [x] **Chạy SQL `0020_rule_health.sql`** (cột `rules.last_error` + watchdog báo cron chết) — user xác nhận đã chạy 2026-07-03. Sức khỏe rule + còi báo cron chết hoạt động đầy đủ.
-- [ ] **Chạy SQL `0021_notifications_user_id.sql`** (nhắc hẹn tự XÓA HẲN sau khi nhắc nhưng giữ thông báo; dọn luôn nhắc hẹn đã xong còn sót) — KHÔNG cần thay key, SQL Editor → Run. Chưa chạy thì nhắc hẹn giữ hành vi cũ (tắt rule + mục "Nhắc hẹn đã xong"), không hỏng gì.
+- [x] **Chạy SQL `0021_notifications_user_id.sql`** (nhắc hẹn tự XÓA HẲN sau khi nhắc nhưng giữ thông báo; dọn luôn nhắc hẹn đã xong còn sót) — user xác nhận đã chạy 2026-07-03. MỌI migration đã chạy đủ.
 
 ## 🗺 KẾ HOẠCH: Các loại theo dõi tiếp theo (lập 2026-07-02)
 > Ý tưởng xương sống: hiện MỌI rule đều đi qua Gemini + Google Search grounding — vừa tốn quota
