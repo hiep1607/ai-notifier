@@ -39,6 +39,25 @@ const TABS = [
   { key: "paused", label: "Tạm dừng" },
 ];
 
+// Nhắc hẹn ĐÃ NHẮC XONG: server bắn thông báo rồi tự tắt rule (is_active=false,
+// last_run_at >= remind_at). Không còn việc gì để làm với nó → tách khỏi danh sách
+// chính (kể cả tab Tạm dừng), gom vào mục "Nhắc hẹn đã xong" để xem lại / xóa.
+// KHÔNG tự xóa hộ: xóa rule sẽ kéo thông báo nhắc bị xóa theo (FK cascade 0014).
+function isDoneReminder(r: Rule): boolean {
+  return (
+    r.source_type === "reminder" &&
+    !r.is_active &&
+    Boolean(r.last_run_at && r.remind_at) &&
+    Date.parse(r.last_run_at!) >= Date.parse(r.remind_at!)
+  );
+}
+
+function formatRemindTime(iso?: string): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return `${d.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })} ${d.toLocaleDateString("vi-VN")}`;
+}
+
 export default function RulesScreen() {
   const { user } = useAuth();
   const { colors } = useTheme();
@@ -54,6 +73,7 @@ export default function RulesScreen() {
   // Banner "bật lọc rác cho rule cũ": ẩn vĩnh viễn sau khi user đóng (nhớ qua AsyncStorage).
   const [noiseBannerHidden, setNoiseBannerHidden] = useState(true);
   const [applyingImportant, setApplyingImportant] = useState(false);
+  const [showDoneReminders, setShowDoneReminders] = useState(false);
 
   useEffect(() => {
     AsyncStorage.getItem("@noise_banner_hidden").then((v) => setNoiseBannerHidden(v === "1"));
@@ -164,6 +184,19 @@ export default function RulesScreen() {
     setRules((prev) => prev.filter((r) => r.id !== id));
   };
 
+  // Dọn 1 lần mọi nhắc hẹn đã xong (kèm thông báo nhắc của chúng — cascade).
+  const deleteAllDoneReminders = async () => {
+    const ids = rules.filter(isDoneReminder).map((r) => r.id);
+    if (ids.length === 0) return;
+    const ok = await confirmAsync(
+      "Xóa nhắc hẹn đã xong",
+      `Xóa ${ids.length} nhắc hẹn đã nhắc xong (kèm thông báo nhắc của chúng)?`,
+    );
+    if (!ok) return;
+    await supabase.from("rules").delete().in("id", ids);
+    setRules((prev) => prev.filter((r) => !ids.includes(r.id)));
+  };
+
   const renderRightActions = (id: string) => (
     <TouchableOpacity style={styles.deleteAction} onPress={() => handleDeleteRule(id)}>
       <Ionicons name="trash-outline" size={22} color="white" />
@@ -171,12 +204,16 @@ export default function RulesScreen() {
     </TouchableOpacity>
   );
 
+  // Nhắc hẹn đã xong tách riêng khỏi danh sách chính.
+  const doneReminders = rules.filter(isDoneReminder);
+  const liveRules = rules.filter((r) => !isDoneReminder(r));
+
   const tabFiltered =
     activeTab === "all"
-      ? rules
+      ? liveRules
       : activeTab === "active"
-      ? rules.filter((r) => r.is_active)
-      : rules.filter((r) => !r.is_active);
+      ? liveRules.filter((r) => r.is_active)
+      : liveRules.filter((r) => !r.is_active);
 
   const q = searchText.trim().toLowerCase();
   const filteredRules =
@@ -398,6 +435,49 @@ export default function RulesScreen() {
             </ReanimatedSwipeable>
           );
         })}
+
+        {/* NHẮC HẸN ĐÃ XONG — server nhắc rồi tự tắt; gom gọn ở đây để xem lại / dọn dẹp */}
+        {!searchText && doneReminders.length > 0 && (
+          <>
+            <TouchableOpacity
+              style={styles.doneHeader}
+              onPress={() => setShowDoneReminders((v) => !v)}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="checkmark-done-outline" size={16} color={colors.subText} />
+              <Text style={styles.doneHeaderText}>Nhắc hẹn đã xong ({doneReminders.length})</Text>
+              <Ionicons
+                name={showDoneReminders ? "chevron-up" : "chevron-down"}
+                size={16}
+                color={colors.subText}
+              />
+            </TouchableOpacity>
+
+            {showDoneReminders &&
+              doneReminders.map((item) => (
+                <View key={item.id} style={styles.doneCard}>
+                  <Ionicons name="alarm-outline" size={18} color={colors.subText} />
+                  <TouchableOpacity
+                    style={{ flex: 1, marginHorizontal: 10 }}
+                    activeOpacity={0.7}
+                    onPress={() => router.push({ pathname: "/rule-detail", params: { id: item.id } })}
+                  >
+                    <Text style={styles.doneTitle} numberOfLines={1}>{item.title}</Text>
+                    <Text style={styles.doneTime}>Đã nhắc lúc {formatRemindTime(item.remind_at)}</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity onPress={() => handleDeleteRule(item.id)} hitSlop={8}>
+                    <Ionicons name="trash-outline" size={18} color={colors.danger} />
+                  </TouchableOpacity>
+                </View>
+              ))}
+
+            {showDoneReminders && doneReminders.length > 1 && (
+              <TouchableOpacity style={styles.doneClearBtn} onPress={deleteAllDoneReminders}>
+                <Text style={styles.doneClearText}>Xóa tất cả nhắc hẹn đã xong</Text>
+              </TouchableOpacity>
+            )}
+          </>
+        )}
       </ScrollView>
 
       {/* ADD BUTTON — nổi, kéo thả tự do (giữ vị trí), bấm để mở menu */}
@@ -676,6 +756,50 @@ function createStyles(C: AppColors) {
       fontSize: 12,
       fontWeight: "700",
       marginTop: 2,
+    },
+    doneHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 8,
+      paddingVertical: 12,
+      paddingHorizontal: 4,
+      marginTop: 4,
+    },
+    doneHeaderText: {
+      color: C.subText,
+      fontSize: 13.5,
+      fontWeight: "700",
+      flex: 1,
+    },
+    doneCard: {
+      flexDirection: "row",
+      alignItems: "center",
+      backgroundColor: C.card,
+      borderRadius: RADIUS.md,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      marginBottom: 10,
+      opacity: 0.85,
+    },
+    doneTitle: {
+      color: C.text,
+      fontSize: 14,
+      fontWeight: "600",
+    },
+    doneTime: {
+      color: C.subText,
+      fontSize: 12,
+      marginTop: 2,
+    },
+    doneClearBtn: {
+      alignItems: "center",
+      paddingVertical: 10,
+      marginBottom: 8,
+    },
+    doneClearText: {
+      color: C.danger,
+      fontSize: 13,
+      fontWeight: "600",
     },
     noiseBanner: {
       backgroundColor: C.primary + "11",

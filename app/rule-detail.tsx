@@ -606,11 +606,16 @@ export default function RuleDetailScreen() {
           </View>
         ) : null}
 
-        {/* Trạng thái */}
+        {/* Trạng thái — nhắc hẹn đã bắn xong hiện "Đã nhắc xong" thay vì "Tạm dừng" khó hiểu */}
         <View style={styles.infoRow}>
           <Text style={styles.label}>Trạng thái</Text>
           <Text style={[styles.value, { color: rule.is_active ? colors.success : colors.subText }]}>
-            {rule.is_active ? "Đang hoạt động" : "Tạm dừng"}
+            {rule.is_active
+              ? "Đang hoạt động"
+              : rule.source_type === "reminder" && rule.last_run_at && rule.remind_at &&
+                  Date.parse(rule.last_run_at) >= Date.parse(rule.remind_at)
+              ? "Đã nhắc xong"
+              : "Tạm dừng"}
           </Text>
         </View>
 
