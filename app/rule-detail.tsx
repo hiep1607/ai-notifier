@@ -95,26 +95,19 @@ export default function RuleDetailScreen() {
   const fetchData = async () => {
     setLoading(true);
 
-    const { data: ruleData } = await supabase
-      .from("rules")
-      .select("*")
-      .eq("id", id)
-      .single();
+    // 2 truy vấn SONG SONG (trước đây nối đuôi → mở màn chậm gấp đôi cần thiết).
+    const [ruleRes, notifRes] = await Promise.all([
+      supabase.from("rules").select("*").eq("id", id).single(),
+      supabase.from("notifications").select("*").eq("rule_id", id)
+        .order("created_at", { ascending: false }).limit(50),
+    ]);
 
-    if (ruleData) {
-      setRule(ruleData as Rule);
-      setAuthDraft((ruleData as Rule).watch_auth ?? "");
+    if (ruleRes.data) {
+      setRule(ruleRes.data as Rule);
+      setAuthDraft((ruleRes.data as Rule).watch_auth ?? "");
     }
-
-    const { data: notifData } = await supabase
-      .from("notifications")
-      .select("*")
-      .eq("rule_id", id)
-      .order("created_at", { ascending: false })
-      .limit(50);
-
-    if (notifData) {
-      setNotifications(notifData as Notification[]);
+    if (notifRes.data) {
+      setNotifications(notifRes.data as Notification[]);
     }
 
     setLoading(false);

@@ -18,6 +18,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import { supabase } from "../../lib/supabase";
 import { fetchNotificationsFor } from "../../lib/notifQuery";
+import { loadCache, saveCache } from "../../lib/screenCache";
 import { runMonitorForActiveRules } from "../../lib/monitor";
 import { useAuth } from "../../contexts/AuthContext";
 import { useTheme } from "../../contexts/ThemeContext";
@@ -81,28 +82,50 @@ export default function HomeScreen() {
     }
   };
 
+  // Hình dạng cache của Home — vẽ ngay số liệu lần trước, mạng về sau thì thay mới.
+  interface HomeCache {
+    rules: Rule[];
+    notificationsCount: number;
+    importantCount: number;
+    latestImportant: Notification | null;
+    latestNotif: Notification | null;
+  }
+
+  const applyHome = (c: HomeCache) => {
+    setRules(c.rules);
+    setNotificationsCount(c.notificationsCount);
+    setImportantCount(c.importantCount);
+    setLatestImportant(c.latestImportant);
+    setLatestNotif(c.latestNotif);
+  };
+
   const fetchData = async () => {
     if (!user) return;
 
-    const { data: rulesData } = await supabase
-      .from("rules")
-      .select("*")
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: true });
-
-    if (rulesData) {
-      setRules(rulesData as Rule[]);
+    // (1) Lần vào đầu (state trống): vẽ NGAY từ cache — hết màn hình trống chờ mạng.
+    if (rules.length === 0 && !latestNotif) {
+      const cached = await loadCache<HomeCache>(`@cache_home_${user.id}`);
+      if (cached) applyHome(cached);
     }
 
-    const ruleIds = (rulesData ?? []).map((r) => r.id);
+    // (2) Lấy bản mới: 2 truy vấn chạy SONG SONG (trước đây nối đuôi), thông báo chỉ
+    // lấy 100 dòng gần nhất thay vì toàn bộ lịch sử (đủ cho thẻ số liệu + AI Insight).
+    const [rulesRes, typed] = await Promise.all([
+      supabase.from("rules").select("*").eq("user_id", user.id)
+        .order("created_at", { ascending: true }),
+      fetchNotificationsFor(user.id, { limit: 100 }),
+    ]);
 
-    // Lọc theo user_id (0021) để tính cả thông báo "mồ côi rule" (nhắc hẹn đã tự xóa rule).
-    const typed = await fetchNotificationsFor(user.id, ruleIds);
-    setNotificationsCount(typed.length);
     const important = typed.filter((n) => n.is_important);
-    setImportantCount(important.length);
-    setLatestImportant(important[0] ?? null);
-    setLatestNotif(typed[0] ?? null);
+    const fresh: HomeCache = {
+      rules: (rulesRes.data ?? []) as Rule[],
+      notificationsCount: typed.length,
+      importantCount: important.length,
+      latestImportant: important[0] ?? null,
+      latestNotif: typed[0] ?? null,
+    };
+    applyHome(fresh);
+    saveCache(`@cache_home_${user.id}`, fresh);
   };
 
   const activeRules = rules.filter((r) => r.is_active);

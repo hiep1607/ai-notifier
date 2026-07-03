@@ -54,14 +54,9 @@ export default function ProfileScreen() {
 
     setRulesCount(rc ?? 0);
 
-    // Đếm theo user_id (0021) — tính cả thông báo "mồ côi rule" (nhắc hẹn đã tự xóa rule).
-    const { data: ruleRows } = await supabase
-      .from("rules")
-      .select("id")
-      .eq("user_id", user!.id);
-    setNotificationsCount(
-      await countNotificationsFor(user!.id, (ruleRows ?? []).map((r) => r.id)),
-    );
+    // Đếm theo user_id (0021) — tính cả thông báo "mồ côi rule"; helper tự fallback
+    // qua rule_id khi 0021 chưa chạy nên không cần query rules phụ ở đây.
+    setNotificationsCount(await countNotificationsFor(user!.id));
   };
 
   // Avatar: 1-2 chữ cái đầu của họ tên, fallback là chữ cái đầu email

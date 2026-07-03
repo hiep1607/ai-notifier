@@ -19,6 +19,7 @@ import ReanimatedSwipeable from "react-native-gesture-handler/ReanimatedSwipeabl
 
 import { supabase } from "../../lib/supabase";
 import { fetchNotificationsFor } from "../../lib/notifQuery";
+import { loadCache, saveCache } from "../../lib/screenCache";
 import { useAuth } from "../../contexts/AuthContext";
 import { useTheme } from "../../contexts/ThemeContext";
 import { Notification } from "../../types/Notification";
@@ -71,23 +72,33 @@ export default function NotificationsScreen() {
   const fetchNotifications = async () => {
     if (!user) return;
 
-    const { data: userRules } = await supabase
-      .from("rules")
-      .select("id, title, keyword")
-      .eq("user_id", user.id);
+    // (1) Lần vào đầu: vẽ NGAY từ cache lần trước — hết cảnh tab trống chờ mạng.
+    if (notifications.length === 0) {
+      const cached = await loadCache<{ nameMap: Record<string, string>; notifs: Notification[] }>(
+        `@cache_notifs_${user.id}`,
+      );
+      if (cached) {
+        setRuleNames(cached.nameMap);
+        setNotifications(cached.notifs);
+      }
+    }
 
-    const ruleIds = userRules?.map((r) => r.id) ?? [];
+    // (2) Bản mới: 2 truy vấn SONG SONG; thông báo lọc theo user_id (0021 — thấy cả
+    // "mồ côi rule", helper tự fallback rule_id) và chỉ lấy 100 dòng gần nhất
+    // (trước đây tải TOÀN BỘ lịch sử nên vừa chậm mạng vừa chậm render).
+    const [rulesRes, notifs] = await Promise.all([
+      supabase.from("rules").select("id, title, keyword").eq("user_id", user.id),
+      fetchNotificationsFor(user.id, { limit: 100 }),
+    ]);
 
     // Map rule_id → tên rule để gắn nhãn lên từng thông báo (nhìn là biết của rule nào).
     const nameMap: Record<string, string> = {};
-    (userRules ?? []).forEach((r: { id: string; title?: string; keyword?: string }) => {
+    (rulesRes.data ?? []).forEach((r: { id: string; title?: string; keyword?: string }) => {
       nameMap[r.id] = r.title || r.keyword || "Rule";
     });
     setRuleNames(nameMap);
-
-    // Lọc theo user_id (0021) để thấy cả thông báo "mồ côi rule" (nhắc hẹn đã tự xóa
-    // rule); chưa chạy 0021 thì helper tự rơi về lọc theo rule_id như cũ.
-    setNotifications(await fetchNotificationsFor(user.id, ruleIds));
+    setNotifications(notifs);
+    saveCache(`@cache_notifs_${user.id}`, { nameMap, notifs });
   };
 
   const tabFiltered =

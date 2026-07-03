@@ -24,6 +24,7 @@ import Animated, {
 } from "react-native-reanimated";
 
 import { supabase } from "../../lib/supabase";
+import { loadCache, saveCache } from "../../lib/screenCache";
 import { confirmAsync, alertMessage } from "../../lib/dialog";
 import { useAuth } from "../../contexts/AuthContext";
 import { useTheme } from "../../contexts/ThemeContext";
@@ -145,6 +146,17 @@ export default function RulesScreen() {
   const fetchRules = async () => {
     if (!user) return;
 
+    // Lần vào đầu: vẽ NGAY từ cache lần trước, mạng về sau thì thay mới.
+    if (rules.length === 0) {
+      const cached = await loadCache<{ rules: Rule[]; counts: Record<string, number> }>(
+        `@cache_rules_${user.id}`,
+      );
+      if (cached) {
+        setRules(cached.rules);
+        setUnreadCounts(cached.counts);
+      }
+    }
+
     const { data, error } = await supabase
       .from("rules")
       .select("*")
@@ -159,6 +171,7 @@ export default function RulesScreen() {
     if (data) {
       setRules(data as Rule[]);
 
+      const counts: Record<string, number> = {};
       const ids = data.map((r) => r.id);
       if (ids.length > 0) {
         const { data: notifs } = await supabase
@@ -167,12 +180,12 @@ export default function RulesScreen() {
           .in("rule_id", ids)
           .eq("is_read", false);
 
-        const counts: Record<string, number> = {};
         notifs?.forEach((n) => {
           counts[n.rule_id] = (counts[n.rule_id] ?? 0) + 1;
         });
         setUnreadCounts(counts);
       }
+      saveCache(`@cache_rules_${user.id}`, { rules: data as Rule[], counts });
     }
   };
 

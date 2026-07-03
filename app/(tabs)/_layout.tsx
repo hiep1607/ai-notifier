@@ -34,15 +34,9 @@ export default function TabLayout() {
   };
 
   const fetchUnread = async () => {
-    const { data: ruleRows } = await supabase
-      .from("rules")
-      .select("id")
-      .eq("user_id", user!.id);
-
-    // Đếm theo user_id (0021) để tính cả thông báo "mồ côi rule" (nhắc hẹn đã tự xóa rule).
-    setUnreadCount(
-      await countNotificationsFor(user!.id, (ruleRows ?? []).map((r) => r.id), true),
-    );
+    // Đếm theo user_id (0021) — tính cả thông báo "mồ côi rule"; helper tự fallback
+    // qua rule_id khi 0021 chưa chạy nên KHÔNG cần query rules trước ở đây nữa.
+    setUnreadCount(await countNotificationsFor(user!.id, { unreadOnly: true }));
   };
 
   return (
