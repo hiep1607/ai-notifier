@@ -4,8 +4,11 @@
 import {
   intervalMs,
   isDue,
+  isTickDue,
   dueAt,
   scanTier,
+  contentFingerprint,
+  normLink,
   vnMinutesOfDay,
   isQuietNow,
   normTitle,
@@ -543,5 +546,82 @@ describe("parseRss — hỗ trợ ATOM (Reddit/YouTube/GitHub)", () => {
     const items = parseRss(rss);
     expect(items).toHaveLength(1);
     expect(items[0].link).toBe("https://x.vn/a");
+  });
+});
+
+// ---------- TICK MỖI PHÚT (0022): nhắc hẹn + rule ghim giờ đúng giờ ±1' ----------
+
+describe("isTickDue — rule nào được tick mỗi phút xử lý", () => {
+  // 01:00 UTC = 08:00 VN.
+  const now = Date.parse("2026-07-01T01:00:00Z");
+  const yesterday = new Date(now - 24 * 3600000).toISOString();
+
+  it("nhắc hẹn tới hạn → true; chưa tới giờ → false", () => {
+    const past = new Date(now - 60000).toISOString();
+    const future = new Date(now + 60000).toISOString();
+    expect(isTickDue({ source_type: "reminder", remind_at: past, last_run_at: null }, now)).toBe(true);
+    expect(isTickDue({ source_type: "reminder", remind_at: future, last_run_at: null }, now)).toBe(false);
+  });
+
+  it("rule ghim giờ ĐÚNG mốc / trong cửa sổ 10 phút → true", () => {
+    expect(isTickDue({ frequency: "1440", run_at: "8:00", last_run_at: yesterday }, now)).toBe(true);
+    expect(isTickDue({ frequency: "1440", run_at: "07:55", last_run_at: yesterday }, now)).toBe(true); // trễ 5'
+  });
+
+  it("quá cửa sổ 10 phút → false (phần catch-up 4h để cron chính 15' lo như cũ)", () => {
+    expect(isTickDue({ frequency: "1440", run_at: "07:45", last_run_at: yesterday }, now)).toBe(false);
+    // isDue thì vẫn true (catch-up) — chứng minh tick hẹp hơn isDue có chủ đích.
+    expect(isDue({ frequency: "1440", run_at: "07:45", last_run_at: yesterday }, now)).toBe(true);
+  });
+
+  it("đã quét sau mốc hôm nay → false (không bắn đúp với cron chính)", () => {
+    const justScanned = new Date(now - 30000).toISOString(); // quét 30s trước, sau mốc 8:00
+    expect(isTickDue({ frequency: "1440", run_at: "08:00", last_run_at: justScanned }, now)).toBe(false);
+  });
+
+  it("rule định kỳ trơn / rule điều kiện → KHÔNG BAO GIỜ vào tick", () => {
+    expect(isTickDue({ frequency: "30", last_run_at: null }, now)).toBe(false);
+    expect(isTickDue({ frequency: "change", run_at: "08:00", last_run_at: yesterday }, now)).toBe(false);
+  });
+});
+
+// ---------- HASH-GATE (0023): trang y nguyên thì khỏi gọi AI ----------
+
+describe("contentFingerprint — vân tay nội dung trang", () => {
+  it("cùng nội dung → cùng vân tay; khác khoảng trắng vẫn coi là cùng", () => {
+    expect(contentFingerprint("Giá vàng 75,2 triệu")).toBe(contentFingerprint("Giá  vàng\n 75,2  triệu "));
+  });
+
+  it("nội dung khác (dù chỉ 1 số) → vân tay khác", () => {
+    expect(contentFingerprint("Giá vàng 75,2 triệu")).not.toBe(contentFingerprint("Giá vàng 75,3 triệu"));
+  });
+
+  it("chuỗi rỗng vẫn trả vân tay hợp lệ (không throw)", () => {
+    expect(typeof contentFingerprint("")).toBe("string");
+    expect(contentFingerprint("").length).toBeGreaterThan(0);
+  });
+});
+
+// ---------- CHỐNG TRÙNG THEO LINK (lớp 2 bên cạnh normTitle) ----------
+
+describe("normLink — chuẩn hóa URL bài viết", () => {
+  it("bỏ scheme/www/fragment/trailing slash → cùng bài nhận ra nhau", () => {
+    expect(normLink("https://www.vnexpress.net/bai-viet-123.html#comment"))
+      .toBe(normLink("http://vnexpress.net/bai-viet-123.html/"));
+  });
+
+  it("bỏ param tracking (utm_*, fbclid...) nhưng GIỮ param nội dung", () => {
+    expect(normLink("https://a.vn/p?id=9&utm_source=fb&fbclid=xyz")).toBe("a.vn/p?id=9");
+    expect(normLink("https://a.vn/p?id=9")).not.toBe(normLink("https://a.vn/p?id=10"));
+  });
+
+  it("sort query còn lại → khác thứ tự param vẫn nhận là cùng bài", () => {
+    expect(normLink("https://a.vn/p?b=2&a=1")).toBe(normLink("https://a.vn/p?a=1&b=2"));
+  });
+
+  it("không phải URL http(s) → chuỗi rỗng (caller bỏ qua lớp link)", () => {
+    expect(normLink("")).toBe("");
+    expect(normLink("mailto:x@y.z")).toBe("");
+    expect(normLink("không phải url")).toBe("");
   });
 });

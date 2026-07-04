@@ -127,6 +127,23 @@ export function scanTier(rule: SchedulableRule): number {
   return isScheduled(rule) ? 1 : 2;
 }
 
+// Cửa sổ của TICK mỗi phút với rule GHIM GIỜ: chỉ nhận trong [mốc hẹn, +10').
+// Hẹp có chủ đích — lượt tick lỗi (quota/mạng) sẽ KHÔNG retry mỗi phút suốt 4 tiếng;
+// quá 10' thì cron chính 15' lo phần catch-up như cũ (SCHEDULED_CATCHUP_MIN).
+export const TICK_WINDOW_MIN = 10;
+
+// Rule thuộc diện TICK mỗi phút xử lý? (nhắc hẹn tới hạn / rule ghim giờ vừa tới mốc).
+// Rule định kỳ trơn + rule điều kiện KHÔNG bao giờ vào tick — vẫn theo cron 15' như cũ.
+export function isTickDue(rule: SchedulableRule, nowMs = Date.now()): boolean {
+  if (isReminder(rule)) return isDue(rule, nowMs);
+  if (!isScheduled(rule)) return false;
+  const [h, m] = String(rule.run_at).split(":").map(Number);
+  const diff = (vnMinutesOfDay(nowMs) - (h * 60 + m) + 1440) % 1440;
+  if (diff >= TICK_WINDOW_MIN) return false;
+  // Trong cửa sổ → dùng lại isDue (đã lo "quét sau mốc thì thôi" + guard chu kỳ tuần).
+  return isDue(rule, nowMs);
+}
+
 // ---------- CHUẨN HÓA & CHỌN TIN ----------
 
 export function normTitle(t: string): string {
@@ -135,6 +152,44 @@ export function normTitle(t: string): string {
 
 export function normVal(s: string): string {
   return s.toLowerCase().replace(/\s+/g, "");
+}
+
+// Vân tay nội dung trang (FNV-1a 32-bit + độ dài, sau khi gọn khoảng trắng) — lưu vào
+// rules.last_content_hash để lượt sau thấy trang Y NGUYÊN thì khỏi gọi AI đọc lại.
+// Thuần JS sync (không crypto.subtle) để jest test được cùng code chạy thật.
+export function contentFingerprint(text: string): string {
+  const s = String(text ?? "").replace(/\s+/g, " ").trim();
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return `${h.toString(16)}:${s.length}`;
+}
+
+// Query param chỉ để tracking — khác nhau giữa 2 lần đăng cùng 1 bài, phải bỏ khi so trùng.
+const TRACKING_PARAM = /^(utm_|fbclid$|gclid$|yclid$|mc_cid$|mc_eid$|ref$|ref_src$|spm$|share_.*)/i;
+
+// Chuẩn hóa URL bài viết để CHỐNG TRÙNG theo link (lớp thứ 2 bên cạnh normTitle):
+// bỏ scheme + www + fragment + param tracking, gọn trailing slash, sort query còn lại.
+// Trả "" nếu không phải URL http(s) (caller bỏ qua lớp này).
+export function normLink(url: string): string {
+  let u: URL;
+  try {
+    u = new URL(String(url ?? "").trim());
+  } catch {
+    return "";
+  }
+  if (u.protocol !== "http:" && u.protocol !== "https:") return "";
+  const keep: [string, string][] = [];
+  u.searchParams.forEach((v, k) => {
+    if (!TRACKING_PARAM.test(k)) keep.push([k, v]);
+  });
+  keep.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  const host = u.hostname.toLowerCase().replace(/^www\./, "");
+  const path = u.pathname.replace(/\/+$/, "");
+  const q = keep.map(([k, v]) => `${k}=${v}`).join("&");
+  return `${host}${path}${q ? `?${q}` : ""}`;
 }
 
 // Tiêu đề filler do hệ thống tự sinh (không phải bài báo) — loại khỏi danh sách

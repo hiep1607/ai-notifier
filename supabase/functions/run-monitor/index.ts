@@ -22,8 +22,11 @@ import {
   intervalMs,
   isDue,
   isScheduled,
+  isTickDue,
   dueAt,
   scanTier,
+  contentFingerprint,
+  normLink,
   vnHourNow,
   isQuietNow,
   normTitle,
@@ -84,6 +87,7 @@ interface Rule {
   remind_at?: string | null;   // thời điểm nhắc (ISO) — chỉ dùng với reminder
   watch_url?: string | null;   // URL trang cần theo dõi (migration 0018, source_type='url')
   watch_auth?: string | null;  // cookie/headers người dùng cấp cho trang cần đăng nhập
+  last_content_hash?: string | null; // vân tay nội dung trang lần trước (0023) — trang y nguyên thì khỏi gọi AI
   title?: string;           // tên rule (reminder dùng làm nội dung nhắc)
   description?: string;     // mô tả rule (reminder dùng làm ghi chú)
   is_active: boolean;
@@ -242,6 +246,7 @@ type NotifKind =
 interface MonitorRuleResult {
   inserted: number;
   value?: string; // số liệu mới để lưu làm baseline cho lần sau
+  contentHash?: string; // vân tay trang (rule url) → lưu rules.last_content_hash
   note?: { title: string; kind: NotifKind };
 }
 
@@ -627,11 +632,19 @@ async function monitorFeedItems(
   rule: Rule,
   items: RssItem[],
   seenTitles: Set<string>,
+  seenLinks: Set<string>,
   g: UrlGates,
 ): Promise<MonitorRuleResult | null> {
   if (items.length === 0) return null;
 
-  const unseen = items.filter((it) => !seenTitles.has(normTitle(it.title))).slice(0, 25);
+  // Chống trùng 2 lớp: tiêu đề + LINK chuẩn hóa (báo sửa tít nhẹ thì link vẫn bắt được).
+  const unseen = items
+    .filter((it) => {
+      if (seenTitles.has(normTitle(it.title))) return false;
+      const l = normLink(it.link);
+      return !l || !seenLinks.has(l);
+    })
+    .slice(0, 25);
   if (unseen.length === 0) return null; // feed không có bài mới → vẫn thử đọc trang
 
   let pick: RssPick;
@@ -676,6 +689,7 @@ async function monitorUrlViaFeed(
   rule: Rule,
   page: WatchPage,
   seenTitles: Set<string>,
+  seenLinks: Set<string>,
   g: UrlGates,
 ): Promise<MonitorRuleResult | null> {
   const feedUrl = discoverFeedUrl(page.html, page.finalUrl);
@@ -691,7 +705,7 @@ async function monitorUrlViaFeed(
   } catch {
     return null;
   }
-  return await monitorFeedItems(supabase, rule, items, seenTitles, g);
+  return await monitorFeedItems(supabase, rule, items, seenTitles, seenLinks, g);
 }
 
 // Quét 1 rule THEO DÕI TRANG WEB: fetch URL (kèm quyền đăng nhập nếu người dùng đã cấp)
@@ -701,7 +715,7 @@ async function monitorUrlViaFeed(
 //  - định kỳ thường → chỉ gửi khi có NỘI DUNG MỚI (bài chưa gửi / giá trị đổi) — đọc lại
 //                     trang mà y nguyên thì im, khỏi spam cùng 1 bài.
 // deno-lint-ignore no-explicit-any
-async function monitorUrl(supabase: any, rule: Rule): Promise<MonitorRuleResult> {
+async function monitorUrl(supabase: any, rule: Rule, manual = false): Promise<MonitorRuleResult> {
   const url = ruleWatchUrl(rule);
   if (!url) throw new Error("Rule url không có watch_url");
   const host = new URL(url).hostname;
@@ -716,6 +730,15 @@ async function monitorUrl(supabase: any, rule: Rule): Promise<MonitorRuleResult>
   if (page.status >= 400) throw new Error(`Trang trả HTTP ${page.status}`);
   if (!page.text.trim()) throw new Error("Trang không có nội dung đọc được");
 
+  // HASH-GATE: trang Y NGUYÊN lần trước (vân tay trùng) → chẳng thể có gì mới, skip
+  // ngay 0 call AI. KHÔNG áp khi: quét manual ("Kiểm tra tin ngay" — người dùng chủ
+  // động bấm thì soi thật) hoặc rule ghim giờ (bản tin đúng hẹn phải giao dù trang y nguyên).
+  const fp = contentFingerprint(page.text);
+  const withHash = (r: MonitorRuleResult): MonitorRuleResult => ({ ...r, contentHash: fp });
+  if (!manual && !isScheduled(rule) && Boolean(rule.last_content_hash) && rule.last_content_hash === fp) {
+    return withHash({ inserted: 0, note: { title: "", kind: "skipped" } });
+  }
+
   const hasCond = Boolean(rule.condition && rule.condition.trim());
   const scheduled = isScheduled(rule);
   const importantOnly = rule.notify_mode === "important" && !scheduled;
@@ -723,12 +746,15 @@ async function monitorUrl(supabase: any, rule: Rule): Promise<MonitorRuleResult>
   const gates: UrlGates = { hasCond, scheduled, importantOnly, changeGate };
   const prevNorm = normVal(String(rule.last_value ?? ""));
 
-  // Tiêu đề đã gửi — chống báo lại cùng 1 bài (giữa 2 bài mới, đọc lại trang vẫn thấy bài cũ).
+  // Tiêu đề + link đã gửi — chống báo lại cùng 1 bài (giữa 2 bài mới, đọc lại trang vẫn thấy bài cũ).
   const { data: existing } = await supabase
-    .from("notifications").select("title").eq("rule_id", rule.id)
+    .from("notifications").select("title, source_url").eq("rule_id", rule.id)
     .order("created_at", { ascending: false }).limit(60);
   const seenTitles = new Set<string>(
     (existing ?? []).map((n: { title: string }) => normTitle(String(n.title ?? ""))).filter(Boolean),
+  );
+  const seenLinks = new Set<string>(
+    (existing ?? []).map((n: { source_url?: string }) => normLink(String(n.source_url ?? ""))).filter(Boolean),
   );
 
   // watch_url là FEED TRỰC TIẾP (reddit .rss / youtube feeds/videos.xml / github .atom —
@@ -736,15 +762,15 @@ async function monitorUrl(supabase: any, rule: Rule): Promise<MonitorRuleResult>
   if (looksLikeFeed(page.html)) {
     const items = parseRss(page.html);
     if (items.length > 0) {
-      const viaSelf = await monitorFeedItems(supabase, rule, items, seenTitles, gates);
+      const viaSelf = await monitorFeedItems(supabase, rule, items, seenTitles, seenLinks, gates);
       // Feed là TOÀN BỘ nội dung nguồn: không bài mới/liên quan → im, chờ lượt sau.
-      return viaSelf ?? { inserted: 0, note: { title: "", kind: "skipped" } };
+      return withHash(viaSelf ?? { inserted: 0, note: { title: "", kind: "skipped" } });
     }
   }
 
   // ƯU TIÊN FEED trang tự khai báo (tin tức/blog) — link bài thật, dedup chuẩn.
-  const viaFeed = await monitorUrlViaFeed(supabase, rule, page, seenTitles, gates);
-  if (viaFeed) return viaFeed;
+  const viaFeed = await monitorUrlViaFeed(supabase, rule, page, seenTitles, seenLinks, gates);
+  if (viaFeed) return withHash(viaFeed);
 
   // ĐỌC TRANG: kèm danh sách link bài để AI chọn — thông báo trỏ đúng BÀI thay vì trang chủ.
   const links = extractPageLinks(page.html, page.finalUrl);
@@ -754,12 +780,13 @@ async function monitorUrl(supabase: any, rule: Rule): Promise<MonitorRuleResult>
   // CHỐT CHẶN chống hỏi quyền oan: trang có NHIỀU text đọc được (>6000 ký tự) gần như
   // chắc chắn là trang công khai (nút "Đăng nhập" trên menu làm AI nhận nhầm) → không hỏi.
   if (ex.login_required && !ex.found && page.text.length < 6000) {
-    return await notifyLoginNeeded(supabase, rule, host, hasAuth);
+    return withHash(await notifyLoginNeeded(supabase, rule, host, hasAuth));
   }
 
   const skipped: MonitorRuleResult = {
     inserted: 0,
     value: ex.value.trim() ? ex.value.trim().slice(0, 200) : undefined,
+    contentHash: fp,
     note: { title: "", kind: "skipped" },
   };
   if (!ex.found) return skipped; // trang không có thông tin cần — im, chờ lượt sau
@@ -796,7 +823,7 @@ async function monitorUrl(supabase: any, rule: Rule): Promise<MonitorRuleResult>
     sentiment: "neutral",
     is_important: hasCond ? true : ex.is_important,
   });
-  return { inserted, value: skipped.value, note: { title, kind: "real" } };
+  return { inserted, value: skipped.value, contentHash: fp, note: { title, kind: "real" } };
 }
 
 // ---- ĐƯỜNG RSS (Pha C): tin tức lấy từ feed báo VN — link LUÔN thật, 0 grounding ----
@@ -878,21 +905,31 @@ async function sendFallback(
 }
 
 // Fetch feed RSS theo category (song song, nuốt lỗi lẻ). null = TẤT CẢ hỏng → grounding.
-async function fetchRssItems(category?: string | null): Promise<RssItem[] | null> {
-  const feeds = feedsForCategory(category);
-  if (feeds.length === 0) return null;
-  const settled = await Promise.allSettled(
-    feeds.map(async (u) => {
-      const res = await fetch(u, { headers: { "Accept": "application/rss+xml, application/xml, text/xml" } });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return parseRss(await res.text());
-    }),
-  );
-  const lists = settled
-    .filter((s): s is PromiseFulfilledResult<RssItem[]> => s.status === "fulfilled")
-    .map((s) => s.value);
-  if (lists.length === 0) return null;
-  return mergeRssItems(lists);
+// cache: sống trong 1 lượt run-monitor — nhiều rule cùng category thì chỉ fetch feed 1 lần
+// (cache cả kết quả null: feed hỏng thì đừng thử lại n lần trong cùng lượt).
+type RssCache = Map<string, RssItem[] | null>;
+
+async function fetchRssItems(category?: string | null, cache?: RssCache): Promise<RssItem[] | null> {
+  const key = String(category ?? "news");
+  if (cache?.has(key)) return cache.get(key)!;
+  const result = await (async (): Promise<RssItem[] | null> => {
+    const feeds = feedsForCategory(category);
+    if (feeds.length === 0) return null;
+    const settled = await Promise.allSettled(
+      feeds.map(async (u) => {
+        const res = await fetch(u, { headers: { "Accept": "application/rss+xml, application/xml, text/xml" } });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return parseRss(await res.text());
+      }),
+    );
+    const lists = settled
+      .filter((s): s is PromiseFulfilledResult<RssItem[]> => s.status === "fulfilled")
+      .map((s) => s.value);
+    if (lists.length === 0) return null;
+    return mergeRssItems(lists);
+  })();
+  cache?.set(key, result);
+  return result;
 }
 
 interface RssPick {
@@ -965,13 +1002,22 @@ async function monitorRssPath(
   rule: Rule,
   ctx: GateCtx,
   seenTitles: Set<string>,
+  seenLinks: Set<string>,
   prev: PrevNotif | undefined,
+  rssCache?: RssCache,
 ): Promise<MonitorRuleResult | null> {
-  const items = await fetchRssItems(rule.category);
+  const items = await fetchRssItems(rule.category, rssCache);
   if (!items || items.length === 0) return null;
 
-  // Dedup TRƯỚC khi hỏi AI: tiêu đề feed ổn định tuyệt đối nên lọc thẳng bài đã gửi.
-  const unseen = items.filter((it) => !seenTitles.has(normTitle(it.title))).slice(0, 25);
+  // Dedup TRƯỚC khi hỏi AI: tiêu đề feed ổn định tuyệt đối nên lọc thẳng bài đã gửi
+  // (2 lớp: tiêu đề + link chuẩn hóa — báo sửa tít nhẹ thì link vẫn bắt được).
+  const unseen = items
+    .filter((it) => {
+      if (seenTitles.has(normTitle(it.title))) return false;
+      const l = normLink(it.link);
+      return !l || !seenLinks.has(l);
+    })
+    .slice(0, 25);
   if (unseen.length === 0) {
     // Feed không có gì mới → filler theo luật chung, khỏi tốn grounding.
     return await sendFallback(supabase, rule, ctx, prev, null);
@@ -1085,7 +1131,7 @@ async function monitorReminder(supabase: any, rule: Rule): Promise<MonitorRuleRe
 }
 
 // deno-lint-ignore no-explicit-any
-async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult> {
+async function monitorRule(supabase: any, rule: Rule, manual = false, rssCache?: RssCache): Promise<MonitorRuleResult> {
   // NHẮC HẸN: không cần nguồn tin — bắn thông báo rồi tắt rule.
   if (isReminder(rule)) return await monitorReminder(supabase, rule);
 
@@ -1097,7 +1143,7 @@ async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult
     // Lỗi (trang sập/URL hỏng) NÉM LÊN vòng ngoài: vẫn "bỏ lượt này chờ lượt sau"
     // (vòng ngoài bắt + tiếp tục rule khác) nhưng được ghi vào rules.last_error
     // để người dùng thấy vì sao rule im — thay vì nuốt im ở đây.
-    return await monitorUrl(supabase, rule);
+    return await monitorUrl(supabase, rule, manual);
   }
 
   // Rule số liệu (thời tiết/crypto/tỷ giá) đi đường provider — chính xác,
@@ -1134,6 +1180,9 @@ async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult
   const seenTitles = new Set<string>(
     (existing ?? []).map((n: { title: string }) => normTitle(String(n.title ?? ""))).filter(Boolean)
   );
+  const seenLinks = new Set<string>(
+    (existing ?? []).map((n: { source_url?: string }) => normLink(String(n.source_url ?? ""))).filter(Boolean)
+  );
   const avoidTitles = recentRealTitles((existing ?? []).map((n: { title: string }) => n.title));
   const prev = (existing ?? [])[0] as PrevNotif | undefined;
 
@@ -1142,7 +1191,7 @@ async function monitorRule(supabase: any, rule: Rule): Promise<MonitorRuleResult
   // ĐƯỜNG RSS TRƯỚC (Pha C): tin lấy từ feed báo VN — link luôn thật, dedup chuẩn,
   // chỉ tốn 1 call flash-lite (không grounding). Chỉ khi hạ tầng RSS/AI hỏng mới
   // rơi xuống Gemini + Google Search bên dưới (giữ grounding làm phương án cuối).
-  const rssResult = await monitorRssPath(supabase, rule, ctx, seenTitles, prev);
+  const rssResult = await monitorRssPath(supabase, rule, ctx, seenTitles, seenLinks, prev, rssCache);
   if (rssResult) return rssResult;
 
   // Gọi Gemini (lỗi mạng/quota sẽ THROW → caller xử lý; chỉ nuốt lỗi parse).
@@ -1496,12 +1545,18 @@ Deno.serve(async (req) => {
     }
 
     const body = await req.json().catch(() => ({}));
-    const { ruleId, userId, dryRun, gateCheck, reminderOnly } = body as
-      { ruleId?: string; userId?: string; dryRun?: boolean; gateCheck?: boolean; reminderOnly?: boolean };
+    const { ruleId, userId, dryRun, gateCheck, reminderOnly, tick } = body as {
+      ruleId?: string; userId?: string; dryRun?: boolean; gateCheck?: boolean;
+      reminderOnly?: boolean; tick?: boolean;
+    };
 
     // manual = bấm "Kiểm tra tin ngay" cho 1 rule → bỏ qua lịch, quét luôn.
     const manual = Boolean(ruleId);
-    const trigger = manual ? "manual" : (isAdmin ? "cron" : "user");
+    // tick = cron MỖI PHÚT (0022): chỉ nhắc hẹn + rule ghim giờ vừa tới mốc — cho đúng
+    // giờ ±1' thay vì lệch theo nhịp cron chính 15'. reminderOnly là tên cũ (0017),
+    // giữ làm alias trong lúc SQL cron cũ còn chạy.
+    const tickMode = Boolean(tick || reminderOnly);
+    const trigger = manual ? "manual" : tickMode ? "tick" : (isAdmin ? "cron" : "user");
 
     // Chọn tập rule cần quét. KHÔNG sắp ở SQL theo last_run_at nữa (sai bản chất: chỉ
     // nhìn "lâu chưa quét", bỏ qua chu kỳ riêng của từng rule). Việc ưu tiên sẽ làm ở
@@ -1569,13 +1624,14 @@ Deno.serve(async (req) => {
     // bản tin 8h phải đứng TRƯỚC đống rule tin tức tồn đọng, không bị chèn tới 10h.
     // LƯU Ý: không dùng .filter(isDue) trực tiếp — isDue(rule, nowMs?) sẽ nhận INDEX
     // của mảng làm nowMs (bug kinh điển kiểu parseInt trong map).
-    // reminderOnly (cron reminder-tick mỗi phút): CHỈ xử lý nhắc hẹn — không đụng rule
-    // tin tức (đỡ quét chồng với cron chính gây thông báo trùng + đỡ tốn quota).
+    // tickMode (cron tick mỗi phút): CHỈ nhắc hẹn + rule ghim giờ vừa tới mốc (cửa sổ
+    // 10' — isTickDue), KHÔNG đụng rule định kỳ/điều kiện (đỡ quét chồng với cron chính
+    // gây thông báo trùng + đỡ tốn quota).
     let dueRules = manual
       ? (rules as Rule[])
       : (rules as Rule[]).filter((r) => isDue(r))
           .sort((a, b) => scanTier(a) - scanTier(b) || dueAt(a) - dueAt(b));
-    if (reminderOnly) dueRules = dueRules.filter((r) => isReminder(r));
+    if (tickMode) dueRules = dueRules.filter((r) => isTickDue(r));
 
     // DRY-RUN: chỉ trả KẾ HOẠCH quét (rule nào tới hạn + thứ tự ưu tiên + rule còn
     // phải chờ) — KHÔNG gọi Gemini, KHÔNG tốn quota. Trang test dùng để kiểm chứng
@@ -1605,6 +1661,9 @@ Deno.serve(async (req) => {
       });
     }
 
+    // Cache RSS sống trong 1 lượt run: nhiều rule cùng category chỉ fetch bộ feed 1 lần.
+    const rssCache: RssCache = new Map();
+
     for (const rule of dueRules) {
       if (Date.now() > deadline) break;
       // AI đã kẹt quota trong lượt này → chỉ quét tiếp các rule KHÔNG cần AI (nhắc hẹn,
@@ -1612,16 +1671,36 @@ Deno.serve(async (req) => {
       // 0-AI cũng chết chùm chỉ vì đứng sau 1 rule tin tức hết quota.
       if (quotaHit && !isAiFreeRule(rule)) continue;
 
+      // CLAIM chống bắn TRÙNG rule GHIM GIỜ: cron tick mỗi phút + cron chính 15' có thể
+      // chạy CHỒNG, cả hai cùng thấy "tới mốc, chưa quét" thì bắn đúp. UPDATE có điều
+      // kiện là nguyên tử ở Postgres: chỉ lượt ĐẦU (last_run_at còn TRƯỚC mốc hẹn) nhận
+      // được row; lượt sau khớp 0 row → bỏ qua. (Nhắc hẹn đã có claim riêng trong
+      // monitorReminder; manual thì người dùng chủ động bấm, không chặn.)
+      const prevRunAt = rule.last_run_at ?? null;
+      if (!manual && isScheduled(rule)) {
+        const targetIso = new Date(dueAt(rule) - 60000).toISOString();
+        const { data: claimed, error: claimErr } = await supabase
+          .from("rules")
+          .update({ last_run_at: new Date().toISOString() })
+          .eq("id", rule.id)
+          .eq("is_active", true)
+          .or(`last_run_at.is.null,last_run_at.lt."${targetIso}"`)
+          .select("id");
+        if (claimErr || !claimed || claimed.length === 0) continue; // lượt khác đã nhận mốc này
+      }
+
       // Giãn giữa các lần gọi trong cùng 1 run để né rate-limit theo phút.
       if (checked > 0) await sleep(4000);
       checked++;
       if (rule.keyword) scannedNames.push(rule.keyword);
       let newValue: string | undefined;
+      let newHash: string | undefined;
       let scanError: string | null = null; // lỗi lượt này (null = quét êm) → rules.last_error
       try {
-        const res = await monitorRule(supabase, rule);
+        const res = await monitorRule(supabase, rule, manual, rssCache);
         inserted += res.inserted;
         newValue = res.value;
+        newHash = res.contentHash;
         if (res.note) notes.push({ keyword: rule.keyword, ...res.note });
       } catch (e) {
         console.log(`Rule ${rule.id} lỗi:`, (e as Error).message);
@@ -1630,6 +1709,11 @@ Deno.serve(async (req) => {
         if (isQuotaErr(e)) {
           quotaHit = true;
           checked--;
+          // Rule ghim giờ đã CLAIM (last_run_at bị đẩy lên now) mà chưa quét xong →
+          // trả lại mốc cũ, để khung catch-up 4h của cron chính còn cứu được hôm nay.
+          if (!manual && isScheduled(rule)) {
+            await supabase.from("rules").update({ last_run_at: prevRunAt }).eq("id", rule.id);
+          }
           continue;
         }
         scanError = String((e as Error).message ?? e).slice(0, 300);
@@ -1641,7 +1725,13 @@ Deno.serve(async (req) => {
         last_error: scanError,
       };
       if (newValue) upd.last_value = newValue;
-      const { error: updErr } = await supabase.from("rules").update(upd).eq("id", rule.id);
+      if (newHash) upd.last_content_hash = newHash;
+      let { error: updErr } = await supabase.from("rules").update(upd).eq("id", rule.id);
+      if (updErr && "last_content_hash" in upd) {
+        // Cột last_content_hash chưa có (migration 0023 chưa chạy) → ghi lại không kèm.
+        delete upd.last_content_hash;
+        ({ error: updErr } = await supabase.from("rules").update(upd).eq("id", rule.id));
+      }
       if (updErr) {
         // Cột last_error chưa có (migration 0020 chưa chạy) → ghi lại không kèm nó,
         // tuyệt đối không để mất last_run_at (mất là loạn lịch quét).
