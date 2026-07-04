@@ -65,8 +65,8 @@ pg_cron (mỗi 15 phút) → run-monitor (quét nền, lọc rule tới hạn th
 - [x] **Deploy web + OTA** cho bản URL-watch — xong 2026-07-03 sau khi user cho phép tiếp tục: web live https://ai-notifier-new.expo.app (200), OTA update group ea18bda9 (android+iOS, runtime 1.0.0, branch preview).
 - [x] **Chạy SQL `0020_rule_health.sql`** (cột `rules.last_error` + watchdog báo cron chết) — user xác nhận đã chạy 2026-07-03. Sức khỏe rule + còi báo cron chết hoạt động đầy đủ.
 - [x] **Chạy SQL `0021_notifications_user_id.sql`** (nhắc hẹn tự XÓA HẲN sau khi nhắc nhưng giữ thông báo; dọn luôn nhắc hẹn đã xong còn sót) — user xác nhận đã chạy 2026-07-03. MỌI migration đã chạy đủ.
-- [ ] **Chạy SQL `0022_scheduled_tick.sql`** (tick mỗi phút xử lý cả rule GHIM GIỜ — bản tin 8:00 nổ đúng 8:00±1'). CẦN thay `<SERVICE_ROLE_KEY>` = legacy service_role JWT (như 0019). Chưa chạy thì rule ghim giờ vẫn theo nhịp cron 15' như cũ, không vỡ gì.
-- [ ] **Chạy SQL `0023_url_hash.sql`** (cột `last_content_hash` — hash-gate rule URL, trang không đổi thì 0 call AI). Không cần thay key. Chưa chạy thì mỗi lượt vẫn tốn 1 call flash-lite như cũ, không vỡ gì.
+- [x] **Chạy SQL `0022_scheduled_tick.sql`** (tick mỗi phút xử lý cả rule GHIM GIỜ) — user chạy 2026-07-04, cron.schedule trả job id 14. Còn kiểm chứng thực tế: rule ghim giờ nổ đúng phút.
+- [x] **Chạy SQL `0023_url_hash.sql`** (cột `last_content_hash` — hash-gate rule URL) — user chạy 2026-07-04, Success.
 
 ## 🗺 KẾ HOẠCH: Các loại theo dõi tiếp theo (lập 2026-07-02)
 > Ý tưởng xương sống: hiện MỌI rule đều đi qua Gemini + Google Search grounding — vừa tốn quota

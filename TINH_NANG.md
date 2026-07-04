@@ -307,10 +307,10 @@ Công cụ kiểm thử nhanh, tách khỏi trang quản trị:
 | `0019_fix_cron_keys.sql` | Sửa key 2 cron job (sau sự cố chạy lại migration) | ✅ Đã chạy + verify 200 (2026-07-03) |
 | `0020_rule_health.sql` | Sức khỏe rule (`last_error`) + watchdog báo cron chết | ✅ Đã chạy (2026-07-03) |
 | `0021_notifications_user_id.sql` | Nhắc hẹn tự xóa hẳn sau khi nhắc (giữ thông báo) + dọn nhắc hẹn sót | ✅ Đã chạy (2026-07-03) |
-| `0022_scheduled_tick.sql` | Rule ghim giờ nổ ĐÚNG PHÚT (mở rộng tick 0017; cần thay `<SERVICE_ROLE_KEY>` legacy JWT như 0019) | ⏳ CHƯA chạy — chưa chạy thì rule ghim giờ vẫn theo nhịp cron 15' như cũ, không vỡ gì |
-| `0023_url_hash.sql` | Hash-gate rule URL (cột `last_content_hash`) — trang không đổi thì 0 call AI | ⏳ CHƯA chạy — chưa chạy thì mỗi lượt vẫn tốn 1 call flash-lite như cũ, không vỡ gì |
+| `0022_scheduled_tick.sql` | Rule ghim giờ nổ ĐÚNG PHÚT (mở rộng tick 0017) | ✅ Đã chạy (2026-07-04, job id 14) — còn verify thực tế rule ghim giờ nổ đúng phút |
+| `0023_url_hash.sql` | Hash-gate rule URL (cột `last_content_hash`) — trang không đổi thì 0 call AI | ✅ Đã chạy (2026-07-04) |
 
-→ Còn 0022 + 0023 chờ chạy trong Dashboard SQL Editor (xem hướng dẫn đầu mỗi file).
+→ Mọi migration đã chạy đủ — không còn việc SQL nào treo.
 
 ---
 
