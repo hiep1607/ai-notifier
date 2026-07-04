@@ -23,6 +23,7 @@ import {
   isDue,
   isScheduled,
   dueAt,
+  scanTier,
   vnHourNow,
   isQuietNow,
   normTitle,
@@ -53,6 +54,17 @@ function isQuotaErr(e: unknown): boolean {
   const m = (e instanceof Error ? e.message : String(e)).toLowerCase();
   return m.includes("429") || m.includes("resource_exhausted") || m.includes("quota") ||
     m.includes("rate") || m.includes("503") || m.includes("overloaded");
+}
+
+// Rule KHÔNG tốn AI: nhắc hẹn (chỉ lịch + push) và rule số liệu provider (thời tiết/
+// coin/tỷ giá) KHÔNG có điều kiện (chấm điều kiện phải nhờ flash-lite). Khi AI kẹt
+// quota giữa lượt quét, các rule này vẫn quét tiếp được — không chết chùm.
+function isAiFreeRule(r: Rule): boolean {
+  if (isReminder(r)) return true;
+  if (ruleWatchUrl(r)) return false;
+  if (r.condition && r.condition.trim()) return false;
+  const t = detectSourceType(r.keyword);
+  return t === "weather" || t === "crypto" || t === "fx";
 }
 
 interface Rule {
@@ -1551,17 +1563,18 @@ Deno.serve(async (req) => {
     // isDue đã đóng vai trò quota gate tự nhiên: rule 1 tiếng chỉ tạo tối đa 24 call/ngày,
     // không cần cap cứng MAX_RULES_PER_RUN nữa (trước đây cap=2 làm rule bị trễ oan).
     //
-    // Ưu tiên theo "giờ đáng lẽ phải báo": dueAt = last_run_at + chu kỳ (import từ
-    // monitorLogic). Rule đến hạn SỚM NHẤT (trễ hẹn nặng nhất so với chu kỳ riêng) được
-    // quét trước — quan trọng khi chạm deadline 70s chỉ kịp quét một phần. Rule chưa
-    // từng quét (last_run_at = null) → dueAt nhỏ → tự lên đầu.
+    // Thứ tự quét: TẦNG ưu tiên trước (nhắc hẹn → rule GHIM GIỜ → định kỳ trơn — xem
+    // scanTier), trong cùng tầng mới tới "giờ đáng lẽ phải báo" (dueAt; với rule ghim
+    // giờ dueAt = mốc hẹn hôm nay). Quan trọng khi deadline 70s chỉ kịp quét một phần:
+    // bản tin 8h phải đứng TRƯỚC đống rule tin tức tồn đọng, không bị chèn tới 10h.
     // LƯU Ý: không dùng .filter(isDue) trực tiếp — isDue(rule, nowMs?) sẽ nhận INDEX
     // của mảng làm nowMs (bug kinh điển kiểu parseInt trong map).
     // reminderOnly (cron reminder-tick mỗi phút): CHỈ xử lý nhắc hẹn — không đụng rule
     // tin tức (đỡ quét chồng với cron chính gây thông báo trùng + đỡ tốn quota).
     let dueRules = manual
       ? (rules as Rule[])
-      : (rules as Rule[]).filter((r) => isDue(r)).sort((a, b) => dueAt(a) - dueAt(b));
+      : (rules as Rule[]).filter((r) => isDue(r))
+          .sort((a, b) => scanTier(a) - scanTier(b) || dueAt(a) - dueAt(b));
     if (reminderOnly) dueRules = dueRules.filter((r) => isReminder(r));
 
     // DRY-RUN: chỉ trả KẾ HOẠCH quét (rule nào tới hạn + thứ tự ưu tiên + rule còn
@@ -1594,6 +1607,10 @@ Deno.serve(async (req) => {
 
     for (const rule of dueRules) {
       if (Date.now() > deadline) break;
+      // AI đã kẹt quota trong lượt này → chỉ quét tiếp các rule KHÔNG cần AI (nhắc hẹn,
+      // thời tiết/giá/tỷ giá không điều kiện). Trước đây break cả lượt → bản tin 8h
+      // 0-AI cũng chết chùm chỉ vì đứng sau 1 rule tin tức hết quota.
+      if (quotaHit && !isAiFreeRule(rule)) continue;
 
       // Giãn giữa các lần gọi trong cùng 1 run để né rate-limit theo phút.
       if (checked > 0) await sleep(4000);
@@ -1608,11 +1625,12 @@ Deno.serve(async (req) => {
         if (res.note) notes.push({ keyword: rule.keyword, ...res.note });
       } catch (e) {
         console.log(`Rule ${rule.id} lỗi:`, (e as Error).message);
-        // Hết quota/quá tải → DỪNG ngay, KHÔNG cập nhật last_run_at để cron lần sau quét lại rule này.
+        // Hết quota/quá tải: rule này coi như CHƯA quét (không cập nhật last_run_at,
+        // lượt cron sau thử lại) — nhưng KHÔNG break: rule 0-AI phía sau vẫn được quét.
         if (isQuotaErr(e)) {
           quotaHit = true;
-          checked--; // rule này coi như chưa quét
-          break;
+          checked--;
+          continue;
         }
         scanError = String((e as Error).message ?? e).slice(0, 300);
       }

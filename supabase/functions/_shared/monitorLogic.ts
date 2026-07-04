@@ -105,9 +105,26 @@ export function isDue(rule: SchedulableRule, nowMs = Date.now()): boolean {
 // NHẮC HẸN: mốc báo chính là remind_at (không phải last_run_at + chu kỳ) → reminder tới
 // hạn tự lên ĐẦU hàng đợi, được xử lý trước các rule tin tức (nó nhạy thời gian nhất
 // và 0 tốn AI nên xử lý tức thì).
-export function dueAt(rule: SchedulableRule): number {
+export function dueAt(rule: SchedulableRule, nowMs = Date.now()): number {
   if (isReminder(rule)) return Date.parse(String(rule.remind_at));
+  // Rule GHIM GIỜ đang trong khung bắn: hạn = MỐC HẸN hôm nay (vd 08:00), KHÔNG phải
+  // last_run_at + chu kỳ — hôm trước lỡ bắn muộn (sự cố nền) mà tính last+24h thì đúng
+  // 8h sáng hôm sau rule bị đẩy xuống CUỐI hàng đợi, xếp sau cả đống rule tồn đọng
+  // (bug làm bản tin thời tiết 08:00 bị chèn tới 10h — 2026-07-04).
+  if (isScheduled(rule)) {
+    const [h, m] = String(rule.run_at).split(":").map(Number);
+    const diff = (vnMinutesOfDay(nowMs) - (h * 60 + m) + 1440) % 1440;
+    if (diff < SCHEDULED_CATCHUP_MIN) return nowMs - diff * 60000;
+  }
   return (rule.last_run_at ? Date.parse(rule.last_run_at) : 0) + intervalMs(rule.frequency);
+}
+
+// Tầng ưu tiên khi nhiều rule cùng tới hạn trong 1 lượt (deadline 70s chỉ kịp một phần):
+// 0 = nhắc hẹn (nhạy giờ nhất, 0 AI) · 1 = rule GHIM GIỜ (lịch hẹn người dùng chủ động
+// đặt, phải đúng giờ) · 2 = còn lại (định kỳ trơn — trễ vài lượt cron không ai để ý).
+export function scanTier(rule: SchedulableRule): number {
+  if (isReminder(rule)) return 0;
+  return isScheduled(rule) ? 1 : 2;
 }
 
 // ---------- CHUẨN HÓA & CHỌN TIN ----------

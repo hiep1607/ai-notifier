@@ -5,6 +5,7 @@ import {
   intervalMs,
   isDue,
   dueAt,
+  scanTier,
   vnMinutesOfDay,
   isQuietNow,
   normTitle,
@@ -104,6 +105,23 @@ describe("dueAt — thứ tự ưu tiên quét", () => {
     const a = { frequency: "60", last_run_at: "2026-07-01T08:00:00Z" };  // đáng lẽ báo 09:00
     const b = { frequency: "1440", last_run_at: "2026-06-29T08:00:00Z" }; // đáng lẽ báo 30/6 08:00
     expect(dueAt(b)).toBeLessThan(dueAt(a)); // b trễ nặng hơn → lên đầu
+  });
+
+  // Fix "thời tiết 8h bắn lúc 10h" (2026-07-04): hôm trước bắn muộn do sự cố nền →
+  // last+24h đẩy rule ghim giờ xuống cuối hàng đợi đúng lúc 8h sáng hôm sau.
+  it("rule GHIM GIỜ trong khung bắn: hạn = MỐC HẸN hôm nay, không phải last+chu kỳ", () => {
+    const now9vn = Date.parse("2026-07-04T02:00:00Z"); // 09:00 VN
+    // Hôm qua bắn muộn lúc 10:00 VN (03:00Z) — nếu tính last+24h thì hạn = 10:00 hôm nay.
+    const weather = { frequency: "1440", run_at: "08:00", last_run_at: "2026-07-03T03:00:00Z" };
+    expect(dueAt(weather, now9vn)).toBe(Date.parse("2026-07-04T01:00:00Z")); // = 08:00 VN
+  });
+
+  it("scanTier: nhắc hẹn < rule ghim giờ < định kỳ trơn", () => {
+    const reminder = { frequency: "1440", source_type: "reminder", remind_at: "2026-07-04T08:00:00+07:00" };
+    const scheduled = { frequency: "1440", run_at: "08:00" };
+    const plain = { frequency: "60" };
+    expect(scanTier(reminder)).toBeLessThan(scanTier(scheduled));
+    expect(scanTier(scheduled)).toBeLessThan(scanTier(plain));
   });
 });
 
