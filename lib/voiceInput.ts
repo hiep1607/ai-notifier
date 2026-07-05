@@ -1,39 +1,23 @@
-// Nhập liệu bằng GIỌNG NÓI cho ô chat tạo rule (và nơi khác cần sau này).
+// Bản MOBILE của useVoiceInput — ghi âm bằng expo-audio → gửi Edge Function "transcribe"
+// (Gemini flash-lite chép lời tiếng Việt) → trả văn bản. Cần mạng + đăng nhập.
 //
-// 2 đường, tự chọn theo môi trường:
-//  - WEB (Chrome/Edge/Safari): Web Speech API của trình duyệt — nhận dạng TRỰC TIẾP,
-//    chữ hiện dần khi đang nói, 0 quota AI. Trình duyệt không có API này (Firefox) →
-//    ẩn nút mic (supported=false).
-//  - MOBILE (Expo Go / app): ghi âm bằng expo-audio → gửi Edge Function "transcribe"
-//    (Gemini flash-lite chép lời) → nhận văn bản. Cần mạng + đăng nhập.
+// LƯU Ý: file này KHÔNG được import trên web — Metro tự chọn voiceInput.web.ts cho web
+// (import expo-audio trên web làm sập bundle: AudioRecorderWeb kế thừa
+// globalThis.expo.SharedObject ngay lúc import — "lỗi nội bộ" 2026-07-05).
 //
 // Dùng: const voice = useVoiceInput(setInput, (msg) => alertMessage("Giọng nói", msg));
 //       nút mic gọi voice.start() / voice.stop(); voice.recording & voice.busy để vẽ UI.
 
 import { useEffect, useRef, useState } from "react";
-import { Platform } from "react-native";
 import { AudioModule, RecordingPresets, setAudioModeAsync, useAudioRecorder } from "expo-audio";
 import * as FileSystem from "expo-file-system/legacy";
 import { supabase } from "./supabase";
 
+import type { VoiceInputState } from "./voiceInput.types";
+export type { VoiceInputState } from "./voiceInput.types";
+
 // Trần thời lượng 1 lượt nói — tự dừng để payload gọn + không ghi âm quên tắt.
 const MAX_RECORD_MS = 60000;
-
-// Constructor SpeechRecognition của trình duyệt (không có type chuẩn trong RN → any).
-// deno-lint-ignore-file không áp ở đây; eslint: any có chủ đích cho API trình duyệt.
-function webSpeechCtor(): (new () => any) | null {
-  if (Platform.OS !== "web") return null;
-  const g = globalThis as any;
-  return g.SpeechRecognition || g.webkitSpeechRecognition || null;
-}
-
-export interface VoiceInputState {
-  supported: boolean; // môi trường này có đường nhập giọng nói không (false → ẩn nút mic)
-  recording: boolean; // đang nghe/ghi âm
-  busy: boolean;      // đang chuyển giọng nói thành chữ (đường mobile, sau khi dừng)
-  start: () => Promise<void>;
-  stop: () => Promise<void>;
-}
 
 export function useVoiceInput(
   onText: (text: string) => void,
@@ -41,77 +25,40 @@ export function useVoiceInput(
 ): VoiceInputState {
   const [recording, setRecording] = useState(false);
   const [busy, setBusy] = useState(false);
-  // Hook expo-audio phải gọi vô điều kiện (luật hooks); trên web nó không được đụng tới.
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
-  const recogRef = useRef<any>(null);       // instance SpeechRecognition đang chạy (web)
-  const finalRef = useRef("");              // phần đã chốt (isFinal) của web speech
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const stoppingRef = useRef(false);        // chống bấm dừng 2 lần (mobile)
+  const stoppingRef = useRef(false); // chống bấm dừng 2 lần
 
-  const Ctor = webSpeechCtor();
-  const supported = Platform.OS !== "web" || Boolean(Ctor);
-
-  // Rời màn hình khi đang ghi → dọn cho sạch (không giữ mic).
+  // Rời màn hình khi đang ghi → dọn timer (recorder tự giải phóng theo hook).
   useEffect(() => {
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
-      try { recogRef.current?.abort?.(); } catch { /* đã dừng */ }
     };
   }, []);
 
-  // ---------- ĐƯỜNG WEB: Web Speech API ----------
-  const startWeb = async () => {
-    const recog = new (Ctor as new () => any)();
-    recogRef.current = recog;
-    finalRef.current = "";
-    recog.lang = "vi-VN";
-    recog.interimResults = true; // chữ hiện dần khi đang nói
-    recog.continuous = true;     // nói nhiều câu, tự dừng khi bấm stop / im lặng lâu
-    recog.onresult = (e: any) => {
-      let interim = "";
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        const r = e.results[i];
-        if (r.isFinal) finalRef.current += r[0].transcript;
-        else interim += r[0].transcript;
+  const start = async () => {
+    if (recording || busy) return;
+    try {
+      const perm = await AudioModule.requestRecordingPermissionsAsync();
+      if (!perm.granted) {
+        onError("Bạn chưa cho phép dùng micro. Vào cài đặt hệ thống cấp quyền micro cho app rồi thử lại.");
+        return;
       }
-      const t = (finalRef.current + interim).trim();
-      if (t) onText(t);
-    };
-    recog.onerror = (e: any) => {
+      // iOS: không bật allowsRecording thì record() im lặng không thu gì.
+      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+      await recorder.prepareToRecordAsync();
+      recorder.record();
+      stoppingRef.current = false;
+      setRecording(true);
+      timerRef.current = setTimeout(() => { void stop(); }, MAX_RECORD_MS);
+    } catch (e) {
       setRecording(false);
-      if (e?.error === "not-allowed" || e?.error === "service-not-allowed") {
-        onError("Bạn chưa cho phép dùng micro. Hãy cấp quyền micro cho trang này rồi thử lại.");
-      } else if (e?.error && e.error !== "aborted" && e.error !== "no-speech") {
-        onError(`Không nhận dạng được giọng nói (${e.error}).`);
-      }
-    };
-    recog.onend = () => setRecording(false); // chữ đã đẩy dần qua onresult rồi
-    recog.start();
-    setRecording(true);
-  };
-
-  const stopWeb = async () => {
-    try { recogRef.current?.stop(); } catch { /* đã dừng sẵn */ }
-  };
-
-  // ---------- ĐƯỜNG MOBILE: ghi âm → Edge Function transcribe (Gemini chép lời) ----------
-  const startNative = async () => {
-    const perm = await AudioModule.requestRecordingPermissionsAsync();
-    if (!perm.granted) {
-      onError("Bạn chưa cho phép dùng micro. Vào cài đặt hệ thống cấp quyền micro cho app rồi thử lại.");
-      return;
+      onError((e as Error).message);
     }
-    // iOS: không bật allowsRecording thì record() im lặng không thu gì.
-    await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
-    await recorder.prepareToRecordAsync();
-    recorder.record();
-    stoppingRef.current = false;
-    setRecording(true);
-    timerRef.current = setTimeout(() => { void stopNative(); }, MAX_RECORD_MS);
   };
 
-  const stopNative = async () => {
-    if (stoppingRef.current) return;
+  const stop = async () => {
+    if (!recording || stoppingRef.current) return;
     stoppingRef.current = true;
     if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
     setRecording(false);
@@ -139,25 +86,5 @@ export function useVoiceInput(
     }
   };
 
-  const isWebPath = Platform.OS === "web";
-  return {
-    supported,
-    recording,
-    busy,
-    start: async () => {
-      if (recording || busy) return;
-      try {
-        if (isWebPath) await startWeb();
-        else await startNative();
-      } catch (e) {
-        setRecording(false);
-        onError((e as Error).message);
-      }
-    },
-    stop: async () => {
-      if (!recording) return;
-      if (isWebPath) await stopWeb();
-      else await stopNative();
-    },
-  };
+  return { supported: true, recording, busy, start, stop };
 }
