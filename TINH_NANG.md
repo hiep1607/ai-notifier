@@ -55,6 +55,17 @@ Bitcoin, Giá xăng, Thời tiết Hà Nội, Tin công nghệ. Cũng hiện car
 ### 2c. Sửa tay (màn chi tiết rule)
 Đổi từ khóa/danh mục/tần suất/điều kiện trực tiếp, không qua AI.
 
+### 2e. Nhập bằng GIỌNG NÓI (màn "Tạo rule" — thêm 2026-07-05)
+Nút 🎙 cạnh ô chat. Bấm để nói, bấm lại (nút đỏ ⏹) để dừng — chữ đổ vào ô nhập để bạn
+**xem lại/sửa rồi mới bấm gửi**, không tự gửi. Ví dụ: bấm mic, nói "theo dõi giá vàng
+mỗi sáng tám giờ" → ô nhập hiện đúng câu đó → bấm gửi như thường.
+- **Web (Chrome/Edge/Safari):** dùng Web Speech API của trình duyệt — chữ hiện DẦN ngay
+  khi đang nói, 0 tốn quota AI. Trình duyệt không hỗ trợ (Firefox) → nút mic tự ẩn.
+- **Mobile (Expo Go/app):** ghi âm (expo-audio, tự dừng sau 60 giây) → gửi Edge Function
+  `transcribe` → Gemini flash-lite chép lời (không grounding, không đụng quota 1.500) →
+  chữ đổ vào ô nhập. Cần đăng nhập (endpoint chặn anon 401) + cấp quyền micro lần đầu.
+- Không nghe rõ → báo "thử nói lại gần micro hơn"; kẹt quota AI → gợi ý gõ tay.
+
 ### 2d. Sửa nhanh bằng CHAT (màn chi tiết rule — thêm 2026-07-03)
 Ô "Sửa nhanh bằng chat" ngay dưới thông tin rule: gõ yêu cầu tự nhiên — "đổi sang 7h sáng",
 "chỉ báo khi giảm hơn 3%", "thêm nguồn CafeF" — AI (generate-rule chế độ edit) nhận RULE HIỆN TẠI

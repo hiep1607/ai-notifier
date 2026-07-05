@@ -153,4 +153,21 @@ describe("Create Rule Screen", () => {
 
     expect(mockChatRule).not.toHaveBeenCalled();
   });
+
+  // Nhập giọng nói (đường mobile — expo-audio mock ở setup.ts): bấm mic bắt đầu nghe
+  // (placeholder đổi), bấm lại dừng; mock không có file ghi âm → báo lỗi thân thiện.
+  it("nút mic: bấm để nghe, bấm lại dừng (mock không có bản ghi → báo lỗi)", async () => {
+    const { getByTestId, getByPlaceholderText } = render(<CreateRuleScreen />);
+
+    fireEvent.press(getByTestId("mic-button"));
+    await waitFor(() => expect(getByPlaceholderText(/Đang nghe/)).toBeTruthy());
+
+    fireEvent.press(getByTestId("mic-button"));
+    await waitFor(() => {
+      expect(alertSpy).toHaveBeenCalledWith(
+        "Nhập giọng nói",
+        expect.stringContaining("Không ghi âm được"),
+      );
+    });
+  });
 });

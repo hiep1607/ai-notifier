@@ -31,6 +31,8 @@ interface GeminiOpts {
   // Cho phép chọn model riêng theo task (vd generate-rule dùng flash-lite rẻ hơn,
   // run-monitor giữ flash để có grounding tốt). Mặc định = GEMINI_MODEL.
   model?: string;
+  // Âm thanh đính kèm (base64) — dùng cho chuyển giọng nói thành văn bản (transcribe).
+  audio?: { data: string; mime: string };
 }
 
 // 429 có 2 loại RẤT khác nhau: (a) chạm giới hạn TỐC ĐỘ mỗi phút (vd flash-lite free
@@ -60,8 +62,15 @@ async function geminiOnce(opts: GeminiOpts): Promise<GeminiResult> {
   if (!key) throw new Error("Thiếu GEMINI_API_KEY (đặt qua supabase secrets set)");
   const model = opts.model ?? MODEL;
 
+  // Audio (nếu có) đứng TRƯỚC text — đúng khuyến nghị Gemini cho media + câu lệnh.
+  const parts: Record<string, unknown>[] = [];
+  if (opts.audio) {
+    parts.push({ inline_data: { mime_type: opts.audio.mime, data: opts.audio.data } });
+  }
+  parts.push({ text: opts.user });
+
   const body: Record<string, unknown> = {
-    contents: [{ role: "user", parts: [{ text: opts.user }] }],
+    contents: [{ role: "user", parts }],
     generationConfig: {
       temperature: opts.temperature ?? 0.3,
       // Chỉ ép JSON khi KHÔNG dùng tool grounding (Gemini không cho kết hợp).

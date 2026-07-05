@@ -42,6 +42,12 @@
             "backgroundColor": "#000000"
           }
         }
+      ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Cho phép $(PRODUCT_NAME) dùng micro để bạn mô tả rule bằng giọng nói."
+        }
       ]
     ],
     "experiments": {

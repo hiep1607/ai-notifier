@@ -48,6 +48,27 @@ jest.mock("react-native-safe-area-context", () => {
 // Mock react-native-url-polyfill
 jest.mock("react-native-url-polyfill/auto", () => {});
 
+// Mock expo-audio (native module) — màn create-rule dùng useVoiceInput (ghi âm mobile).
+jest.mock("expo-audio", () => ({
+  useAudioRecorder: jest.fn(() => ({
+    prepareToRecordAsync: jest.fn().mockResolvedValue(undefined),
+    record: jest.fn(),
+    stop: jest.fn().mockResolvedValue(undefined),
+    uri: null,
+  })),
+  AudioModule: {
+    requestRecordingPermissionsAsync: jest.fn().mockResolvedValue({ granted: true }),
+  },
+  setAudioModeAsync: jest.fn().mockResolvedValue(undefined),
+  RecordingPresets: { HIGH_QUALITY: {} },
+}));
+
+// Mock expo-file-system/legacy (đọc file ghi âm ra base64 trong lib/voiceInput).
+jest.mock("expo-file-system/legacy", () => ({
+  readAsStringAsync: jest.fn().mockResolvedValue(""),
+  EncodingType: { Base64: "base64" },
+}));
+
 // Mock AsyncStorage (native module) — ThemeContext/lib/supabase import nó nên
 // thiếu mock này khiến mọi test suite crash "AsyncStorage is null".
 jest.mock(

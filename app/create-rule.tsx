@@ -17,6 +17,7 @@ import { router } from "expo-router";
 import { supabase } from "../lib/supabase";
 import { alertMessage } from "../lib/dialog";
 import { chatRule, RuleDraft } from "../lib/ruleAI";
+import { useVoiceInput } from "../lib/voiceInput";
 import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";
 import { findCategory, formatSchedule } from "../lib/ruleOptions";
@@ -67,6 +68,9 @@ export default function CreateRuleScreen() {
   const [important, setImportant] = useState<boolean[]>([]);
   const [loading, setLoading] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  // Nhập bằng GIỌNG NÓI: web = Web Speech API (chữ hiện dần), mobile = ghi âm → Gemini
+  // chép lời. Kết quả đổ vào ô input để người dùng xem lại rồi mới bấm gửi.
+  const voice = useVoiceInput(setInput, (msg) => alertMessage("Nhập giọng nói", msg));
 
   // Hiện preview + khởi tạo lựa chọn "chỉ tin quan trọng" theo đánh giá độ ồn của AI.
   const showPreview = (rules: RuleDraft[]) => {
@@ -411,14 +415,37 @@ export default function CreateRuleScreen() {
       {/* INPUT */}
       <View style={styles.inputRow}>
         <TextInput
-          placeholder="Nhập mô tả hoặc trả lời AI..."
-          placeholderTextColor={colors.subText}
+          placeholder={
+            voice.recording ? "🎙 Đang nghe... bấm nút đỏ để dừng"
+              : voice.busy ? "Đang chuyển giọng nói thành chữ..."
+                : "Nhập mô tả hoặc trả lời AI..."
+          }
+          placeholderTextColor={voice.recording ? colors.danger : colors.subText}
           style={styles.input}
           value={input}
           onChangeText={setInput}
           onSubmitEditing={() => send(input)}
           returnKeyType="send"
         />
+        {/* Nút MIC — chỉ hiện khi môi trường hỗ trợ (Firefox web không có → ẩn) */}
+        {voice.supported && (
+          <TouchableOpacity
+            testID="mic-button"
+            style={[styles.micBtn, voice.recording && styles.micBtnActive, (loading || voice.busy) && { opacity: 0.5 }]}
+            onPress={() => (voice.recording ? voice.stop() : voice.start())}
+            disabled={loading || voice.busy}
+          >
+            {voice.busy ? (
+              <ActivityIndicator size="small" color={colors.primary} />
+            ) : (
+              <Ionicons
+                name={voice.recording ? "stop" : "mic-outline"}
+                size={22}
+                color={voice.recording ? "white" : colors.primary}
+              />
+            )}
+          </TouchableOpacity>
+        )}
         <TouchableOpacity
           testID="send-button"
           style={[styles.sendBtn, (!input.trim() || loading) && { opacity: 0.5 }]}
@@ -687,6 +714,20 @@ function createStyles(C: AppColors) {
       backgroundColor: C.primary,
       justifyContent: "center",
       alignItems: "center",
+    },
+    micBtn: {
+      width: 50,
+      height: 50,
+      borderRadius: 25,
+      backgroundColor: C.card,
+      borderWidth: 1,
+      borderColor: C.primary + "66",
+      justifyContent: "center",
+      alignItems: "center",
+    },
+    micBtnActive: {
+      backgroundColor: C.danger,
+      borderColor: C.danger,
     },
   });
 }
