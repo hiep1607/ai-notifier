@@ -49,19 +49,24 @@ jest.mock("react-native-safe-area-context", () => {
 jest.mock("react-native-url-polyfill/auto", () => {});
 
 // Mock expo-audio (native module) — màn create-rule dùng useVoiceInput (ghi âm mobile).
-jest.mock("expo-audio", () => ({
-  useAudioRecorder: jest.fn(() => ({
-    prepareToRecordAsync: jest.fn().mockResolvedValue(undefined),
-    record: jest.fn(),
-    stop: jest.fn().mockResolvedValue(undefined),
-    uri: null,
-  })),
-  AudioModule: {
-    requestRecordingPermissionsAsync: jest.fn().mockResolvedValue({ granted: true }),
-  },
-  setAudioModeAsync: jest.fn().mockResolvedValue(undefined),
-  RecordingPresets: { HIGH_QUALITY: {} },
-}));
+// lib/voiceInput require lười + tự new AudioModule.AudioRecorder (không dùng hook).
+jest.mock("expo-audio", () => {
+  class MockAudioRecorder {
+    uri: string | null = null;
+    prepareToRecordAsync = jest.fn().mockResolvedValue(undefined);
+    record = jest.fn();
+    stop = jest.fn().mockResolvedValue(undefined);
+    release = jest.fn();
+  }
+  return {
+    AudioModule: {
+      AudioRecorder: MockAudioRecorder,
+      requestRecordingPermissionsAsync: jest.fn().mockResolvedValue({ granted: true }),
+    },
+    setAudioModeAsync: jest.fn().mockResolvedValue(undefined),
+    RecordingPresets: { HIGH_QUALITY: { extension: ".m4a", sampleRate: 44100 } },
+  };
+});
 
 // Mock expo-file-system/legacy (đọc file ghi âm ra base64 trong lib/voiceInput).
 jest.mock("expo-file-system/legacy", () => ({
