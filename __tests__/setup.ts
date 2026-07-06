@@ -48,6 +48,13 @@ jest.mock("react-native-safe-area-context", () => {
 // Mock react-native-url-polyfill
 jest.mock("react-native-url-polyfill/auto", () => {});
 
+// lib/voiceInput dò native module bằng requireOptionalNativeModule TRƯỚC khi require
+// (binary cũ thiếu module → ẩn mic thay vì sập). Trong jest coi như mọi module đều có.
+jest.mock("expo-modules-core", () => ({
+  ...jest.requireActual("expo-modules-core"),
+  requireOptionalNativeModule: jest.fn(() => ({})),
+}));
+
 // Mock expo-audio (native module) — màn create-rule dùng useVoiceInput (ghi âm mobile).
 // lib/voiceInput require lười + tự new AudioModule.AudioRecorder (không dùng hook).
 jest.mock("expo-audio", () => {

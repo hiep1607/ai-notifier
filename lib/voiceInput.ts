@@ -12,6 +12,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Platform } from "react-native";
+import { requireOptionalNativeModule } from "expo-modules-core";
 import { supabase } from "./supabase";
 
 import type { VoiceInputState } from "./voiceInput.types";
@@ -25,11 +26,21 @@ let audioMod: AudioMod | null | undefined; // undefined = chưa thử require
 
 function getAudioMod(): AudioMod | null {
   if (audioMod === undefined) {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      audioMod = require("expo-audio") as AudioMod;
-    } catch {
+    // KHÔNG được require thẳng expo-audio để "thử": factory của nó gọi
+    // requireNativeModule('ExpoAudio') — binary cũ thiếu module là THROW, và với
+    // lazy-require thì metro guardedLoadModule KHÔNG ném lỗi lại cho try/catch bên
+    // ngoài mà gọi thẳng ErrorUtils.reportFatalError → SẬP APP (dính 2026-07-06,
+    // crash dialog trên máy user dù đã bọc try/catch). Phải DÒ TRƯỚC bằng
+    // requireOptionalNativeModule (trả null, không throw) rồi mới require.
+    if (!requireOptionalNativeModule("ExpoAudio")) {
       audioMod = null; // binary không có native module ExpoAudio → tắt đường mic
+    } else {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        audioMod = require("expo-audio") as AudioMod;
+      } catch {
+        audioMod = null;
+      }
     }
   }
   return audioMod;
@@ -111,7 +122,11 @@ export function useVoiceInput(
       await audio?.setAudioModeAsync({ allowsRecording: false }); // trả loa về chế độ thường
       const uri: string | null = recorderRef.current?.uri ?? null;
       if (!uri) throw new Error("Không ghi âm được — thử lại nhé.");
-      // expo-file-system cũng require lười — binary cũ có thể thiếu luôn module này.
+      // expo-file-system cũng dò-trước rồi mới require lười (lý do như getAudioMod:
+      // require module thiếu native = reportFatalError sập app, try/catch vô dụng).
+      if (!requireOptionalNativeModule("ExponentFileSystem")) {
+        throw new Error("Bản cài đặt này chưa hỗ trợ đọc file ghi âm (cần bản build mới của app).");
+      }
       // eslint-disable-next-line @typescript-eslint/no-require-imports
       const FileSystem = require("expo-file-system/legacy");
       const audioB64: string = await FileSystem.readAsStringAsync(uri, {
