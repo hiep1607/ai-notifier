@@ -53,9 +53,17 @@ const only = process.argv.find((a) => a.startsWith("--only="))?.slice(7).split("
 const list = only ? SCENARIOS.filter((s) => only.includes(s.id)) : SCENARIOS;
 
 // Retry 503/429 (lỗi tạm của Gemini) như client thật (lib/ruleAI cũng retry 3 lần).
+// LƯU Ý (bài học 2026-07-07): server trả lỗi quota dưới dạng need_info THÂN THIỆN
+// ("⏳ AI đang bận... chờ khoảng N giây") chứ không phải body.error → phải soi cả
+// message, chờ đúng N giây rồi thử lại, không thì cả loạt kịch bản "trượt oan"
+// vì trần quota THEO PHÚT.
+const QUOTA_MSG = /chạm giới hạn|quá tải|hết lượt|đang bận/i;
+// Hết quota NGÀY (server đã phân loại theo quotaId) → retry vô ích, dừng cả loạt.
+const DAILY_MSG = /hết lượt miễn phí hôm nay|reset ~?14h/i;
+
 async function callGenerateRule(prompt) {
   let out;
-  for (let attempt = 0; attempt < 4; attempt++) {
+  for (let attempt = 0; attempt < 6; attempt++) {
     const res = await fetch(`${URL_BASE}/functions/v1/generate-rule`, {
       method: "POST",
       headers: {
@@ -67,8 +75,20 @@ async function callGenerateRule(prompt) {
     });
     out = { http: res.status, body: await res.json().catch(() => null) };
     const err = String(out.body?.error ?? "");
-    if (!/503|429|overloaded|unavailable/i.test(err)) return out;
-    await new Promise((r) => setTimeout(r, (attempt + 1) * 8000));
+    const msg = String(out.body?.message ?? "");
+    if (/503|429|overloaded|unavailable/i.test(err)) {
+      await new Promise((r) => setTimeout(r, (attempt + 1) * 8000));
+      continue;
+    }
+    if (DAILY_MSG.test(msg)) return { ...out, dailyQuota: true }; // hết lượt NGÀY — thôi
+    if (QUOTA_MSG.test(msg)) {
+      // Server gợi ý "chờ khoảng N giây" → chờ đúng N (+5s đệm), không có thì 50s.
+      const n = Number(msg.match(/khoảng (\d+) giây/)?.[1] ?? 45);
+      console.log(`    (quota theo phút — chờ ${n + 5}s rồi thử lại, lần ${attempt + 1})`);
+      await new Promise((r) => setTimeout(r, (n + 5) * 1000));
+      continue;
+    }
+    return out;
   }
   return out;
 }
@@ -104,7 +124,11 @@ for (const s of list) {
   console.log(`  KỲ VỌNG: ${s.expect}`);
   console.log(`  KẾT QUẢ: ${line.status}${line.rules.length ? "" : ` — ${line.message}`}`);
   for (const r of line.rules) console.log(`    · ${r}`);
-  await new Promise((r) => setTimeout(r, 1200)); // né rate-limit theo phút
+  if (out.dailyQuota) {
+    console.log("\n⛔ HẾT QUOTA NGÀY — dừng cả loạt, chạy lại sau 14h giờ VN (mốc reset).");
+    break;
+  }
+  await new Promise((r) => setTimeout(r, 6000)); // giãn nhịp né rate-limit theo phút
 }
 
 writeFileSync(new URL("./scenario-results.json", import.meta.url), JSON.stringify(results, null, 2));

@@ -264,13 +264,22 @@ Deno.serve(async (req) => {
     // AI quá tải / hết lượt (503/429): trả lời THÂN THIỆN trong chat thay vì ném nguyên
     // cục JSON lỗi của Gemini cho người dùng (phát hiện từ đợt test kịch bản 2026-07-03).
     const msg = (err as Error).message;
-    // 429 kèm "retry in Xs" = chạm giới hạn TỐC ĐỘ mỗi phút (không phải hết lượt ngày!)
-    // — gemini.ts đã tự chờ + thử lại 1 lần; vẫn lọt tới đây thì bảo người dùng chờ ngắn.
+    // Phân loại 429 theo quotaId trong body lỗi Gemini (chuẩn): ...PerDay... = HẾT
+    // LƯỢT NGÀY, ...PerMinute... = chạm tốc độ phút. ĐỪNG tin "retry in Xs" một mình —
+    // hết quota ngày Gemini vẫn kèm "retry in ~60s" (đêm 2026-07-07 chờ 60s×6 vẫn kẹt,
+    // trong khi message cũ khẳng định "quota ngày vẫn còn" → gây hiểu lầm).
     const rateM = msg.match(/retry in (\d+(?:\.\d+)?)\s*s/i);
-    if (rateM && parseFloat(rateM[1]) <= 120) {
+    if (/per\s*day|perday/i.test(msg)) {
       return json({
         status: "need_info",
-        message: `⏳ AI đang bận tức thời (chạm giới hạn số lượt gọi mỗi PHÚT — quota ngày vẫn còn). Bạn chờ khoảng ${Math.max(5, Math.ceil(parseFloat(rateM[1])))} giây rồi gửi lại nhé.`,
+        message:
+          "⏳ AI đã hết lượt miễn phí HÔM NAY (quota reset ~14h giờ VN). Các rule đã tạo vẫn quét bình thường — bạn quay lại tạo rule mới sau nhé.",
+      });
+    }
+    if (/per\s*minute|perminute/i.test(msg) || (rateM && parseFloat(rateM[1]) <= 120)) {
+      return json({
+        status: "need_info",
+        message: `⏳ AI đang bận tức thời (chạm giới hạn số lượt gọi mỗi phút). Bạn chờ khoảng ${Math.max(5, Math.ceil(parseFloat(rateM?.[1] ?? "45")))} giây rồi gửi lại nhé.`,
       });
     }
     if (/429|quota|resource_exhausted|503|overloaded|unavailable/i.test(msg)) {

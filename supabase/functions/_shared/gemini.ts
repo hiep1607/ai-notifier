@@ -107,8 +107,11 @@ async function geminiOnce(opts: GeminiOpts): Promise<GeminiResult> {
 
   const data = await res.json();
   const cand = data?.candidates?.[0];
-  const parts = cand?.content?.parts ?? [];
-  const text = parts.map((p: { text?: string }) => p?.text ?? "").join("").trim();
+  // LƯU Ý: không đặt tên `parts` — trùng với mảng parts của REQUEST ở đầu hàm.
+  // Chính vụ trùng tên này (thêm 2026-07-05 khi làm audio) là SyntaxError làm MỌI
+  // function import gemini.ts BOOT_ERROR khi deploy lại (phát hiện 2026-07-08).
+  const outParts = cand?.content?.parts ?? [];
+  const text = outParts.map((p: { text?: string }) => p?.text ?? "").join("").trim();
 
   // Nguồn thật từ Google Search grounding (uri thường là link redirect của Google,
   // mở trên trình duyệt vẫn ra bài gốc → dùng cho nút "Đọc bài gốc").
