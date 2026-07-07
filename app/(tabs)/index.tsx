@@ -102,10 +102,13 @@ export default function HomeScreen() {
   const fetchData = async () => {
     if (!user) return;
 
-    // (1) Lần vào đầu (state trống): vẽ NGAY từ cache — hết màn hình trống chờ mạng.
+    // (1) Lần vào đầu (state trống): vẽ NGAY từ cache — chạy SONG SONG với mạng
+    // (trước đây chờ đọc cache xong mới gọi mạng); mạng về trước thì bỏ qua cache.
+    let networkDone = false;
     if (rules.length === 0 && !latestNotif) {
-      const cached = await loadCache<HomeCache>(`@cache_home_${user.id}`);
-      if (cached) applyHome(cached);
+      loadCache<HomeCache>(`@cache_home_${user.id}`).then((cached) => {
+        if (cached && !networkDone) applyHome(cached);
+      });
     }
 
     // (2) Lấy bản mới: 2 truy vấn chạy SONG SONG (trước đây nối đuôi), thông báo chỉ
@@ -115,6 +118,7 @@ export default function HomeScreen() {
         .order("created_at", { ascending: true }),
       fetchNotificationsFor(user.id, { limit: 100 }),
     ]);
+    networkDone = true;
 
     const important = typed.filter((n) => n.is_important);
     const fresh: HomeCache = {

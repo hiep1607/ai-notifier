@@ -33,28 +33,42 @@ export function AuthProvider({
     useState(true);
 
   useEffect(() => {
+    // Không để app kẹt màn hình chờ nếu getSession treo (mạng chậm, refresh token
+    // kẹt...): quá 6s cứ vào app trước, session (nếu có) sẽ về sau qua onAuthStateChange.
+    let settled = false;
+    const settle = (s: Session | null) => {
+      if (settled) return;
+      settled = true;
+      if (s) setSession(s);
+      setLoading(false);
+    };
+    const timer = setTimeout(() => settle(null), 6000);
+
     supabase.auth
       .getSession()
       .then(({ data: { session } }) => {
-        setSession(session);
+        settle(session);
       })
       .catch((err) => {
         // Không để app treo màn hình trắng nếu load session lỗi
         console.warn("getSession failed:", err);
-      })
-      .finally(() => {
-        setLoading(false);
+        settle(null);
       });
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(
       (_, session) => {
+        settled = true; // nguồn mới nhất — getSession/timeout về sau không được ghi đè
         setSession(session);
+        setLoading(false);
       }
     );
 
-    return () => subscription.unsubscribe();
+    return () => {
+      clearTimeout(timer);
+      subscription.unsubscribe();
+    };
   }, []);
 
   return (

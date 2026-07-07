@@ -1,5 +1,5 @@
-import { useEffect } from "react";
-import { Platform } from "react-native";
+import { useEffect, useState } from "react";
+import { ActivityIndicator, Platform, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
@@ -9,12 +9,15 @@ import {
   ThemeProvider,
 } from "@react-navigation/native";
 
+import { Ionicons } from "@expo/vector-icons";
+import { useFonts } from "expo-font";
 import * as NavigationBar from "expo-navigation-bar";
 import * as Notifications from "expo-notifications";
+import * as SplashScreen from "expo-splash-screen";
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
-import { router, Stack } from "expo-router";
+import { router, Stack, usePathname } from "expo-router";
 
 import { StatusBar } from "expo-status-bar";
 
@@ -34,6 +37,9 @@ export const unstable_settings = {
   anchor: "(tabs)",
 };
 
+// Giữ splash native hiển thị cho tới khi app sẵn sàng — hết chớp màn trắng lúc mở.
+SplashScreen.preventAutoHideAsync().catch(() => {});
+
 export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
@@ -50,7 +56,23 @@ export default function RootLayout() {
 
 function RootNavigator() {
   const { session, loading } = useAuth();
-  const { isDark } = useTheme();
+  const { isDark, colors } = useTheme();
+  const pathname = usePathname();
+
+  // Nạp trước font icon Ionicons — hết cảnh chữ hiện trước, icon nhảy vào sau.
+  const [fontsLoaded, fontError] = useFonts({ ...Ionicons.font });
+  // Nhưng không để font (mạng chậm trên web) giam app quá 3 giây.
+  const [fontWaitOver, setFontWaitOver] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setFontWaitOver(true), 3000);
+    return () => clearTimeout(t);
+  }, []);
+
+  const ready = !loading && (fontsLoaded || Boolean(fontError) || fontWaitOver);
+
+  useEffect(() => {
+    if (ready) SplashScreen.hideAsync().catch(() => {});
+  }, [ready]);
 
   useEffect(() => {
     if (Platform.OS === "android") {
@@ -67,7 +89,8 @@ function RootNavigator() {
   }, []);
 
   useEffect(() => {
-    if (loading) return;
+    // Chờ `ready` (không chỉ `loading`) — Stack chưa mount thì chưa được điều hướng.
+    if (!ready) return;
     if (!session) {
       router.replace("/login");
       return;
@@ -76,7 +99,15 @@ function RootNavigator() {
     AsyncStorage.getItem("@onboarded").then((v) => {
       if (!v) router.replace("/onboarding" as any);
     });
-  }, [session, loading]);
+  }, [session, ready]);
+
+  // Phòng hờ: getSession chậm hơn timeout 6s → đã lỡ đưa về /login, khi session
+  // về muộn qua onAuthStateChange thì tự đưa lại vào app (login tay cũng vô hại).
+  useEffect(() => {
+    if (ready && session && pathname === "/login") {
+      router.replace("/(tabs)");
+    }
+  }, [session, ready, pathname]);
 
   // Đăng ký push token sau khi đăng nhập (no-op trên web/Expo Go/thiếu EAS).
   useEffect(() => {
@@ -93,7 +124,22 @@ function RootNavigator() {
     return () => sub.remove();
   }, []);
 
-  if (loading) return null;
+  if (!ready) {
+    // Native: splash vẫn đang che nên trả gì cũng không thấy. Web: không có splash
+    // → hiện nền + vòng xoay thay cho màn trắng trống trơn.
+    return (
+      <View
+        style={{
+          flex: 1,
+          alignItems: "center",
+          justifyContent: "center",
+          backgroundColor: colors.background,
+        }}
+      >
+        {Platform.OS === "web" && <ActivityIndicator size="large" color={colors.primary} />}
+      </View>
+    );
+  }
 
   return (
     <ThemeProvider value={isDark ? DarkTheme : DefaultTheme}>

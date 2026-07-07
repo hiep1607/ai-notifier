@@ -72,15 +72,18 @@ export default function NotificationsScreen() {
   const fetchNotifications = async () => {
     if (!user) return;
 
-    // (1) Lần vào đầu: vẽ NGAY từ cache lần trước — hết cảnh tab trống chờ mạng.
+    // (1) Lần vào đầu: vẽ NGAY từ cache lần trước — chạy SONG SONG với mạng
+    // (trước đây chờ đọc cache xong mới gọi mạng); mạng về trước thì bỏ qua cache.
+    let networkDone = false;
     if (notifications.length === 0) {
-      const cached = await loadCache<{ nameMap: Record<string, string>; notifs: Notification[] }>(
+      loadCache<{ nameMap: Record<string, string>; notifs: Notification[] }>(
         `@cache_notifs_${user.id}`,
-      );
-      if (cached) {
-        setRuleNames(cached.nameMap);
-        setNotifications(cached.notifs);
-      }
+      ).then((cached) => {
+        if (cached && !networkDone) {
+          setRuleNames(cached.nameMap);
+          setNotifications(cached.notifs);
+        }
+      });
     }
 
     // (2) Bản mới: 2 truy vấn SONG SONG; thông báo lọc theo user_id (0021 — thấy cả
@@ -90,6 +93,7 @@ export default function NotificationsScreen() {
       supabase.from("rules").select("id, title, keyword").eq("user_id", user.id),
       fetchNotificationsFor(user.id, { limit: 100 }),
     ]);
+    networkDone = true;
 
     // Map rule_id → tên rule để gắn nhãn lên từng thông báo (nhìn là biết của rule nào).
     const nameMap: Record<string, string> = {};

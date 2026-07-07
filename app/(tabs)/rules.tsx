@@ -146,47 +146,64 @@ export default function RulesScreen() {
   const fetchRules = async () => {
     if (!user) return;
 
-    // Lần vào đầu: vẽ NGAY từ cache lần trước, mạng về sau thì thay mới.
+    // Lần vào đầu: vẽ NGAY từ cache lần trước — chạy SONG SONG với mạng
+    // (trước đây chờ đọc cache xong mới gọi mạng); mạng về trước thì bỏ qua cache.
+    let networkDone = false;
     if (rules.length === 0) {
-      const cached = await loadCache<{ rules: Rule[]; counts: Record<string, number> }>(
+      loadCache<{ rules: Rule[]; counts: Record<string, number> }>(
         `@cache_rules_${user.id}`,
-      );
-      if (cached) {
-        setRules(cached.rules);
-        setUnreadCounts(cached.counts);
-      }
+      ).then((cached) => {
+        if (cached && !networkDone) {
+          setRules(cached.rules);
+          setUnreadCounts(cached.counts);
+        }
+      });
     }
 
-    const { data, error } = await supabase
-      .from("rules")
-      .select("*")
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: true });
+    // Rules + đếm chưa đọc chạy SONG SONG (trước đây phải chờ rules về mới đếm).
+    const [rulesRes, unreadRes] = await Promise.all([
+      supabase
+        .from("rules")
+        .select("*")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: true }),
+      supabase
+        .from("notifications")
+        .select("rule_id")
+        .eq("user_id", user.id)
+        .eq("is_read", false),
+    ]);
 
-    if (error) {
-      console.log(error);
+    if (rulesRes.error) {
+      console.log(rulesRes.error);
       return;
     }
+    networkDone = true;
 
-    if (data) {
-      setRules(data as Rule[]);
+    const data = (rulesRes.data ?? []) as Rule[];
+    setRules(data);
 
-      const counts: Record<string, number> = {};
+    // Thiếu cột user_id (0021 chưa chạy) → rơi về cách cũ đếm theo rule_id.
+    let unreadRows = unreadRes.data;
+    if (unreadRes.error) {
       const ids = data.map((r) => r.id);
-      if (ids.length > 0) {
-        const { data: notifs } = await supabase
-          .from("notifications")
-          .select("rule_id")
-          .in("rule_id", ids)
-          .eq("is_read", false);
-
-        notifs?.forEach((n) => {
-          counts[n.rule_id] = (counts[n.rule_id] ?? 0) + 1;
-        });
-        setUnreadCounts(counts);
-      }
-      saveCache(`@cache_rules_${user.id}`, { rules: data as Rule[], counts });
+      unreadRows = ids.length
+        ? (
+            await supabase
+              .from("notifications")
+              .select("rule_id")
+              .in("rule_id", ids)
+              .eq("is_read", false)
+          ).data
+        : [];
     }
+
+    const counts: Record<string, number> = {};
+    (unreadRows ?? []).forEach((n: { rule_id: string | null }) => {
+      if (n.rule_id) counts[n.rule_id] = (counts[n.rule_id] ?? 0) + 1;
+    });
+    setUnreadCounts(counts);
+    saveCache(`@cache_rules_${user.id}`, { rules: data, counts });
   };
 
   const handleDeleteRule = async (id: string) => {

@@ -40,7 +40,7 @@ function isTyping(): boolean {
   );
 }
 
-export function startWebAutoUpdate(intervalMs = 60_000) {
+export function startWebAutoUpdate(intervalMs = 60_000, firstCheckDelayMs = 10_000) {
   if (started || Platform.OS !== "web") return;
   if (typeof window === "undefined" || typeof document === "undefined") return;
   started = true;
@@ -58,7 +58,8 @@ export function startWebAutoUpdate(intervalMs = 60_000) {
     }
   };
 
-  check();
+  // Lần kiểm đầu lùi lại vài giây — không tranh mạng với các request dữ liệu lúc mở app.
+  setTimeout(check, firstCheckDelayMs);
   setInterval(check, intervalMs);
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") check();
