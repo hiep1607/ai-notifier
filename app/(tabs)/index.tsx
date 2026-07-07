@@ -18,7 +18,8 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import { supabase } from "../../lib/supabase";
 import { fetchNotificationsFor } from "../../lib/notifQuery";
-import { loadCache, saveCache } from "../../lib/screenCache";
+import { getMemCache, loadCache, saveCache } from "../../lib/screenCache";
+import { homeCacheKey, type HomeCache } from "../../lib/prefetch";
 import { runMonitorForActiveRules } from "../../lib/monitor";
 import { useAuth } from "../../contexts/AuthContext";
 import { useTheme } from "../../contexts/ThemeContext";
@@ -35,11 +36,14 @@ export default function HomeScreen() {
   const { colors, isDark } = useTheme();
   const styles = useMemo(() => createStyles(colors), [colors]);
 
-  const [rules, setRules] = useState<Rule[]>([]);
-  const [notificationsCount, setNotificationsCount] = useState(0);
-  const [importantCount, setImportantCount] = useState(0);
-  const [latestImportant, setLatestImportant] = useState<Notification | null>(null);
-  const [latestNotif, setLatestNotif] = useState<Notification | null>(null);
+  // Khởi tạo THẲNG từ cache RAM (prefetch lúc mở app đã đổ sẵn) — khung hình
+  // đầu tiên đã có số liệu lần trước, mạng về sau thì thay bản mới.
+  const initialCache = user ? getMemCache<HomeCache>(homeCacheKey(user.id)) : null;
+  const [rules, setRules] = useState<Rule[]>(initialCache?.rules ?? []);
+  const [notificationsCount, setNotificationsCount] = useState(initialCache?.notificationsCount ?? 0);
+  const [importantCount, setImportantCount] = useState(initialCache?.importantCount ?? 0);
+  const [latestImportant, setLatestImportant] = useState<Notification | null>(initialCache?.latestImportant ?? null);
+  const [latestNotif, setLatestNotif] = useState<Notification | null>(initialCache?.latestNotif ?? null);
   const [refreshing, setRefreshing] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [createMenuVisible, setCreateMenuVisible] = useState(false);
@@ -82,15 +86,7 @@ export default function HomeScreen() {
     }
   };
 
-  // Hình dạng cache của Home — vẽ ngay số liệu lần trước, mạng về sau thì thay mới.
-  interface HomeCache {
-    rules: Rule[];
-    notificationsCount: number;
-    importantCount: number;
-    latestImportant: Notification | null;
-    latestNotif: Notification | null;
-  }
-
+  // Hình dạng cache của Home: type HomeCache dùng chung ở lib/prefetch.ts.
   const applyHome = (c: HomeCache) => {
     setRules(c.rules);
     setNotificationsCount(c.notificationsCount);
@@ -106,7 +102,7 @@ export default function HomeScreen() {
     // (trước đây chờ đọc cache xong mới gọi mạng); mạng về trước thì bỏ qua cache.
     let networkDone = false;
     if (rules.length === 0 && !latestNotif) {
-      loadCache<HomeCache>(`@cache_home_${user.id}`).then((cached) => {
+      loadCache<HomeCache>(homeCacheKey(user.id)).then((cached) => {
         if (cached && !networkDone) applyHome(cached);
       });
     }
@@ -129,7 +125,7 @@ export default function HomeScreen() {
       latestNotif: typed[0] ?? null,
     };
     applyHome(fresh);
-    saveCache(`@cache_home_${user.id}`, fresh);
+    saveCache(homeCacheKey(user.id), fresh);
   };
 
   const activeRules = rules.filter((r) => r.is_active);

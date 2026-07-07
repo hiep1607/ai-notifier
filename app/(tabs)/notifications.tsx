@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from "react";
 
 import {
+  ActivityIndicator,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -19,7 +20,8 @@ import ReanimatedSwipeable from "react-native-gesture-handler/ReanimatedSwipeabl
 
 import { supabase } from "../../lib/supabase";
 import { fetchNotificationsFor } from "../../lib/notifQuery";
-import { loadCache, saveCache } from "../../lib/screenCache";
+import { getMemCache, loadCache, saveCache } from "../../lib/screenCache";
+import { notifsCacheKey, type NotifsCache } from "../../lib/prefetch";
 import { useAuth } from "../../contexts/AuthContext";
 import { useTheme } from "../../contexts/ThemeContext";
 import { Notification } from "../../types/Notification";
@@ -40,8 +42,14 @@ export default function NotificationsScreen() {
 
   const [activeTab, setActiveTab] = useState("all");
   const [selectedRuleId, setSelectedRuleId] = useState<string | null>(null);
-  const [notifications, setNotifications] = useState<Notification[]>([]);
-  const [ruleNames, setRuleNames] = useState<Record<string, string>>({});
+  // Khởi tạo THẲNG từ cache RAM (prefetch lúc mở app đã đổ sẵn) — khung hình
+  // đầu tiên đã có dữ liệu, không còn chớp "Chưa có thông báo" rồi mới hiện.
+  const initialCache = user ? getMemCache<NotifsCache>(notifsCacheKey(user.id)) : null;
+  const [notifications, setNotifications] = useState<Notification[]>(initialCache?.notifs ?? []);
+  const [ruleNames, setRuleNames] = useState<Record<string, string>>(initialCache?.nameMap ?? {});
+  // Chưa từng có dữ liệu (cache trống + mạng chưa về) → hiện vòng xoay thay vì
+  // câu "Chưa có thông báo" gây hiểu lầm.
+  const [firstLoadDone, setFirstLoadDone] = useState(Boolean(initialCache));
   const [refreshing, setRefreshing] = useState(false);
   const [searchMode, setSearchMode] = useState(false);
   const [searchText, setSearchText] = useState("");
@@ -76,12 +84,11 @@ export default function NotificationsScreen() {
     // (trước đây chờ đọc cache xong mới gọi mạng); mạng về trước thì bỏ qua cache.
     let networkDone = false;
     if (notifications.length === 0) {
-      loadCache<{ nameMap: Record<string, string>; notifs: Notification[] }>(
-        `@cache_notifs_${user.id}`,
-      ).then((cached) => {
+      loadCache<NotifsCache>(notifsCacheKey(user.id)).then((cached) => {
         if (cached && !networkDone) {
           setRuleNames(cached.nameMap);
           setNotifications(cached.notifs);
+          setFirstLoadDone(true);
         }
       });
     }
@@ -102,7 +109,8 @@ export default function NotificationsScreen() {
     });
     setRuleNames(nameMap);
     setNotifications(notifs);
-    saveCache(`@cache_notifs_${user.id}`, { nameMap, notifs });
+    setFirstLoadDone(true);
+    saveCache(notifsCacheKey(user.id), { nameMap, notifs });
   };
 
   const tabFiltered =
@@ -276,7 +284,15 @@ export default function NotificationsScreen() {
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
         }
       >
-        {displayedNotifications.length === 0 && (
+        {displayedNotifications.length === 0 && !firstLoadDone && (
+          // Đang tải lần đầu (chưa từng có cache) — xoay vòng, đừng nói "chưa có".
+          <View style={styles.empty}>
+            <ActivityIndicator size="large" color={colors.primary} />
+            <Text style={styles.emptyText}>Đang tải thông báo...</Text>
+          </View>
+        )}
+
+        {displayedNotifications.length === 0 && firstLoadDone && (
           <View style={styles.empty}>
             <Ionicons name="notifications-off-outline" size={48} color={colors.muted} />
             <Text style={styles.emptyText}>

@@ -23,6 +23,7 @@ import { StatusBar } from "expo-status-bar";
 
 import "react-native-reanimated";
 
+import { prefetchAppData } from "../lib/prefetch";
 import { registerForPush } from "../lib/push";
 import { startWebAutoUpdate } from "../lib/webAutoUpdate";
 import { runNativeAutoUpdate } from "../lib/nativeAutoUpdate";
@@ -109,10 +110,14 @@ function RootNavigator() {
     }
   }, [session, ready, pathname]);
 
-  // Đăng ký push token sau khi đăng nhập (no-op trên web/Expo Go/thiếu EAS).
+  // Có session là TẢI TRƯỚC dữ liệu mọi tab (RAM + đĩa) — bấm sang tab nào cũng
+  // hiện ngay, không phải chờ mạng. Đăng ký push token (no-op web/Expo Go/thiếu EAS).
   useEffect(() => {
     const uid = session?.user?.id;
-    if (uid) registerForPush(uid);
+    if (uid) {
+      prefetchAppData(uid);
+      registerForPush(uid);
+    }
   }, [session?.user?.id]);
 
   // Chạm vào push → mở đúng thông báo.

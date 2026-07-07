@@ -24,7 +24,8 @@ import Animated, {
 } from "react-native-reanimated";
 
 import { supabase } from "../../lib/supabase";
-import { loadCache, saveCache } from "../../lib/screenCache";
+import { getMemCache, loadCache, saveCache } from "../../lib/screenCache";
+import { rulesCacheKey, type RulesCache } from "../../lib/prefetch";
 import { confirmAsync, alertMessage } from "../../lib/dialog";
 import { useAuth } from "../../contexts/AuthContext";
 import { useTheme } from "../../contexts/ThemeContext";
@@ -65,8 +66,11 @@ export default function RulesScreen() {
   const styles = useMemo(() => createStyles(colors), [colors]);
 
   const [activeTab, setActiveTab] = useState("all");
-  const [rules, setRules] = useState<Rule[]>([]);
-  const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
+  // Khởi tạo THẲNG từ cache RAM (prefetch lúc mở app đã đổ sẵn) — vào tab là
+  // thấy danh sách ngay, mạng về sau thì thay bản mới.
+  const initialCache = user ? getMemCache<RulesCache>(rulesCacheKey(user.id)) : null;
+  const [rules, setRules] = useState<Rule[]>(initialCache?.rules ?? []);
+  const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>(initialCache?.counts ?? {});
   const [refreshing, setRefreshing] = useState(false);
   const [createMenuVisible, setCreateMenuVisible] = useState(false);
   const [searchMode, setSearchMode] = useState(false);
@@ -150,9 +154,7 @@ export default function RulesScreen() {
     // (trước đây chờ đọc cache xong mới gọi mạng); mạng về trước thì bỏ qua cache.
     let networkDone = false;
     if (rules.length === 0) {
-      loadCache<{ rules: Rule[]; counts: Record<string, number> }>(
-        `@cache_rules_${user.id}`,
-      ).then((cached) => {
+      loadCache<RulesCache>(rulesCacheKey(user.id)).then((cached) => {
         if (cached && !networkDone) {
           setRules(cached.rules);
           setUnreadCounts(cached.counts);
@@ -203,7 +205,7 @@ export default function RulesScreen() {
       if (n.rule_id) counts[n.rule_id] = (counts[n.rule_id] ?? 0) + 1;
     });
     setUnreadCounts(counts);
-    saveCache(`@cache_rules_${user.id}`, { rules: data, counts });
+    saveCache(rulesCacheKey(user.id), { rules: data, counts });
   };
 
   const handleDeleteRule = async (id: string) => {

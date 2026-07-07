@@ -5,7 +5,8 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { supabase } from "../../lib/supabase";
 import { countNotificationsFor } from "../../lib/notifQuery";
-import { loadCache, saveCache } from "../../lib/screenCache";
+import { getMemCache, loadCache, saveCache } from "../../lib/screenCache";
+import { badgesCacheKey, type BadgesCache } from "../../lib/prefetch";
 import { useAuth } from "../../contexts/AuthContext";
 import { useTheme } from "../../contexts/ThemeContext";
 
@@ -13,8 +14,10 @@ export default function TabLayout() {
   const { colors, isDark } = useTheme();
   const { user } = useAuth();
   const pathname = usePathname();
-  const [unreadCount, setUnreadCount] = useState(0);
-  const [activeRulesCount, setActiveRulesCount] = useState(0);
+  // Khởi tạo từ cache RAM nếu prefetch đã kịp đổ — badge hiện ngay khung hình đầu.
+  const initialBadges = user ? getMemCache<BadgesCache>(badgesCacheKey(user.id)) : null;
+  const [unreadCount, setUnreadCount] = useState(initialBadges?.unread ?? 0);
+  const [activeRulesCount, setActiveRulesCount] = useState(initialBadges?.active ?? 0);
   // Đã có số liệu thật từ mạng chưa — cache về muộn thì không được ghi đè.
   const badgeNetDone = useRef(false);
 
@@ -22,7 +25,7 @@ export default function TabLayout() {
     if (!user) return;
     // Mở app: vẽ badge NGAY từ cache lần trước, mạng về sau thì thay số mới.
     if (!badgeNetDone.current) {
-      loadCache<{ unread: number; active: number }>(`@cache_badges_${user.id}`).then((c) => {
+      loadCache<BadgesCache>(badgesCacheKey(user.id)).then((c) => {
         if (c && !badgeNetDone.current) {
           setUnreadCount(c.unread);
           setActiveRulesCount(c.active);
@@ -49,7 +52,7 @@ export default function TabLayout() {
     const active = rulesRes.count ?? 0;
     setUnreadCount(unread);
     setActiveRulesCount(active);
-    saveCache(`@cache_badges_${user!.id}`, { unread, active });
+    saveCache(badgesCacheKey(user!.id), { unread, active });
   };
 
   return (
