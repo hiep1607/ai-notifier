@@ -102,7 +102,23 @@ async function geminiOnce(opts: GeminiOpts): Promise<GeminiResult> {
 
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(`Gemini ${res.status}: ${err.slice(0, 800)}`);
+    // Rút quotaId (…PerDay… / …PerMinute…) lên ĐẦU message — body lỗi dài, cắt 800
+    // ký tự hay làm mất quotaId ở cuối khiến caller phân loại nhầm loại 429
+    // (2026-07-08: hết quota NGÀY mà generate-rule vẫn bảo "chạm trần mỗi phút").
+    let tag = "";
+    try {
+      const j = JSON.parse(err) as {
+        error?: { details?: { violations?: { quotaId?: string }[] }[] };
+      };
+      const ids = (j.error?.details ?? [])
+        .flatMap((d) => d.violations ?? [])
+        .map((v) => v.quotaId)
+        .filter(Boolean);
+      if (ids.length) tag = ` [quotaId: ${ids.join(",")}]`;
+    } catch {
+      // body không phải JSON → thôi, giữ nguyên
+    }
+    throw new Error(`Gemini ${res.status}${tag}: ${err.slice(0, 800)}`);
   }
 
   const data = await res.json();

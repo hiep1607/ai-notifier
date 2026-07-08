@@ -21,7 +21,7 @@
 ### Nhóm 3 — Phải HỎI LẠI / TỪ CHỐI hợp lý
 | vague | "theo dõi giá ETH" | hỏi: định kỳ hay theo điều kiện? | ✅ hỏi đúng câu |
 |---|---|---|---|
-| too-fast | "báo giá vàng mỗi 5 phút" | giải thích min 30', gợi ý theo điều kiện | ⏳ |
+| too-fast | "báo giá vàng mỗi 5 phút" | giải thích min 30', gợi ý theo điều kiện | ✅ "tối thiểu 30 phút/lần... hay theo dõi theo điều kiện (chỉ báo khi vàng biến động mạnh)?" — đúng nguyên văn |
 | impossible | "báo khi người yêu cũ đăng story instagram" | từ chối khéo + gợi ý nguồn thay thế | ✅ giải thích IG chặn máy đọc, gợi ý Telegram/YouTube/website |
 
 ### Nhóm 4 — Nhắc hẹn
@@ -61,6 +61,12 @@
   `node scripts/scenario-test.mjs --only=too-fast,remind-rel,gh-lang,gh-release,reddit,telegram,youtube-handle,tiktok,x-twitter,url-price,url-login`
 - Đợt chạy này lộ ra **2 bug thật đã vá** (mục 3 + 4 dưới) — riêng vụ gemini.ts là bug NẶNG: transcribe đã sập âm thầm từ 05/07.
 
+## Tổng kết đợt 3 (sáng 2026-07-08, ~10h40)
+- **too-fast ✅** — "tối thiểu 30 phút/lần... hay theo dõi theo điều kiện (chỉ báo khi vàng biến động mạnh/chạm mức bạn muốn)?" — đúng nguyên văn kỳ vọng.
+- **10 kịch bản còn lại vẫn kẹt quota NGÀY** (chạy lúc ~10h40-11h40 VN = quota hôm trước CHƯA reset — mốc reset là 0h Pacific = **14h VN**). gemini.ts giờ rút thẳng `quotaId` vào message lỗi → server xác nhận chính thức `PerDay`; generate-rule đã trả lời đúng sự thật: "hết lượt miễn phí HÔM NAY, reset ~14h".
+- **Số liệu cho mục 2 (điểm nghẽn flash-lite) đã đủ**: 2 ngày liên tiếp cạn RPD trước cuối ngày (cron 24/7 + enrich + tick là nguồn đốt chính, đợt test chỉ vài chục call). Tới lúc quyết: giảm enrich (chỉ tin quan trọng) / gộp call / bật billing.
+- Chạy nốt SAU 14h VN: `node scripts/scenario-test.mjs --only=remind-rel,gh-lang,gh-release,reddit,telegram,youtube-handle,tiktok,x-twitter,url-price,url-login`
+
 ## Phát hiện & đã vá ngay trong đợt test
 1. **AI hết lượt → người dùng thấy nguyên cục JSON lỗi trong chat** (xấu, khó hiểu). ĐÃ VÁ: generate-rule
    bắt lỗi 429/503 và trả lời thân thiện "⏳ AI đang quá tải hoặc tạm hết lượt — thử lại sau vài phút"
@@ -84,7 +90,9 @@
 
 ## Việc tiếp theo của bộ kịch bản
 - [x] Chạy lại đợt 2 (đêm 07/07→08): thêm 3 kết quả, 11 kịch bản còn lại kẹt quota NGÀY.
-- [ ] Chạy lại 11 kịch bản ⏳ SAU 14h VN 2026-07-08 (lệnh --only ghi ở "Tổng kết đợt 2"), cập nhật bảng này.
+- [x] Chạy lại đợt 3 (sáng 08/07): thêm too-fast ✅; xác nhận quotaId=PerDay.
+- [ ] Chạy lại 10 kịch bản ⏳ SAU 14h VN 2026-07-08 (lệnh --only ghi ở "Tổng kết đợt 3"), cập nhật bảng này.
+- [ ] Quyết phương án giảm đốt quota flash-lite (mục 2 — số liệu đã đủ: 2 ngày liên tiếp cạn RPD).
 - [ ] Đợt 2 (cần tài khoản test): kiểm các kịch bản QUÉT thật — trang danh sách (trending liệt kê đủ 5-8 mục?),
       trang cần đăng nhập (thông báo 🔒 + nút Cho phép/Không), trang SPA (báo "không đọc được" thay vì bịa),
       trang sập giữa chừng, cookie hết hạn.
