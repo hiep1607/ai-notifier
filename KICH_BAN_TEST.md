@@ -88,6 +88,11 @@
    Script kịch bản cũng học được cách này: gặp quota phút thì chờ đúng N giây server gợi ý,
    gặp quota ngày thì DỪNG cả loạt.
 
+## Tổng kết đợt 4 (tối 2026-07-08, 21:37)
+- **Quota NGÀY lại cạn dù mới reset lúc 14h** — cron nền (tick mỗi phút + cron 15' + enrich) đốt sạch RPD flash-lite trong ~7,5 tiếng. 10 kịch bản vẫn ⏳.
+- Cơ chế mới chạy ĐÚNG: server trả "hết lượt miễn phí HÔM NAY" (quotaId=PerDay), script dừng cả loạt sau 1 call thay vì retry vô ích cả tiếng như đợt 2.
+- **Hệ quả nghiêm trọng hơn bộ test**: từ ~21h mỗi tối (sớm hơn nếu nhiều rule), người dùng thật KHÔNG tạo được rule bằng AI (generate-rule ăn chung quota với quét nền). PHẢI giảm đốt quota — không còn là "chờ số liệu" nữa.
+
 ## Việc tiếp theo của bộ kịch bản
 - [x] Chạy lại đợt 2 (đêm 07/07→08): thêm 3 kết quả, 11 kịch bản còn lại kẹt quota NGÀY.
 - [x] Chạy lại đợt 3 (sáng 08/07): thêm too-fast ✅; xác nhận quotaId=PerDay.
