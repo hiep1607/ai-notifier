@@ -11,7 +11,9 @@
     "lint": "expo lint",
     "test": "jest",
     "test:watch": "jest --watch",
-    "test:coverage": "jest --coverage"
+    "test:coverage": "jest --coverage",
+    "fn:probe": "node scripts/probe-functions.mjs",
+    "fn:deploy": "node scripts/deploy-functions.mjs"
   },
   "jest": {
     "preset": "jest-expo",
