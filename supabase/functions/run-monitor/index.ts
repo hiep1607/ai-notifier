@@ -16,7 +16,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, json } from "../_shared/cors.ts";
-import { geminiGenerate, parseJsonLoose, GeminiSource } from "../_shared/gemini.ts";
+import { CHEAP_FALLBACK, geminiGenerate, parseJsonLoose, GeminiSource } from "../_shared/gemini.ts";
 // Logic thuần (lịch quét / chuẩn hóa / chọn tin) tách ra module share để jest test được.
 import {
   intervalMs,
@@ -303,9 +303,11 @@ async function insertNotif(supabase: any, rule: Rule, f: NotifFields, push = tru
 
 // Ghi log 1 lần gọi Gemini (theo dõi quota). Best-effort: bảng có thể chưa tạo → nuốt lỗi.
 // deno-lint-ignore no-explicit-any
-async function logUsage(supabase: any, ruleId: string, ok: boolean, error?: string) {
+async function logUsage(supabase: any, ruleId: string, ok: boolean, error?: string, model?: string) {
   try {
-    await supabase.from("usage_logs").insert({ kind: "gemini", rule_id: ruleId, ok, error: error ?? null });
+    const row = { kind: "gemini", rule_id: ruleId, ok, error: error ?? null };
+    const { error: e1 } = await supabase.from("usage_logs").insert({ ...row, model: model ?? null });
+    if (e1) await supabase.from("usage_logs").insert(row); // cột model chưa có (0024 chưa chạy)
   } catch { /* bảng usage_logs chưa có → bỏ qua */ }
 }
 
@@ -389,14 +391,15 @@ function fetchProviderNotif(rule: Rule, srcType: SourceType): Promise<ProviderNo
 // deno-lint-ignore no-explicit-any
 async function evalConditionAI(supabase: any, rule: Rule, currentValue: string): Promise<boolean> {
   try {
-    const { text } = await geminiGenerate({
+    const { text, model: usedModel } = await geminiGenerate({
       system: "Bạn đánh giá điều kiện số liệu. Chỉ trả JSON thuần, không giải thích.",
       user: `Điều kiện người dùng: "${rule.condition}".\nGiá trị HIỆN TẠI (số liệu thật từ API): "${currentValue}".\nGiá trị lần trước: "${rule.last_value?.trim() || "chưa có"}".\nĐiều kiện đã THỎA chưa? Trả JSON: {"matches": true/false}`,
       json: true,
       temperature: 0,
       model: "gemini-2.5-flash-lite",
+      fallbackModels: CHEAP_FALLBACK, // lite free chỉ còn 20 lượt/ngày (2026-07)
     });
-    await logUsage(supabase, rule.id, true);
+    await logUsage(supabase, rule.id, true, undefined, usedModel);
     const d = parseJsonLoose<{ matches?: unknown }>(text);
     return toBool(d?.matches);
   } catch (e) {
@@ -483,7 +486,7 @@ async function extractUrlAI(supabase: any, rule: Rule, page: WatchPage, links: P
     ? `\nCÁC LINK BÀI VIẾT TRÊN TRANG (đánh số):\n${links.map((l, i) => `[${i}] ${l.text}`).join("\n")}\n`
     : "";
   try {
-    const { text } = await geminiGenerate({
+    const { text, model: usedModel } = await geminiGenerate({
       system:
         "Bạn đọc nội dung TEXT của một trang web và trích đúng thông tin người dùng đang theo dõi. TUYỆT ĐỐI không bịa thông tin không có trong text. Chỉ trả JSON thuần.",
       user: `Người dùng theo dõi trang: ${page.finalUrl}
@@ -514,8 +517,9 @@ Trả JSON:
       json: true,
       temperature: 0.2,
       model: "gemini-2.5-flash-lite",
+      fallbackModels: CHEAP_FALLBACK, // lite free chỉ còn 20 lượt/ngày (2026-07)
     });
-    await logUsage(supabase, rule.id, true);
+    await logUsage(supabase, rule.id, true, undefined, usedModel);
     const d = parseJsonLoose<Partial<UrlExtract>>(text);
     return {
       found: toBool(d?.found),
@@ -591,7 +595,7 @@ async function enrichFromArticle(
     if (!isWatchableUrl(articleUrl)) return null;
     const page = await fetchWatchPage(articleUrl);
     if (page.status >= 400 || page.text.length < 300) return null; // trang chặn/quá nghèo
-    const { text } = await geminiGenerate({
+    const { text, model: usedModel } = await geminiGenerate({
       system:
         "Bạn viết bản tin tiếng Việt từ nội dung bài viết cho trước. TUYỆT ĐỐI không bịa thông tin/số liệu ngoài bài. Chỉ trả JSON thuần.",
       user: `Người dùng theo dõi: "${rule.keyword}"${rule.condition?.trim() ? ` (điều kiện quan tâm: ${rule.condition})` : ""}.
@@ -609,8 +613,9 @@ Trả JSON:
       json: true,
       temperature: 0.2,
       model: "gemini-2.5-flash-lite",
+      fallbackModels: CHEAP_FALLBACK, // lite free chỉ còn 20 lượt/ngày (2026-07)
     });
-    await logUsage(supabase, rule.id, true);
+    await logUsage(supabase, rule.id, true, undefined, usedModel);
     const d = parseJsonLoose<Partial<RichNotif>>(text);
     const content = String(d?.content ?? "").trim();
     if (!content) return null;
@@ -953,7 +958,7 @@ async function pickRssItemAI(supabase: any, rule: Rule, items: RssItem[]): Promi
     .map((it, i) => `[${i}] ${it.title} — ${it.description.slice(0, 160)}`)
     .join("\n");
   try {
-    const { text } = await geminiGenerate({
+    const { text, model: usedModel } = await geminiGenerate({
       system: "Bạn chọn bài báo phù hợp nhất từ danh sách RSS và tóm tắt ngắn gọn tiếng Việt. TUYỆT ĐỐI không bịa thông tin ngoài tiêu đề + mô tả đã cho. Chỉ trả JSON thuần.",
       user: `Chủ đề người dùng theo dõi: "${rule.keyword}".
 ${hasCond ? `Điều kiện người dùng quan tâm: "${rule.condition}".` : ""}
@@ -975,8 +980,9 @@ Chọn 1 bài PHÙ HỢP NHẤT với chủ đề. Trả JSON:
       json: true,
       temperature: 0.2,
       model: "gemini-2.5-flash-lite",
+      fallbackModels: CHEAP_FALLBACK, // lite free chỉ còn 20 lượt/ngày (2026-07)
     });
-    await logUsage(supabase, rule.id, true);
+    await logUsage(supabase, rule.id, true, undefined, usedModel);
     const d = parseJsonLoose<Partial<RssPick>>(text);
     return {
       index: Number.isFinite(Number(d?.index)) ? Number(d?.index) : -1,
@@ -1206,7 +1212,7 @@ async function monitorRule(supabase: any, rule: Rule, manual = false, rssCache?:
     });
     text = gen.text;
     sources = gen.sources;
-    await logUsage(supabase, rule.id, true);
+    await logUsage(supabase, rule.id, true, undefined, gen.model);
   } catch (e) {
     await logUsage(supabase, rule.id, false, (e as Error).message);
     throw e;
@@ -1462,7 +1468,7 @@ async function previewGate(supabase: any, rule: Rule): Promise<GatePreview> {
     grounding: true,
     temperature: 0.2,
   });
-  await logUsage(supabase, rule.id, true);
+  await logUsage(supabase, rule.id, true, undefined, gen.model);
 
   let items: NewsItem[] = [];
   try {

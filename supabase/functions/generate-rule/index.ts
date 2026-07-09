@@ -2,8 +2,10 @@
 // Client gọi: supabase.functions.invoke("generate-rule", { body: { history } })
 // history: [{ role: "user"|"assistant", content: string }, ...]
 
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+
 import { corsHeaders, json } from "../_shared/cors.ts";
-import { geminiGenerate, parseJsonLoose } from "../_shared/gemini.ts";
+import { geminiGenerate, parseJsonLoose, SMART_FALLBACK } from "../_shared/gemini.ts";
 
 const RULE_SYSTEM = `Bạn là trợ lý tạo "rule theo dõi thông tin tự động" cho một app thông báo.
 Nhiệm vụ: qua hội thoại, thu thập đủ thông tin để dựng 1 rule hoàn chỉnh.
@@ -192,14 +194,27 @@ Deno.serve(async (req) => {
     const vnNow = new Date(Date.now() + 7 * 3600000);
     const nowTxt = `${vnNow.toISOString().slice(0, 16).replace("T", " ")} (giờ Việt Nam)`;
 
-    const { text } = await geminiGenerate({
+    // Task hướng NGƯỜI DÙNG → đi flash (bucket rộng) trước; flash-lite giờ chỉ còn
+    // 20 lượt/ngày free (2026-07) nên chỉ là phương án dự phòng trong chuỗi.
+    const { text, model: usedModel } = await geminiGenerate({
       system: RULE_SYSTEM,
       user: `(Bây giờ là ${nowTxt}.)\n${editing ? `\n${editing}\n` : ""}\n${convo}\n\nDựa trên hội thoại trên, trả về JSON đúng định dạng.`,
       json: true,
       temperature: 0.3,
-      // Task này chỉ trích xuất JSON (không cần grounding) → dùng model rẻ hơn.
-      model: "gemini-2.5-flash-lite",
+      model: "gemini-2.5-flash",
+      fallbackModels: SMART_FALLBACK,
     });
+
+    // Đếm vào quota chung theo bucket model (best-effort — bảng/cột có thể chưa tạo).
+    try {
+      const supabase = createClient(
+        Deno.env.get("SUPABASE_URL")!,
+        Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+      );
+      const row = { kind: "gemini", ok: true };
+      const { error: logErr } = await supabase.from("usage_logs").insert({ ...row, model: usedModel });
+      if (logErr) await supabase.from("usage_logs").insert(row);
+    } catch { /* bỏ qua */ }
 
     const data = parseJsonLoose<Record<string, unknown>>(text);
 

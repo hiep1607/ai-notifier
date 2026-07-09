@@ -8,7 +8,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, json } from "../_shared/cors.ts";
-import { geminiGenerate } from "../_shared/gemini.ts";
+import { CHEAP_FALLBACK, geminiGenerate } from "../_shared/gemini.ts";
 
 // ~4MB base64 ≈ 3MB audio ≈ 5-6 phút AAC 64kbps — mô tả rule bằng miệng thì quá đủ.
 const MAX_AUDIO_BASE64 = 4_000_000;
@@ -33,18 +33,22 @@ Deno.serve(async (req) => {
     if (audio.length > MAX_AUDIO_BASE64) return json({ error: "Đoạn ghi âm quá dài — hãy nói ngắn gọn hơn." }, 413);
     if (!/^audio\/[\w.+-]+$/.test(mime)) return json({ error: "Định dạng âm thanh không hợp lệ." }, 400);
 
-    const { text } = await geminiGenerate({
+    const { text, model: usedModel } = await geminiGenerate({
       system: "Bạn là công cụ chép lời (speech-to-text) tiếng Việt chính xác.",
       user:
         `Chép lại CHÍNH XÁC lời nói trong đoạn âm thanh thành văn bản tiếng Việt (giữ nguyên số liệu, tên riêng; thêm dấu câu hợp lý). Người nói đang mô tả một yêu cầu theo dõi tin tức/giá cả/nhắc hẹn. Chỉ trả về ĐÚNG phần văn bản đã chép — không giải thích, không thêm gì khác. Nếu không nghe ra lời nói nào, trả về chuỗi rỗng.`,
       audio: { data: audio, mime },
       temperature: 0,
+      // flash-lite free chỉ còn 20 lượt/ngày (2026-07) → cạn thì leo dần bucket khác.
       model: "gemini-2.5-flash-lite",
+      fallbackModels: CHEAP_FALLBACK,
     });
 
     // Đếm vào quota chung (best-effort — bảng usage_logs có thể chưa tạo).
     try {
-      await supabase.from("usage_logs").insert({ kind: "gemini", ok: true });
+      const row = { kind: "gemini", ok: true };
+      const { error: logErr } = await supabase.from("usage_logs").insert({ ...row, model: usedModel });
+      if (logErr) await supabase.from("usage_logs").insert(row); // cột model chưa có (0024)
     } catch { /* bỏ qua */ }
 
     return json({ text: text.trim() });

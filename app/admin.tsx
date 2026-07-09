@@ -23,6 +23,7 @@ import { alertMessage, confirmAsync } from "../lib/dialog";
 import {
   adminCall,
   isAdminEmail,
+  GEMINI_DAY_LIMITS,
   type AdminOverview,
   type AdminRule,
   type AdminUsage,
@@ -264,30 +265,53 @@ export default function AdminScreen() {
               <>
                 <View style={styles.quotaRow}>
                   <Text style={styles.quotaNum}>{usage.today ?? 0}</Text>
-                  <Text style={styles.quotaLimit}>/ {usage.limit ?? 1500} lượt gọi</Text>
+                  <Text style={styles.quotaLimit}>lượt gọi hôm nay</Text>
                   {(usage.todayErrors ?? 0) > 0 && (
                     <Text style={styles.quotaErr}>· {usage.todayErrors} lỗi/quota</Text>
                   )}
                 </View>
-                <View style={styles.barTrack}>
-                  <View
-                    style={[
-                      styles.barFill,
-                      {
-                        width: `${Math.min(100, ((usage.today ?? 0) / (usage.limit || 1500)) * 100)}%`,
-                        backgroundColor:
-                          (usage.today ?? 0) > (usage.limit ?? 1500) * 0.8 ? colors.warning : colors.success,
-                      },
-                    ]}
-                  />
-                </View>
+
+                {/* Theo TỪNG MODEL — mỗi model 1 trần ngày riêng (flash-lite chỉ còn 20). */}
+                {(usage.models?.length ?? 0) > 0 ? (
+                  usage.models!.map((m) => {
+                    const limit = GEMINI_DAY_LIMITS[m.model];
+                    const pct = limit ? Math.min(100, (m.total / limit) * 100) : 0;
+                    return (
+                      <View key={m.model} style={{ marginTop: 8 }}>
+                        <View style={styles.quotaRow}>
+                          <Text style={styles.quotaModel}>{m.model.replace("gemini-", "")}</Text>
+                          <Text style={styles.quotaLimit}>
+                            {m.total}
+                            {limit ? ` / ${limit}` : " lượt"}
+                            {m.errors > 0 ? ` · ${m.errors} lỗi` : ""}
+                          </Text>
+                        </View>
+                        {!!limit && (
+                          <View style={styles.barTrack}>
+                            <View
+                              style={[
+                                styles.barFill,
+                                {
+                                  width: `${pct}%`,
+                                  backgroundColor: pct > 80 ? colors.warning : colors.success,
+                                },
+                              ]}
+                            />
+                          </View>
+                        )}
+                      </View>
+                    );
+                  })
+                ) : (
+                  <Text style={styles.quotaSub}>
+                    Chưa có số theo model — chạy migration 0024 (cột model) để tách bucket.
+                  </Text>
+                )}
+
                 <Text style={styles.quotaSub}>
                   Tính theo mốc reset của Gemini — reset lúc ~14–15h VN (nửa đêm giờ Mỹ).
-                </Text>
-                <Text style={styles.quotaSub}>
-                  Lưu ý: ngoài trần NGÀY còn trần TỐC ĐỘ ~20 lượt/PHÚT (flash-lite). Lỗi 429
-                  kèm &quot;retry in Xs&quot; chỉ là nghẽn tức thời vài giây — KHÔNG phải hết lượt
-                  ngày; hệ thống tự chờ rồi thử lại.
+                  Trần NGÀY tính RIÊNG từng model; hết bucket nào hệ thống tự chuyển model khác
+                  (flash-lite free chỉ còn 20 lượt/ngày từ 07/2026).
                 </Text>
                 {(usage.days?.length ?? 0) > 1 && (
                   <Text style={styles.quotaSub}>
@@ -529,6 +553,7 @@ function createStyles(C: AppColors) {
     quotaRow: { flexDirection: "row", alignItems: "baseline", gap: 6, marginBottom: 10 },
     quotaNum: { color: C.text, fontSize: 26, fontWeight: "800" },
     quotaLimit: { color: C.subText, fontSize: 13 },
+    quotaModel: { color: C.text, fontSize: 13, fontWeight: "700", flex: 1 },
     quotaErr: { color: C.warning, fontSize: 12.5 },
     barTrack: { height: 8, borderRadius: 4, backgroundColor: C.border, overflow: "hidden" },
     barFill: { height: 8, borderRadius: 4 },

@@ -27,14 +27,14 @@
 ### Nhóm 4 — Nhắc hẹn
 | remind-abs | "nhắc tôi họp lớp ngày 20/7 lúc 19h" | reminder 2026-07-20T19:00 | ✅ đúng cả ngày giờ + offset VN |
 |---|---|---|---|
-| remind-rel | "nhắc tôi 10 phút nữa tắt máy giặt" | remind = giờ hiện tại +10' | ⏳ |
+| remind-rel | "nhắc tôi 10 phút nữa tắt máy giặt" | remind = giờ hiện tại +10' | ✅ remind_at đúng +10 phút (12:08→12:18) |
 | remind-nodate | "nhắc tôi đi khám răng" | hỏi ngày giờ | ✅ hỏi đúng "ngày nào, mấy giờ?" |
 
 ### Nhóm 5 — Bản đồ nguồn (tự dựng URL, không cần người dùng đưa link)
 | gh-trending | "gửi tôi các dự án nổi bật trên github vào mỗi sáng" | url=github.com/trending + đặt giờ sáng | ✅ tự ra đúng URL, 08:00 |
 |---|---|---|---|
-| gh-lang | "mỗi tuần tổng hợp dự án Python hot trên github" | trending/python?since=weekly | ⏳ |
-| gh-release | "báo tôi khi expo/expo ra bản mới" | releases.atom | ⏳ |
+| gh-lang | "mỗi tuần tổng hợp dự án Python hot trên github" | trending/python?since=weekly | ✅ tự dựng ĐÚNG URL + freq 10080 (tuần) |
+| gh-release | "báo tôi khi expo/expo ra bản mới" | releases.atom | ⚠️ hỏi lại "định kỳ hay khi có bản mới?" — "ra bản mới" đã ngụ ý theo thay đổi, thừa 1 bước (giống news-broad) |
 | reddit | "bài hot trên r/vietnam mỗi tối 8h" | reddit .rss + 20:00 | ⏳ |
 | telegram | "theo dõi kênh telegram durov" | t.me/s/durov | ⏳ |
 | youtube-handle | "kênh youtube @MixiGaming có video mới" | hỏi xin link kênh (không suy được channel_id) | ⏳ |
@@ -66,6 +66,12 @@
 - **10 kịch bản còn lại vẫn kẹt quota NGÀY** (chạy lúc ~10h40-11h40 VN = quota hôm trước CHƯA reset — mốc reset là 0h Pacific = **14h VN**). gemini.ts giờ rút thẳng `quotaId` vào message lỗi → server xác nhận chính thức `PerDay`; generate-rule đã trả lời đúng sự thật: "hết lượt miễn phí HÔM NAY, reset ~14h".
 - **Số liệu cho mục 2 (điểm nghẽn flash-lite) đã đủ**: 2 ngày liên tiếp cạn RPD trước cuối ngày (cron 24/7 + enrich + tick là nguồn đốt chính, đợt test chỉ vài chục call). Tới lúc quyết: giảm enrich (chỉ tin quan trọng) / gộp call / bật billing.
 - Chạy nốt SAU 14h VN: `node scripts/scenario-test.mjs --only=remind-rel,gh-lang,gh-release,reddit,telegram,youtube-handle,tiktok,x-twitter,url-price,url-login`
+
+## Tổng kết đợt 5 (trưa 2026-07-09, ~12h10)
+- **NGUYÊN NHÂN GỐC đã rõ (nhờ ảnh màn Quota + trang rate-limit của user)**: app dùng RẤT ít (~83-146 call/ngày, "cron đốt cả nghìn" là chẩn đoán SAI) — nhưng Google đã siết trần free của `gemini-2.5-flash-lite` xuống **20 lượt/ngày** (dòng `limit: 20` trong lỗi 429), mà app dồn hết việc vào đúng model đó.
+- **ĐÃ SỬA — fallback đa bucket**: quota ngày tính RIÊNG TỪNG MODEL → gemini.ts thêm `fallbackModels`: hết bucket này tự thử bucket kế (không cần biết trước trần). Tạo rule đi `2.5-flash` trước; quét nền/transcribe đi `2.5-flash-lite` → `2.0-flash-lite` → `2.0-flash` → `2.5-flash`. Màn Admin→Quota đếm theo từng model (bỏ con số /1500 bịa; cần migration **0024** thêm cột `model`). Verify ngay khi flash-lite đang cạn: generate-rule trả `ready` — **tạo rule sống lại giữa lúc hết quota**.
+- Kết quả kịch bản: **remind-rel ✅** (+10' đúng phút), **gh-lang ✅** (URL chuẩn), gh-release ⚠️ (hỏi thừa như news-broad); tới kịch bản 4 thì các bucket còn lại (của NGÀY HÔM QUA — chạy lúc 12h, chưa tới mốc reset 14h) cũng cạn.
+- **Còn 7 kịch bản** chạy sau 14h: `node scripts/scenario-test.mjs --only=reddit,telegram,youtube-handle,tiktok,x-twitter,url-price,url-login`
 
 ## Phát hiện & đã vá ngay trong đợt test
 1. **AI hết lượt → người dùng thấy nguyên cục JSON lỗi trong chat** (xấu, khó hiểu). ĐÃ VÁ: generate-rule

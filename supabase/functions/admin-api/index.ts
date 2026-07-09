@@ -229,31 +229,51 @@ Deno.serve(async (req) => {
       return json({ notifications: enriched });
     }
 
-    // ===== USAGE (quota Gemini 7 ngày) =====
+    // ===== USAGE (quota Gemini 7 ngày — đếm theo TỪNG MODEL, mỗi model 1 trần ngày riêng) =====
     if (action === "usage") {
       try {
         const since = new Date(Date.now() - 7 * 86400000).toISOString();
-        const { data, error } = await supabase.from("usage_logs")
-          .select("created_at,ok").gte("created_at", since);
-        if (error) throw error;
+        // Cột model có từ 0024 — chưa chạy migration thì rơi về select cũ (byModel trống).
+        let rows: { created_at: string; ok: boolean; model?: string | null }[] | null;
+        const withModel = await supabase.from("usage_logs")
+          .select("created_at,ok,model").gte("created_at", since);
+        if (!withModel.error) {
+          rows = withModel.data;
+        } else {
+          const plain = await supabase.from("usage_logs")
+            .select("created_at,ok").gte("created_at", since);
+          if (plain.error) throw plain.error;
+          rows = plain.data;
+        }
         const byDay = new Map<string, { total: number; errors: number }>();
-        for (const r of data ?? []) {
+        const byModel = new Map<string, { total: number; errors: number }>();
+        const todayKey = pacificDay(Date.now());
+        for (const r of rows ?? []) {
           const d = pacificDay(Date.parse(r.created_at)); // gom theo NGÀY GIỜ MỸ (mốc reset Gemini)
           const cur = byDay.get(d) ?? { total: 0, errors: 0 };
           cur.total++;
           if (!r.ok) cur.errors++;
           byDay.set(d, cur);
+          if (d === todayKey) {
+            const m = r.model || "(chưa ghi model)";
+            const cm = byModel.get(m) ?? { total: 0, errors: 0 };
+            cm.total++;
+            if (!r.ok) cm.errors++;
+            byModel.set(m, cm);
+          }
         }
-        const todayKey = pacificDay(Date.now());
         const today = byDay.get(todayKey) ?? { total: 0, errors: 0 };
         const days = [...byDay.entries()].map(([date, v]) => ({ date, ...v }))
           .sort((a, b) => a.date.localeCompare(b.date));
+        const models = [...byModel.entries()].map(([model, v]) => ({ model, ...v }))
+          .sort((a, b) => b.total - a.total);
         // Lỗi Gemini gần nhất (để chẩn đoán 429/quota).
         const { data: errRows } = await supabase.from("usage_logs")
           .select("error,created_at").eq("ok", false)
           .order("created_at", { ascending: false }).limit(1);
         const lastError: string | null = errRows?.[0]?.error ?? null;
-        return json({ available: true, today: today.total, todayErrors: today.errors, limit: 1500, days, lastError });
+        // KHÔNG còn `limit` chung — trần tính riêng từng model, client tự hiển thị.
+        return json({ available: true, today: today.total, todayErrors: today.errors, days, models, lastError });
       } catch {
         return json({ available: false }); // bảng usage_logs chưa tạo
       }

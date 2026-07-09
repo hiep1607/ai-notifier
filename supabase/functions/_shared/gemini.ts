@@ -19,6 +19,8 @@ export interface GeminiSource {
 export interface GeminiResult {
   text: string;
   sources: GeminiSource[];
+  // Model THẬT SỰ đã trả lời (sau fallback) — để ghi usage_logs theo bucket.
+  model: string;
 }
 
 interface GeminiOpts {
@@ -31,9 +33,18 @@ interface GeminiOpts {
   // Cho phép chọn model riêng theo task (vd generate-rule dùng flash-lite rẻ hơn,
   // run-monitor giữ flash để có grounding tốt). Mặc định = GEMINI_MODEL.
   model?: string;
+  // QUOTA NGÀY tính RIÊNG TỪNG MODEL (quotaId ...PerModel...). Model chính cạn lượt
+  // ngày → tự thử lần lượt các model này (bucket khác, vẫn free). 2026-07: Google siết
+  // flash-lite free còn 20 lượt/ngày nên fallback là bắt buộc để app sống cả ngày.
+  fallbackModels?: string[];
   // Âm thanh đính kèm (base64) — dùng cho chuyển giọng nói thành văn bản (transcribe).
   audio?: { data: string; mime: string };
 }
+
+// Chuỗi bucket cho task QUÉT NỀN (rẻ trước, cạn thì leo dần lên).
+export const CHEAP_FALLBACK = ["gemini-2.0-flash-lite", "gemini-2.0-flash", "gemini-2.5-flash"];
+// Chuỗi cho task HƯỚNG NGƯỜI DÙNG (tạo rule — chất lượng trước, cạn thì hạ dần).
+export const SMART_FALLBACK = ["gemini-2.0-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash-lite"];
 
 // 429 có 2 loại RẤT khác nhau: (a) chạm giới hạn TỐC ĐỘ mỗi phút (vd flash-lite free
 // 20 lượt/phút) — Gemini kèm "Please retry in Xs", chờ X giây là chạy tiếp, quota ngày
@@ -46,7 +57,29 @@ function rateLimitDelayMs(errText: string): number | null {
   return sec > 0 && sec <= 30 ? Math.ceil((sec + 1) * 1000) : null;
 }
 
+// Hết quota NGÀY của 1 model (quotaId ...PerDay...) / model không tồn tại → đáng thử
+// model kế tiếp trong chuỗi. Lỗi khác (mạng, 5xx, quota phút đã retry) thì ném luôn.
+const DAY_QUOTA_RE = /per\s*day|perday/i;
+const MODEL_GONE_RE = /Gemini 404|NOT_FOUND|is not found/i;
+
 export async function geminiGenerate(opts: GeminiOpts): Promise<GeminiResult> {
+  const chain = [opts.model ?? MODEL, ...(opts.fallbackModels ?? [])];
+  let lastErr: unknown = null;
+  for (const model of chain) {
+    try {
+      return await onceWithRateRetry({ ...opts, model });
+    } catch (e) {
+      lastErr = e;
+      const msg = e instanceof Error ? e.message : String(e);
+      if (DAY_QUOTA_RE.test(msg) || MODEL_GONE_RE.test(msg)) continue; // bucket kế tiếp
+      throw e;
+    }
+  }
+  throw lastErr;
+}
+
+// Trần TỐC ĐỘ mỗi phút: chờ đúng X giây (≤30) rồi thử lại 1 lần — CÙNG model.
+async function onceWithRateRetry(opts: GeminiOpts): Promise<GeminiResult> {
   try {
     return await geminiOnce(opts);
   } catch (e) {
@@ -139,7 +172,7 @@ async function geminiOnce(opts: GeminiOpts): Promise<GeminiResult> {
     }))
     .filter((s: GeminiSource) => s.uri);
 
-  return { text, sources };
+  return { text, sources, model };
 }
 
 // Tách JSON đầu tiên trong text (model đôi khi thêm chữ thừa quanh JSON).

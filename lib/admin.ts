@@ -99,10 +99,18 @@ export interface AdminUsage {
   available: boolean;
   today?: number;
   todayErrors?: number;
-  limit?: number;
+  limit?: number; // server cũ còn trả; server mới bỏ (trần tính riêng từng model)
+  // Lượt gọi HÔM NAY theo từng model — mỗi model 1 trần ngày riêng (cột model từ 0024).
+  models?: { model: string; total: number; errors: number }[];
   days?: { date: string; total: number; errors: number }[];
   lastError?: string | null;
 }
+
+// Trần NGÀY free-tier đã xác nhận được (từ body lỗi 429 của Google). Model không có
+// trong map = chưa rõ trần → hiển thị không có mẫu số.
+export const GEMINI_DAY_LIMITS: Record<string, number> = {
+  "gemini-2.5-flash-lite": 20,
+};
 
 // Tin tạo ra cho 1 rule trong 1 lần quét thật (run_rule / run_cron).
 export type RunNoteKind = "real" | "nochange" | "related" | "none" | "skipped";
