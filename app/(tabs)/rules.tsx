@@ -461,6 +461,7 @@ export default function RulesScreen() {
 
       {/* RULE LIST — FlatList ảo hóa: mở tab lần đầu chỉ vẽ vài card đầu, hết đứng hình */}
       <FlatList
+        style={{ flex: 1 }}
         data={filteredRules}
         keyExtractor={(item) => item.id}
         renderItem={renderRuleItem}

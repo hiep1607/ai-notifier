@@ -337,8 +337,10 @@ export default function NotificationsScreen() {
         </ScrollView>
       )}
 
-      {/* LIST — FlatList ảo hóa: cuộn tới đâu vẽ tới đó, mở tab lần đầu không đứng hình */}
+      {/* LIST — FlatList ảo hóa: cuộn tới đâu vẽ tới đó, mở tab lần đầu không đứng hình.
+          flex:1 = chiếm đúng phần còn lại, không chèn ép hàng chip lọc phía trên. */}
       <FlatList
+        style={{ flex: 1 }}
         data={listRows}
         keyExtractor={(row) => row.key}
         renderItem={renderRow}
@@ -581,6 +583,10 @@ function createStyles(C: AppColors) {
     ruleFilterScroll: {
       marginBottom: 12,
       flexGrow: 0,
+      // Đứng cạnh FlatList (flex:1) phải KHÓA cao độ, không thì bị bóp dẹp mất chữ:
+      // chip = text ~20 + padding 7×2 + viền 1×2 ≈ 36.
+      flexShrink: 0,
+      height: 36,
     },
     ruleFilterChip: {
       paddingHorizontal: 14,
