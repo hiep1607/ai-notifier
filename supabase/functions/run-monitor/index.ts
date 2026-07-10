@@ -31,6 +31,7 @@ import {
   isQuietNow,
   normTitle,
   normVal,
+  isFillerTitle,
   recentRealTitles,
   pickFreshItem,
   detectSourceType,
@@ -479,11 +480,17 @@ interface UrlExtract {
 // không đụng quota 1.500). links = link bài trên trang để AI CHỌN (thông báo trỏ đúng bài
 // thay vì trang chủ — quan trọng với trang tin tức). Lỗi → throw để caller xử lý.
 // deno-lint-ignore no-explicit-any
-async function extractUrlAI(supabase: any, rule: Rule, page: WatchPage, links: PageLink[] = []): Promise<UrlExtract> {
+async function extractUrlAI(supabase: any, rule: Rule, page: WatchPage, links: PageLink[] = [], avoidTitles: string[] = []): Promise<UrlExtract> {
   const hasCond = Boolean(rule.condition && rule.condition.trim());
   const prev = rule.last_value?.trim() ?? "";
   const linkList = links.length
     ? `\nCÁC LINK BÀI VIẾT TRÊN TRANG (đánh số):\n${links.map((l, i) => `[${i}] ${l.text}`).join("\n")}\n`
+    : "";
+  // Bản tin đã gửi các lần trước: có tin MỚI → nêu điểm mới + đặt title KHÁC; trang
+  // vẫn y như cũ → GIỮ NGUYÊN title cũ (đừng diễn đạt lại cho khác đi — cổng chống
+  // trùng so tiêu đề; sửa gốc vụ "rule đặt giờ mấy hôm liền gửi cùng 1 thông báo").
+  const avoid = avoidTitles.length
+    ? `\nCÁC BẢN TIN ĐÃ GỬI CHO NGƯỜI DÙNG RỒI (mới nhất trước):\n${avoidTitles.map((t) => `- ${t}`).join("\n")}\nNếu trang CÓ thông tin mới so với các bản tin trên → tập trung vào điểm MỚI và đặt "title" KHÁC hẳn các tiêu đề trên. Nếu trang KHÔNG có gì mới hơn → đặt "title" GIỐNG HỆT tiêu đề gần nhất ở trên và "changed": false (TUYỆT ĐỐI không diễn đạt lại tiêu đề cũ cho khác đi).\n`
     : "";
   try {
     const { text, model: usedModel } = await geminiGenerate({
@@ -499,7 +506,7 @@ NỘI DUNG TRANG (đã bỏ HTML):
 """
 ${page.text.slice(0, 12000)}
 """
-${linkList}
+${linkList}${avoid}
 Trả JSON:
 {
   "found": true nếu trang CÓ thông tin người dùng cần, false nếu không thấy,
@@ -753,7 +760,7 @@ async function monitorUrl(supabase: any, rule: Rule, manual = false): Promise<Mo
 
   // Tiêu đề + link đã gửi — chống báo lại cùng 1 bài (giữa 2 bài mới, đọc lại trang vẫn thấy bài cũ).
   const { data: existing } = await supabase
-    .from("notifications").select("title, source_url").eq("rule_id", rule.id)
+    .from("notifications").select("id, title, source_url").eq("rule_id", rule.id)
     .order("created_at", { ascending: false }).limit(60);
   const seenTitles = new Set<string>(
     (existing ?? []).map((n: { title: string }) => normTitle(String(n.title ?? ""))).filter(Boolean),
@@ -779,7 +786,8 @@ async function monitorUrl(supabase: any, rule: Rule, manual = false): Promise<Mo
 
   // ĐỌC TRANG: kèm danh sách link bài để AI chọn — thông báo trỏ đúng BÀI thay vì trang chủ.
   const links = extractPageLinks(page.html, page.finalUrl);
-  const ex = await extractUrlAI(supabase, rule, page, links);
+  const avoidTitles = recentRealTitles((existing ?? []).map((n: { title: string }) => n.title));
+  const ex = await extractUrlAI(supabase, rule, page, links, avoidTitles);
 
   // Nhiều trang trả 200 nhưng nội dung chính bị che sau form login → AI phát hiện.
   // CHỐT CHẶN chống hỏi quyền oan: trang có NHIỀU text đọc được (>6000 ký tự) gần như
@@ -800,10 +808,31 @@ async function monitorUrl(supabase: any, rule: Rule, manual = false): Promise<Mo
   // "Thực sự đổi": lần đầu (chưa có mốc) = đổi; còn lại tin AI + so sánh giá trị chuẩn hóa.
   const reallyChanged = prevNorm === "" || (curNorm !== "" && curNorm !== prevNorm) || ex.changed;
   const title = ex.title.trim() || `Cập nhật từ ${host}`;
-  // CHỐNG TRÙNG: tiêu đề đã gửi + giá trị không đổi = nội dung y nguyên lần trước → im
-  // (trừ rule đặt giờ — bản tin đúng hẹn luôn giao).
+  // CHỐNG TRÙNG: tiêu đề đã gửi + giá trị không đổi = nội dung y nguyên lần trước → im.
   const fresh = !seenTitles.has(normTitle(title)) || (curNorm !== "" && curNorm !== prevNorm);
-  if (!fresh && !scheduled) return skipped;
+  if (!fresh) {
+    if (!scheduled) return skipped;
+    // Rule ĐẶT GIỜ vẫn phải giao bản tin đúng hẹn, nhưng gửi lại NGUYÊN VĂN bản cũ thì
+    // thành "mấy hôm liền cùng 1 thông báo" (vd GitHub trending giữ nguyên top vài ngày).
+    // → thay bằng bản tin "chưa có thay đổi" trỏ về thông báo THẬT gần nhất (vẫn push).
+    const prevReal = (existing ?? []).find(
+      (n: { id?: string; title?: string }) => !isFillerTitle(String(n.title ?? "")),
+    );
+    const topic = (rule.keyword || rule.title || "trang theo dõi").slice(0, 60);
+    const ncTitle = `Chưa có thay đổi mới: ${topic}`;
+    const inserted = await insertNotif(supabase, rule, {
+      title: ncTitle,
+      content: `Trang chưa có nội dung mới so với bản tin trước ("${title.slice(0, 120)}"). Bạn có thể xem lại thông báo gần nhất bên dưới.`,
+      details: "",
+      ai_summary: "Chưa có thay đổi so với bản tin trước.",
+      source: host,
+      source_url: "",
+      related_notification_id: prevReal?.id,
+      sentiment: "neutral",
+      is_important: false,
+    });
+    return { inserted, value: skipped.value, contentHash: fp, note: { title: ncTitle, kind: "nochange" } };
+  }
 
   if (hasCond) {
     if (!ex.matches_condition) return skipped;
