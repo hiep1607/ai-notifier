@@ -1,9 +1,9 @@
 import { useFocusEffect } from "@react-navigation/native";
 import React, { useEffect, useMemo, useState } from "react";
 import {
+  FlatList,
   Modal,
   RefreshControl,
-  ScrollView,
   StyleSheet,
   Switch,
   Text,
@@ -311,6 +311,123 @@ export default function RulesScreen() {
     await supabase.from("rules").update({ is_active: newValue }).eq("id", item.id);
   };
 
+  // 1 card rule cho FlatList (ảo hóa — chỉ những card trong khung nhìn mới được dựng).
+  const renderRuleItem = ({ item }: { item: Rule }) => {
+    const cat = findCategory(item.category);
+    return (
+      <ReanimatedSwipeable renderRightActions={() => renderRightActions(item.id)}>
+        <View style={styles.ruleCard}>
+          <TouchableOpacity
+            style={styles.ruleLeft}
+            activeOpacity={0.8}
+            onPress={() =>
+              router.push({ pathname: "/rule-detail", params: { id: item.id } })
+            }
+          >
+            <IconBadge
+              category={item.category}
+              size={50}
+              unreadCount={unreadCounts[item.id] ?? 0}
+            />
+            <View style={styles.ruleText}>
+              <Text style={styles.ruleTitle} numberOfLines={1}>{item.title}</Text>
+              <Text style={styles.ruleDesc} numberOfLines={1}>{item.description}</Text>
+              <View style={styles.metaRow}>
+                <View style={[styles.catTag, { backgroundColor: cat.color + "22" }]}>
+                  <Text style={[styles.catTagText, { color: cat.color }]}>{cat.label}</Text>
+                </View>
+                <View style={styles.metaChip}>
+                  <Ionicons
+                    name={item.frequency === "change" ? "flash-outline" : "time-outline"}
+                    size={11}
+                    color={colors.subText}
+                  />
+                  <Text style={styles.metaText} numberOfLines={1}>
+                    {formatSchedule(item.frequency, item.run_at)}
+                  </Text>
+                </View>
+                {item.muted ? (
+                  <View style={styles.metaChip}>
+                    <Ionicons name="notifications-off-outline" size={11} color={colors.warning} />
+                    <Text style={[styles.metaText, { color: colors.warning }]} numberOfLines={1}>
+                      Để êm
+                    </Text>
+                  </View>
+                ) : null}
+              </View>
+              {item.condition ? (
+                <View style={styles.condRow}>
+                  <Ionicons name="filter-outline" size={11} color={colors.subText} />
+                  <Text style={styles.metaText} numberOfLines={1}>{item.condition}</Text>
+                </View>
+              ) : null}
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={() => toggleRule(item)}
+            activeOpacity={0.7}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <View pointerEvents="none">
+              <Switch
+                value={item.is_active}
+                thumbColor={item.is_active ? colors.primary : "#999"}
+                trackColor={{ true: colors.primary + "66", false: colors.border }}
+              />
+            </View>
+          </TouchableOpacity>
+        </View>
+      </ReanimatedSwipeable>
+    );
+  };
+
+  // NHẮC HẸN ĐÃ XONG — server nhắc rồi tự tắt; gom cuối danh sách để xem lại / dọn dẹp.
+  const renderDoneReminders = () => {
+    if (searchText || doneReminders.length === 0) return null;
+    return (
+      <>
+        <TouchableOpacity
+          style={styles.doneHeader}
+          onPress={() => setShowDoneReminders((v) => !v)}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="checkmark-done-outline" size={16} color={colors.subText} />
+          <Text style={styles.doneHeaderText}>Nhắc hẹn đã xong ({doneReminders.length})</Text>
+          <Ionicons
+            name={showDoneReminders ? "chevron-up" : "chevron-down"}
+            size={16}
+            color={colors.subText}
+          />
+        </TouchableOpacity>
+
+        {showDoneReminders &&
+          doneReminders.map((item) => (
+            <View key={item.id} style={styles.doneCard}>
+              <Ionicons name="alarm-outline" size={18} color={colors.subText} />
+              <TouchableOpacity
+                style={{ flex: 1, marginHorizontal: 10 }}
+                activeOpacity={0.7}
+                onPress={() => router.push({ pathname: "/rule-detail", params: { id: item.id } })}
+              >
+                <Text style={styles.doneTitle} numberOfLines={1}>{item.title}</Text>
+                <Text style={styles.doneTime}>Đã nhắc lúc {formatRemindTime(item.remind_at)}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => handleDeleteRule(item.id)} hitSlop={8}>
+                <Ionicons name="trash-outline" size={18} color={colors.danger} />
+              </TouchableOpacity>
+            </View>
+          ))}
+
+        {showDoneReminders && doneReminders.length > 1 && (
+          <TouchableOpacity style={styles.doneClearBtn} onPress={deleteAllDoneReminders}>
+            <Text style={styles.doneClearText}>Xóa tất cả nhắc hẹn đã xong</Text>
+          </TouchableOpacity>
+        )}
+      </>
+    );
+  };
+
   return (
     <View style={styles.container}>
       {/* HEADER */}
@@ -342,16 +459,22 @@ export default function RulesScreen() {
       {/* FILTER TABS */}
       <FilterTabs tabs={TABS} active={activeTab} onChange={setActiveTab} />
 
-      {/* RULE LIST */}
-      <ScrollView
+      {/* RULE LIST — FlatList ảo hóa: mở tab lần đầu chỉ vẽ vài card đầu, hết đứng hình */}
+      <FlatList
+        data={filteredRules}
+        keyExtractor={(item) => item.id}
+        renderItem={renderRuleItem}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 120 }}
+        initialNumToRender={8}
+        maxToRenderPerBatch={10}
+        windowSize={7}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
         }
-      >
-        {/* BANNER LỌC RÁC — chỉ hiện khi có rule cũ dễ ồn còn chế độ Đầy đủ */}
-        {!noiseBannerHidden && noisyRules.length > 0 && !searchText && (
+        ListHeaderComponent={
+        /* BANNER LỌC RÁC — chỉ hiện khi có rule cũ dễ ồn còn chế độ Đầy đủ */
+        !noiseBannerHidden && noisyRules.length > 0 && !searchText ? (
           <View style={styles.noiseBanner}>
             <View style={styles.noiseBannerHead}>
               <Ionicons name="funnel-outline" size={16} color={colors.primary} />
@@ -374,9 +497,9 @@ export default function RulesScreen() {
               </Text>
             </TouchableOpacity>
           </View>
-        )}
-
-        {filteredRules.length === 0 && (
+        ) : null
+        }
+        ListEmptyComponent={
           <View style={styles.empty}>
             <Ionicons
               name={searchText ? "search-outline" : "albums-outline"}
@@ -393,124 +516,9 @@ export default function RulesScreen() {
                 : "Chưa có rule nào"}
             </Text>
           </View>
-        )}
-
-        {filteredRules.map((item) => {
-          const cat = findCategory(item.category);
-          return (
-            <ReanimatedSwipeable
-              key={item.id}
-              renderRightActions={() => renderRightActions(item.id)}
-            >
-            <View style={styles.ruleCard}>
-              <TouchableOpacity
-                style={styles.ruleLeft}
-                activeOpacity={0.8}
-                onPress={() =>
-                  router.push({ pathname: "/rule-detail", params: { id: item.id } })
-                }
-              >
-                <IconBadge
-                  category={item.category}
-                  size={50}
-                  unreadCount={unreadCounts[item.id] ?? 0}
-                />
-                <View style={styles.ruleText}>
-                  <Text style={styles.ruleTitle} numberOfLines={1}>{item.title}</Text>
-                  <Text style={styles.ruleDesc} numberOfLines={1}>{item.description}</Text>
-                  <View style={styles.metaRow}>
-                    <View style={[styles.catTag, { backgroundColor: cat.color + "22" }]}>
-                      <Text style={[styles.catTagText, { color: cat.color }]}>{cat.label}</Text>
-                    </View>
-                    <View style={styles.metaChip}>
-                      <Ionicons
-                        name={item.frequency === "change" ? "flash-outline" : "time-outline"}
-                        size={11}
-                        color={colors.subText}
-                      />
-                      <Text style={styles.metaText} numberOfLines={1}>
-                        {formatSchedule(item.frequency, item.run_at)}
-                      </Text>
-                    </View>
-                    {item.muted ? (
-                      <View style={styles.metaChip}>
-                        <Ionicons name="notifications-off-outline" size={11} color={colors.warning} />
-                        <Text style={[styles.metaText, { color: colors.warning }]} numberOfLines={1}>
-                          Để êm
-                        </Text>
-                      </View>
-                    ) : null}
-                  </View>
-                  {item.condition ? (
-                    <View style={styles.condRow}>
-                      <Ionicons name="filter-outline" size={11} color={colors.subText} />
-                      <Text style={styles.metaText} numberOfLines={1}>{item.condition}</Text>
-                    </View>
-                  ) : null}
-                </View>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                onPress={() => toggleRule(item)}
-                activeOpacity={0.7}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              >
-                <View pointerEvents="none">
-                  <Switch
-                    value={item.is_active}
-                    thumbColor={item.is_active ? colors.primary : "#999"}
-                    trackColor={{ true: colors.primary + "66", false: colors.border }}
-                  />
-                </View>
-              </TouchableOpacity>
-            </View>
-            </ReanimatedSwipeable>
-          );
-        })}
-
-        {/* NHẮC HẸN ĐÃ XONG — server nhắc rồi tự tắt; gom gọn ở đây để xem lại / dọn dẹp */}
-        {!searchText && doneReminders.length > 0 && (
-          <>
-            <TouchableOpacity
-              style={styles.doneHeader}
-              onPress={() => setShowDoneReminders((v) => !v)}
-              activeOpacity={0.7}
-            >
-              <Ionicons name="checkmark-done-outline" size={16} color={colors.subText} />
-              <Text style={styles.doneHeaderText}>Nhắc hẹn đã xong ({doneReminders.length})</Text>
-              <Ionicons
-                name={showDoneReminders ? "chevron-up" : "chevron-down"}
-                size={16}
-                color={colors.subText}
-              />
-            </TouchableOpacity>
-
-            {showDoneReminders &&
-              doneReminders.map((item) => (
-                <View key={item.id} style={styles.doneCard}>
-                  <Ionicons name="alarm-outline" size={18} color={colors.subText} />
-                  <TouchableOpacity
-                    style={{ flex: 1, marginHorizontal: 10 }}
-                    activeOpacity={0.7}
-                    onPress={() => router.push({ pathname: "/rule-detail", params: { id: item.id } })}
-                  >
-                    <Text style={styles.doneTitle} numberOfLines={1}>{item.title}</Text>
-                    <Text style={styles.doneTime}>Đã nhắc lúc {formatRemindTime(item.remind_at)}</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity onPress={() => handleDeleteRule(item.id)} hitSlop={8}>
-                    <Ionicons name="trash-outline" size={18} color={colors.danger} />
-                  </TouchableOpacity>
-                </View>
-              ))}
-
-            {showDoneReminders && doneReminders.length > 1 && (
-              <TouchableOpacity style={styles.doneClearBtn} onPress={deleteAllDoneReminders}>
-                <Text style={styles.doneClearText}>Xóa tất cả nhắc hẹn đã xong</Text>
-              </TouchableOpacity>
-            )}
-          </>
-        )}
-      </ScrollView>
+        }
+        ListFooterComponent={renderDoneReminders()}
+      />
 
       {/* ADD BUTTON — nổi, kéo thả tự do (giữ vị trí), bấm để mở menu */}
       <GestureDetector gesture={fabGesture}>

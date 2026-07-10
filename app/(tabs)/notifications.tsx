@@ -2,6 +2,7 @@ import React, { useMemo, useState } from "react";
 
 import {
   ActivityIndicator,
+  FlatList,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -190,17 +191,77 @@ export default function NotificationsScreen() {
     return d.toLocaleDateString("vi-VN");
   };
 
-  // Gom danh sách (đã sắp xếp mới→cũ) thành các nhóm theo ngày, giữ nguyên thứ tự.
-  const groupedNotifications = (() => {
-    const groups: { label: string; items: Notification[] }[] = [];
+  // Gom danh sách (đã sắp xếp mới→cũ) thành dãy dòng phẳng cho FlatList: dòng nhãn
+  // ngày (Hôm nay/Hôm qua/dd-mm) chen giữa các dòng thông báo, giữ nguyên thứ tự.
+  // FlatList ẢO HÓA: chỉ vẽ ~chục dòng quanh khung nhìn — trước đây ScrollView+map
+  // dựng cả 100 card Swipeable một lượt làm LẦN ĐẦU mở tab đứng hình vài giây.
+  type ListRow =
+    | { kind: "label"; key: string; label: string }
+    | { kind: "notif"; key: string; item: Notification };
+  const listRows: ListRow[] = (() => {
+    const rows: ListRow[] = [];
+    let lastLabel = "";
     for (const n of displayedNotifications) {
       const label = dayLabel(n.created_at);
-      const last = groups[groups.length - 1];
-      if (last && last.label === label) last.items.push(n);
-      else groups.push({ label, items: [n] });
+      if (label !== lastLabel) {
+        rows.push({ kind: "label", key: `label:${label}`, label });
+        lastLabel = label;
+      }
+      rows.push({ kind: "notif", key: n.id, item: n });
     }
-    return groups;
+    return rows;
   })();
+
+  const renderRow = ({ item: row }: { item: ListRow }) => {
+    if (row.kind === "label") {
+      return <Text style={styles.groupLabel}>{row.label}</Text>;
+    }
+    const item = row.item;
+    return (
+      <ReanimatedSwipeable renderRightActions={() => renderRightActions(item.id)}>
+        <TouchableOpacity
+          style={[styles.card, !item.is_read && styles.cardUnread]}
+          activeOpacity={0.85}
+          onPress={() =>
+            router.push({ pathname: "/notification-detail", params: { id: item.id } })
+          }
+        >
+          <IconBadge category={item.category} size={48} />
+
+          <View style={styles.cardBody}>
+            {item.rule_id && ruleNames[item.rule_id] ? (
+              <View style={styles.ruleChip}>
+                <Ionicons name="pricetag" size={11} color={colors.primary} />
+                <Text style={styles.ruleChipText} numberOfLines={1}>
+                  {ruleNames[item.rule_id]}
+                </Text>
+              </View>
+            ) : null}
+
+            <View style={styles.cardTop}>
+              <Text style={styles.cardTitle} numberOfLines={1}>{item.title}</Text>
+              {!item.is_read && <View style={styles.dot} />}
+            </View>
+
+            <Text style={styles.cardDesc} numberOfLines={2}>
+              {aiSummaryEnabled && item.ai_summary ? item.ai_summary : item.content}
+            </Text>
+
+            <View style={styles.cardFooter}>
+              {item.is_important && (
+                <View style={styles.importantBadge}>
+                  <Ionicons name="alert-circle" size={12} color={colors.danger} />
+                  <Text style={styles.importantText}>Quan trọng</Text>
+                </View>
+              )}
+              {item.source ? <Text style={styles.source}>{item.source}</Text> : null}
+              <Text style={styles.time}>{timeAgo(item.created_at)}</Text>
+            </View>
+          </View>
+        </TouchableOpacity>
+      </ReanimatedSwipeable>
+    );
+  };
 
   return (
     <View style={styles.container}>
@@ -276,91 +337,46 @@ export default function NotificationsScreen() {
         </ScrollView>
       )}
 
-      {/* LIST */}
-      <ScrollView
+      {/* LIST — FlatList ảo hóa: cuộn tới đâu vẽ tới đó, mở tab lần đầu không đứng hình */}
+      <FlatList
+        data={listRows}
+        keyExtractor={(row) => row.key}
+        renderItem={renderRow}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 40 }}
+        initialNumToRender={8}
+        maxToRenderPerBatch={10}
+        windowSize={7}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
         }
-      >
-        {displayedNotifications.length === 0 && !firstLoadDone && (
-          // Đang tải lần đầu (chưa từng có cache) — xoay vòng, đừng nói "chưa có".
-          <View style={styles.empty}>
-            <ActivityIndicator size="large" color={colors.primary} />
-            <Text style={styles.emptyText}>Đang tải thông báo...</Text>
-          </View>
-        )}
-
-        {displayedNotifications.length === 0 && firstLoadDone && (
-          <View style={styles.empty}>
-            <Ionicons name="notifications-off-outline" size={48} color={colors.muted} />
-            <Text style={styles.emptyText}>
-              {searchText ? "Không tìm thấy kết quả" : "Chưa có thông báo"}
-            </Text>
-            {!searchText && (
-              <TouchableOpacity
-                style={styles.emptyButton}
-                onPress={() => router.push("/(tabs)/rules" as any)}
-                activeOpacity={0.85}
-              >
-                <Ionicons name="add" size={18} color="white" />
-                <Text style={styles.emptyButtonText}>Tạo rule để nhận thông báo</Text>
-              </TouchableOpacity>
-            )}
-          </View>
-        )}
-
-        {groupedNotifications.map((group) => (
-          <View key={group.label}>
-            <Text style={styles.groupLabel}>{group.label}</Text>
-            {group.items.map((item) => (
-          <ReanimatedSwipeable key={item.id} renderRightActions={() => renderRightActions(item.id)}>
-          <TouchableOpacity
-            style={[styles.card, !item.is_read && styles.cardUnread]}
-            activeOpacity={0.85}
-            onPress={() =>
-              router.push({ pathname: "/notification-detail", params: { id: item.id } })
-            }
-          >
-            <IconBadge category={item.category} size={48} />
-
-            <View style={styles.cardBody}>
-              {item.rule_id && ruleNames[item.rule_id] ? (
-                <View style={styles.ruleChip}>
-                  <Ionicons name="pricetag" size={11} color={colors.primary} />
-                  <Text style={styles.ruleChipText} numberOfLines={1}>
-                    {ruleNames[item.rule_id]}
-                  </Text>
-                </View>
-              ) : null}
-
-              <View style={styles.cardTop}>
-                <Text style={styles.cardTitle} numberOfLines={1}>{item.title}</Text>
-                {!item.is_read && <View style={styles.dot} />}
-              </View>
-
-              <Text style={styles.cardDesc} numberOfLines={2}>
-                {aiSummaryEnabled && item.ai_summary ? item.ai_summary : item.content}
-              </Text>
-
-              <View style={styles.cardFooter}>
-                {item.is_important && (
-                  <View style={styles.importantBadge}>
-                    <Ionicons name="alert-circle" size={12} color={colors.danger} />
-                    <Text style={styles.importantText}>Quan trọng</Text>
-                  </View>
-                )}
-                {item.source ? <Text style={styles.source}>{item.source}</Text> : null}
-                <Text style={styles.time}>{timeAgo(item.created_at)}</Text>
-              </View>
+        ListEmptyComponent={
+          !firstLoadDone ? (
+            // Đang tải lần đầu (chưa từng có cache) — xoay vòng, đừng nói "chưa có".
+            <View style={styles.empty}>
+              <ActivityIndicator size="large" color={colors.primary} />
+              <Text style={styles.emptyText}>Đang tải thông báo...</Text>
             </View>
-          </TouchableOpacity>
-          </ReanimatedSwipeable>
-            ))}
-          </View>
-        ))}
-      </ScrollView>
+          ) : (
+            <View style={styles.empty}>
+              <Ionicons name="notifications-off-outline" size={48} color={colors.muted} />
+              <Text style={styles.emptyText}>
+                {searchText ? "Không tìm thấy kết quả" : "Chưa có thông báo"}
+              </Text>
+              {!searchText && (
+                <TouchableOpacity
+                  style={styles.emptyButton}
+                  onPress={() => router.push("/(tabs)/rules" as any)}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name="add" size={18} color="white" />
+                  <Text style={styles.emptyButtonText}>Tạo rule để nhận thông báo</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )
+        }
+      />
     </View>
   );
 }
