@@ -1,155 +1,215 @@
-# CÔNG NGHỆ & THIẾT KẾ — AI Notifier
+# CÔNG NGHỆ & HÀNH TRÌNH THIẾT KẾ — AI Notifier (Nofy)
 
-> File này trả lời 3 câu hỏi: **dùng công nghệ gì và VÌ SAO chọn**, **app hoạt động ra sao và vì sao thiết kế vậy**, **từng chức năng giải quyết bằng cách nào**.
-> Chi tiết cách dùng từng tính năng: [TINH_NANG.md](TINH_NANG.md) · Tiến độ/nhật ký: [KE_HOACH.md](KE_HOACH.md).
+> File này ghi lại **mọi công nghệ đã dùng theo hướng tiến hóa**: từng vấn đề đã **thử giải pháp nào → vì sao bỏ → vì sao chốt giải pháp hiện tại**. Mọi chuyện kể ở đây đều là chuyện THẬT đã xảy ra trong dự án (đối chiếu nhật ký [KE_HOACH.md](KE_HOACH.md) và kết quả kiểm thử [KICH_BAN_TEST.md](KICH_BAN_TEST.md)).
+> Cách dùng từng tính năng: [TINH_NANG.md](TINH_NANG.md).
 
----
-
-## 1. Các công nghệ lớn và lý do chọn
-
-### 1a. React Native + Expo (SDK 54, Expo Router 6) — frontend
-**Là gì:** viết 1 codebase JavaScript/TypeScript chạy được cả Android, iOS lẫn Web (react-native-web).
-
-**Vì sao chọn:**
-- **1 code — 3 nền tảng**: app này cần chạy cả web (dev/test nhanh trên trình duyệt) lẫn mobile (nhận push thật). Viết native riêng từng nền tảng hoặc Flutter đều tốn gấp đôi công cho một người làm.
-- **Expo Go**: thử trên điện thoại thật bằng cách quét QR, không cần cài Android Studio/Xcode, không cần build APK mỗi lần sửa.
-- **EAS Update (OTA)**: sửa code JS xong `eas update` là app trên máy người dùng tự nhận bản mới khi mở lại — không phải phát hành lại APK/lên store.
-- **Expo Router**: routing theo cấu trúc thư mục `app/` (file = màn hình), đỡ tự viết navigator.
-
-**Cái giá phải trả (đã gặp thật):** web và native khác nhau ngầm — `Alert` không chạy trên web (phải viết `lib/dialog.ts` riêng), `expo-audio` import trên web làm sập bundle (phải tách file `.web.ts`/`.ts`), web export bắt buộc `output: "single"` (chế độ "static" crash SSR với AsyncStorage). Quy ước của dự án: **mọi thay đổi phải chạy đúng trên cả web lẫn Expo Go**.
-
-### 1b. Supabase — toàn bộ backend
-**Là gì:** dịch vụ "Postgres + mọi thứ xung quanh": Auth, database có RLS, Edge Functions (serverless Deno), pg_cron, secret storage.
-
-**Vì sao chọn (thay vì tự dựng server Node/Express):**
-- **Không phải nuôi server**: app cần quét tin 24/7 — nếu tự dựng phải thuê VPS, lo deploy, lo giám sát. Supabase free tier gánh đủ: Postgres làm nguồn sự thật, Edge Function chạy logic quét, pg_cron bấm giờ.
-- **Auth + RLS liền khối**: đăng nhập, phiên, và "user chỉ thấy dữ liệu của mình" đều do Postgres RLS đảm bảo ở tầng database — client có bug cũng không đọc trộm được dữ liệu người khác.
-- **Edge Functions giấu được key AI**: key Gemini nằm trong Supabase secret, không bao giờ xuất hiện trong app (app chỉ có anon key — vốn là khóa công khai theo thiết kế).
-
-**Các mảnh Supabase đang dùng:**
-| Mảnh | Vai trò trong app |
-|---|---|
-| Postgres + RLS | Bảng `rules`, `notifications`, `push_tokens`, `user_settings`, `usage_logs`, `cron_runs` |
-| Auth | Đăng ký/đăng nhập email, JWT cho mọi lời gọi |
-| Edge Functions | `generate-rule` (NL→rule), `run-monitor` (quét), `transcribe` (giọng nói), `admin-api` |
-| pg_cron + pg_net | Bấm giờ gọi run-monitor: nhịp chính 15 phút + tick mỗi phút |
-| Secrets | GEMINI_API_KEY, ADMIN_EMAILS |
-
-### 1c. Google Gemini (server-side) — tầng AI
-**Là gì:** mọi việc "hiểu ngôn ngữ" đều đi qua Gemini: đọc mô tả người dùng để dựng rule, tìm tin bằng Google Search grounding, đọc trang web trích thông tin, chấm điều kiện, chép lời giọng nói.
-
-**Vì sao chọn (và vì sao BỎ Ollama):**
-- Bản đầu dùng **Ollama chạy local** — bỏ vì: máy người dùng phải bật 24/7 mới quét nền được, không public ra ngoài được, model nhỏ chất lượng thấp. Chuyển sang Gemini server-side là bước ngoặt giúp app "sống" độc lập với máy dev.
-- **Google Search grounding**: Gemini tự tìm tin THẬT trên web (có nguồn, có URL) thay vì bịa — đúng bản chất app "giám sát tin tức".
-- **Free tier đủ dùng** cho quy mô hiện tại — nhưng quota là ràng buộc thiết kế lớn nhất của cả hệ thống (xem §3d).
-
-**Bài học quota (2026-07):** Google siết free tier `gemini-2.5-flash-lite` còn ~20 lượt/ngày, quota tính **riêng từng model** → `_shared/gemini.ts` có `fallbackModels`: hết bucket model này tự nhảy sang model kế (quét nền đi lite→2.0-lite→2.0-flash→2.5-flash; tạo rule đi 2.5-flash trước vì hướng người dùng). `usage_logs` ghi lại từng call + model để màn Admin đếm theo bucket.
-
-### 1d. pg_cron + pg_net — bộ lập lịch 24/7
-**Vì sao chọn:** không cần máy nào bật cả — Postgres tự bấm giờ (`pg_cron`) rồi tự gọi HTTP (`pg_net`) vào run-monitor. 2 nhịp:
-- **Cron chính mỗi 15 phút**: quét mọi rule tới hạn.
-- **Tick mỗi phút** (cực rẻ — chỉ 1 câu SQL kiểm tra, CÓ việc mới gọi HTTP): để nhắc hẹn và rule ghim giờ nổ **đúng phút** thay vì lệch theo nhịp 15'.
-
-**Bẫy đã gặp:** cron gọi Edge Function phải dùng **legacy service_role JWT** (dạng `eyJ...`), không phải key `sb_secret_...`; dán nhầm anon key là tick chết im lặng (401). Debug bằng `net._http_response`.
-
-### 1e. Expo Push — thông báo đẩy
-**Vì sao chọn:** một API duy nhất (`exp.host/--/api/v2/push/send`) lo cả FCM (Android) lẫn APNs (iOS), không phải tự tích hợp từng cái. run-monitor gửi push trực tiếp sau khi insert notification; token chết (gỡ app) tự bị dọn khi Expo trả `DeviceNotRegistered`.
-
-### 1f. Provider dữ liệu MIỄN PHÍ, 0 quota AI — cho số liệu
-**Vì sao có tầng này:** gọi Gemini cho câu hỏi "hôm nay bao nhiêu độ" vừa tốn quota vừa dễ sai. Số liệu lấy từ API chuyên dụng — **số thật, nhanh, free, không cần key**:
-| Nguồn | Dùng cho |
-|---|---|
-| Open-Meteo | Thời tiết (nhiệt độ, mưa, gió theo địa danh) |
-| CoinGecko | Giá coin (BTC, ETH, SOL...) |
-| open.er-api.com | Tỷ giá USD/VND |
-| RSS báo VN (VnExpress, Tuổi Trẻ, CafeF...) | Tin tức theo chuyên mục — link bài LUÔN thật |
-
-### 1g. TypeScript + Jest (jest-expo) — chất lượng code
-- **TypeScript** toàn bộ client + Edge Functions.
-- **Jest 140 test / 11 suite**: logic thuần của server (lịch quét, chống trùng, chọn tin) được tách vào `_shared/monitorLogic.ts` **không import Deno API** — để jest (Node) test được đúng code chạy thật trên server.
-- **Bẫy đã gặp:** tsc/jest KHÔNG phủ code Deno → có lỗi cú pháp vẫn "deploy thành công" nhưng function sập lúc boot. Giải pháp: `scripts/deploy-functions.mjs` gộp deploy + **probe** (gọi thử từng function bằng body rẻ, khẳng định boot OK) làm một bước.
+**Stack chốt hiện tại:** React Native 0.81 + Expo SDK 54 (Expo Router 6) · Supabase (Postgres + RLS + Auth + Edge Functions Deno + pg_cron/pg_net) · Google Gemini server-side (grounding + fallback đa model) · Expo Push · EAS Update (OTA) + EAS Hosting (web) · TypeScript + Jest (140 test).
 
 ---
 
-## 2. App hoạt động thế nào (và vì sao thiết kế vậy)
+## 1. TẦNG AI — từ Ollama local đến Gemini đa bucket
 
-```
-Người dùng mô tả bằng lời ("mỗi sáng 8h báo dự án hot trên GitHub")
-        │
-        ▼
-[generate-rule]  Gemini đọc hội thoại → JSON rule (keyword, tần suất, giờ, điều kiện,
-                 URL theo dõi...) — thiếu thông tin thì HỎI LẠI, vô lý thì từ chối khéo
-        │ insert
-        ▼
-[Postgres: rules] ◄─── pg_cron 15' + tick 1' gọi ───► [run-monitor]
-                                                          │
-                       ┌──────────── ROUTER NGUỒN ────────┤ (chọn đường RẺ nhất trước)
-                       │ 1. Nhắc hẹn        → 0 AI, chỉ lịch + push
-                       │ 2. Thời tiết/coin/tỷ giá → API thật, 0 quota
-                       │ 3. URL cụ thể      → fetch trang → ưu tiên FEED → AI đọc text
-                       │ 4. Tin tức         → RSS báo VN + AI chọn bài (không grounding)
-                       │ 5. Còn lại         → Gemini + Google Search grounding (đắt nhất)
-                       └──────────────────────────────────┤
-                                                          ▼
-                       CỔNG LỌC: điều kiện thỏa? số liệu đổi? trùng bài đã gửi?
-                       đúng giờ hẹn? chế độ "chỉ tin quan trọng"? giờ yên lặng?
-                                                          │ vượt cổng
-                                                          ▼
-                       insert [notifications] + Expo Push → điện thoại người dùng
-```
+### 1a. Chạy model ở đâu?
+- **Đã thử: Ollama chạy local trên máy dev.** Bỏ vì 3 lý do chí mạng: (1) muốn quét nền 24/7 thì máy phải bật 24/7; (2) app không public ra người khác dùng được (AI nằm trên máy cá nhân); (3) model local nhỏ, chất lượng trích JSON/tiếng Việt kém.
+- **Hiện tại: Gemini gọi từ Supabase Edge Functions (server-side).** Key nằm trong Supabase secret — app KHÔNG bao giờ cầm key AI. Được cả 3 thứ Ollama thiếu: chạy nền độc lập, public được, chất lượng cao. Đây là bước ngoặt kiến trúc lớn nhất của dự án (2026-06-19, "bỏ Ollama").
 
-**Các quyết định thiết kế chính và lý do:**
+### 1b. Chọn model nào cho việc gì?
+- **Đã thử: một model `gemini-2.5-flash` cho tất cả.** Chạy được nhưng phí: tạo rule chỉ là trích JSON từ hội thoại, không cần grounding, không cần model to.
+- **Đã thử (2026-06-20): tách model theo task** — generate-rule hạ xuống `flash-lite` (rẻ ~33%). Ổn cho tới khi...
+- **Sự cố 2026-07: Google siết free tier `2.5-flash-lite` còn ~20 lượt/NGÀY**, và phát hiện quota tính **RIÊNG TỪNG MODEL** (mỗi model một "xô" riêng). App lúc đó dồn mọi việc vào flash-lite → cạn xô là chết cả hệ, dù các xô khác còn nguyên. Chẩn đoán ban đầu "cron đốt cả nghìn call" hóa ra SAI — app chỉ dùng ~100 call/ngày; vấn đề là trần bị hạ.
+- **Hiện tại: fallback đa bucket** (`_shared/gemini.ts`, tham số `fallbackModels`): gặp 429 hết-quota-ngày hoặc model 404 thì tự thử model kế trong chuỗi. Quét nền/chép lời đi chuỗi rẻ (`2.5-flash-lite → 2.0-flash-lite → 2.0-flash → 2.5-flash`); tạo rule đi `2.5-flash` TRƯỚC (việc hướng người dùng, phải mượt). Mỗi call ghi vào `usage_logs` kèm model thật đã dùng → màn Admin đếm đúng theo từng xô, bỏ con số "/1500" bịa. Kiểm chứng thật: tạo rule trả `ready` ngay lúc flash-lite đang cạn.
 
-1. **Cron là bộ lập lịch DUY NHẤT** — app mở lên chỉ ĐỌC tin, không tự quét (trừ kéo-refresh có throttle 5'). Lý do: 2 nơi cùng quét = thông báo trùng + đốt quota gấp đôi.
-2. **Lịch tính per-rule bằng `last_run_at` + tần suất** (hàm `isDue`), không phải "cron chạy là quét hết". Lý do: rule 1 tiếng chỉ được tốn tối đa 24 call/ngày — quota gate tự nhiên.
-3. **Router nguồn: rẻ trước, đắt sau.** Grounding là phương án CUỐI. Lý do: quota 1 ngày có hạn, còn API thời tiết/giá thì free vô hạn — dồn AI cho đúng việc cần AI.
-4. **Server làm hết việc nặng, client chỉ hiển thị.** Client không có key AI, không quyết định gì về lịch. Lý do: bảo mật (key không lộ) + nhất quán (1 nguồn logic duy nhất, trang test cũng gọi server dry-run thay vì tính lại ở client).
-5. **Mọi thứ best-effort, không chết chùm**: bảng log chưa migrate → nuốt lỗi ghi tiếp phần còn lại; AI kẹt quota giữa lượt → rule 0-AI phía sau vẫn quét; enrich bài lỗi → giữ bản tóm tắt ngắn. Lý do: hệ chạy nền 24/7 không ai canh — một mắt xích hỏng không được kéo sập cả lượt quét.
+### 1c. Trả phí cho xong?
+- **Đã thử (2026-06-20): bật Gemini Tier 1 trả phí** để hết lo quota — **thất bại vì thẻ Visa ảo (MB) bị Google từ chối**. 
+- **Hiện tại: ở lại free tier nhưng thiết kế cả hệ thống quanh ràng buộc quota** (xem toàn bộ mục 3). Trớ trêu mà hay: chính vì không trả phí được mà app có router nguồn rẻ-trước, hash-gate, RSS... — giờ có trả phí thì chi phí cũng thấp hơn nhiều lần so với thiết kế ban đầu.
+
+### 1d. Phân biệt 2 loại 429 (chuyện tưởng nhỏ mà mất nhiều ngày)
+- **Vấn đề:** admin thấy "quota quá tải" khi mới dùng 20/1500 lượt; retry chờ 60s × 6 lần vẫn kẹt.
+- **Đã thử: tin vào chuỗi "retry in Ns"** trong lỗi → chờ đúng N giây → vẫn kẹt. Hóa ra Gemini kèm "retry in ~60s" **cả khi hết quota NGÀY** (chờ kiểu gì cũng vô ích).
+- **Hiện tại:** đọc `quotaId` trong body lỗi để phân loại **PerMinute** (nghẽn tức thời — chờ đúng N giây rồi thử lại) vs **PerDay** (hết hôm nay — nói thẳng với người dùng "hết lượt, reset ~14h giờ VN", dừng cả loạt). Heuristic retry-giây chỉ còn là lưới phụ.
 
 ---
 
-## 3. Các chức năng và cách giải quyết
+## 2. TÌM TIN & LINK BÀI GỐC — cuộc chiến chống "AI bịa"
 
-### 3a. Tạo rule bằng ngôn ngữ tự nhiên (chat + giọng nói)
-- **Vấn đề:** người dùng nói mơ hồ ("theo dõi giá ETH") — thiếu tần suất, thiếu điều kiện.
-- **Giải quyết:** generate-rule trả 2 trạng thái: `ready` (đủ thông tin → JSON rule đầy đủ) hoặc `need_info` (hỏi lại đúng 1 câu). Có "bản đồ nguồn": "dự án nổi bật GitHub mỗi sáng" tự dựng URL `github.com/trending`; yêu cầu bất khả thi (đọc Instagram) → giải thích + gợi ý thay thế. Giọng nói: web dùng Web Speech API (0 quota), mobile ghi âm → Edge Function `transcribe` (Gemini chép lời).
+### 2a. Link bài gốc lấy từ đâu?
+- **Đã thử: để AI tự ghi `source_url`** trong JSON trả về → **AI bịa URL** hoặc ghi link chết. Người dùng bấm "Đọc bài gốc" ra 404.
+- **Đã thử: lấy URL từ grounding metadata của Google Search** (link THẬT Google trả) → link hết bịa, NHƯNG URL grounding **đổi mỗi lần gọi** (redirect qua domain trung gian) → chống-trùng theo URL vỡ trận.
+- **Hiện tại: kết hợp theo nguồn.** Đường RSS/feed: link bài lấy thẳng từ feed — luôn thật, ổn định. Đường grounding: vẫn lấy URL thật từ metadata nhưng **chống trùng chuyển sang so TIÊU ĐỀ chuẩn hóa** (vì URL không ổn định). Đường đọc trang: AI phải CHỌN link từ danh sách anchor bóc sẵn từ HTML (`extractPageLinks`) thay vì tự viết URL.
 
-### 3b. Đúng giờ hẹn (`run_at`) — chính xác tới phút
-- **Vấn đề:** cron 15' → bản tin 8:00 nổ lệch 0-15'; lượt 8:00 dính hết quota → mất nguyên ngày.
-- **Giải quyết:** 3 lớp — (1) **tick mỗi phút** bắt mốc hẹn trong cửa sổ [mốc, +10'); (2) **catch-up 4 tiếng**: lỡ mốc (quota/lỗi) thì các lượt cron sau thử lại tới khi thành công ("bắn muộn còn hơn nuốt"); (3) **claim nguyên tử** (UPDATE có điều kiện trên `last_run_at`): tick và cron chính chạy chồng cũng chỉ 1 lượt được bắn — không đúp.
+### 2b. Nội dung thông báo
+- **Đã thử: tóm tắt từ mô tả feed** → user chê "thông báo sơ sài" (mô tả feed chỉ 1-2 câu, mục Phân tích trống trơn).
+- **Hiện tại: `enrichFromArticle`** — chọn bài xong thì fetch **bài gốc**, để flash-lite viết bản tin đầy đủ (content 4-6 câu + details phân tích + ai_summary) từ TEXT THẬT của bài. Best-effort: bài chặn bot/AI lỗi → giữ bản tóm tắt ngắn như cũ, không được làm hỏng thông báo. Prompt toàn hệ có 2 quy tắc cứng: số liệu đổi phải ghi "từ [cũ] → [mới]" (không nói chênh chung chung); đơn vị ưu tiên kiểu Việt Nam, số ngoại tệ kèm quy đổi trong ngoặc.
+- **Trang danh sách (trending, top...):** đã thử để AI tóm chung chung → user chê "chỉ liệt kê tên, không biết dự án để làm gì" → siết quy tắc prompt: mỗi mục BẮT BUỘC 1 câu tiếng Việt giải thích nó là gì/dùng làm gì, dịch từ mô tả trên trang, trang không ghi thì chú "(trang không mô tả)" — cấm bịa.
 
-### 3c. Chống thông báo trùng / rác
-- **Vấn đề:** Gemini hay trả lại đúng bài nổi nhất hôm qua; báo sửa tít nhẹ; trang trending giữ nguyên top nhiều ngày → user nhận hoài 1 tin.
-- **Giải quyết:** nhiều lớp — dedup **tiêu đề chuẩn hóa + link chuẩn hóa** (bỏ utm_/fbclid, www, trailing slash); prompt kèm **danh sách bài đã gửi** bảo AI né (cả đường search lẫn đường đọc URL); rule đặt giờ mà nội dung y cũ → gửi **"Chưa có thay đổi mới"** trỏ về thông báo trước thay vì lặp nguyên văn; chế độ **"Chỉ báo tin quan trọng"** lọc filler; filler không push (chỉ xem trong app); **giờ yên lặng** chặn push theo khung giờ user đặt.
-
-### 3d. Sống chung với quota AI ít ỏi
-- **Vấn đề:** free tier flash-lite còn ~20 lượt/ngày; quota cạn là cả hệ tê liệt.
-- **Giải quyết:** router nguồn rẻ-trước (§2); **fallback đa bucket model**; **hash-gate**: trang web y nguyên lần trước (vân tay FNV-1a) → 0 call AI; cache RSS theo category trong 1 lượt quét; `isAiFreeRule` — kẹt quota giữa lượt thì rule 0-AI vẫn chạy tiếp; `usage_logs` + màn Admin đếm theo model; push cảnh báo admin khi chạm ~80% trần.
-
-### 3e. Theo dõi trang web bất kỳ theo URL (kể cả trang cần đăng nhập)
-- **Vấn đề:** nguồn người dùng muốn theo dõi không có API; trang MXH chặn bot; trang cần login.
-- **Giải quyết:** fetch trang → ưu tiên **feed trang tự khai báo** (RSS/Atom — link bài chuẩn, dedup ổn) → không có thì AI đọc text đã strip HTML + **chọn đúng link bài** từ danh sách anchor; `normalizeWatchUrl` quy đổi link quen tay sang link đọc được (t.me→/s/, reddit→.rss, YouTube channel→feed XML); trang đòi login (401/403 hoặc AI phát hiện) → thông báo 🔒 hướng dẫn dán Cookie, lưu ở `watch_auth`; **chặn SSRF** (cấm IP nội bộ/metadata) vì run-monitor chạy service_role.
-
-### 3f. Nhắc hẹn ("nhắc tôi 10 phút nữa tắt máy giặt")
-- **Giải quyết:** rule `source_type='reminder'` + `remind_at` (AI tự quy đổi giờ tương đối từ thời điểm hiện tại) — 0 AI khi bắn, tick mỗi phút đảm bảo đúng phút, bắn xong tự tắt và gom vào mục "Nhắc hẹn đã xong".
-
-### 3g. Mở app nhanh, chuyển tab mượt
-- **Vấn đề:** mở app trắng màn chờ mạng; chuyển tab lần đầu đứng vài giây.
-- **Giải quyết:** giữ splash tới khi auth sẵn sàng; **prefetch** dữ liệu MỌI tab ngay khi có session vào **cache 2 tầng RAM + AsyncStorage** (`lib/prefetch.ts`, `lib/screenCache.ts`) — màn nào mở cũng vẽ được ngay khung hình đầu, mạng về sau thay bản mới (stale-while-revalidate); danh sách dài **ảo hóa bằng FlatList** (chỉ vẽ ~10 dòng quanh khung nhìn thay vì 100 card Swipeable một lượt).
-
-### 3h. Bảo mật & phân quyền
-- **Giải quyết:** RLS trên mọi bảng dữ liệu người dùng; run-monitor phân biệt **service_role (cron, quét tất cả)** với **JWT user (chỉ quét rule của chính mình — userId lấy TỪ token, không tin body)**; key AI chỉ nằm server; anon key là khóa công khai đúng thiết kế; admin nhận diện qua `ADMIN_EMAILS` secret.
-
-### 3i. Vận hành & tự giám sát
-- **Giải quyết:** `cron_runs` ghi từng lượt quét (bao nhiêu rule, mấy tin, có kẹt quota, chạy bao lâu); `rules.last_error` + watchdog SQL push admin khi quét nền chết >50'; deploy function nào cũng **probe boot** ngay (`npm run fn:deploy`); thứ tự deploy web/OTA cố định (eas update → expo export web → eas deploy) tránh web 404; ngân sách 70s/lượt quét + ưu tiên tầng (nhắc hẹn → ghim giờ → định kỳ) để deadline không nuốt bản tin đúng hẹn.
+### 2c. Router nguồn dữ liệu — vì sao không phải cái gì cũng hỏi Gemini
+- **Đã thử: mọi rule đều đi Gemini + Google Search grounding.** Chết vì 2 thứ: quota grounding free bị siết (cron toàn "quét 0 ⚠️"), và số liệu (thời tiết/giá) AI trả không đảm bảo chính xác.
+- **Hiện tại: chọn đường RẺ nhất trước, grounding là phương án CUỐI**, phân loại bằng heuristic từ keyword ngay lúc quét (rule cũ tự hưởng, không cần migration):
+  1. **Nhắc hẹn** → 0 AI, chỉ lịch + push.
+  2. **Thời tiết** → Open-Meteo · **Giá coin** → CoinGecko · **Tỷ giá** → open.er-api.com — API thật, free, không cần key, 0 quota. Bản tin dựng bằng template thuần (test được bằng jest). Rule có điều kiện tự do ("khi giá vượt X") → flash-lite chấm ĐÚNG/SAI trên **số thật từ API** (không grounding).
+  3. **URL cụ thể** → fetch trang (xem mục 5).
+  4. **Tin tức** → RSS báo VN (VnExpress, Tuổi Trẻ, CafeF...) + flash-lite CHỌN bài liên quan — không grounding.
+  5. **Còn lại** → Gemini + grounding.
+  Provider lỗi → tự rơi xuống đường search, không chết im.
 
 ---
 
-## 4. Những lựa chọn đã CÂN NHẮC RỒI BỎ (để khỏi bàn lại)
+## 3. LỊCH QUÉT & QUOTA — nhiều vòng thử-sai nhất dự án
+
+### 3a. Ai là người bấm giờ quét?
+- **Đã thử: app quét khi mở** (mỗi lần user vào Home là gọi AI). Bỏ: 2 nơi cùng quét (app + cron) = thông báo TRÙNG + đốt quota gấp đôi.
+- **Hiện tại: cron là bộ lập lịch DUY NHẤT.** App mở lên chỉ ĐỌC tin đã có; kéo-refresh mới quét tay và có throttle 5 phút chống bấm dồn. pg_cron + pg_net gọi thẳng Edge Function — không cần server nào bật.
+
+### 3b. Mỗi lượt cron quét bao nhiêu rule?
+- **Đã thử: quét hết mọi rule mỗi 15 phút.** Đốt quota vô tội vạ — rule "hằng ngày" cũng bị quét 96 lần/ngày.
+- **Đã thử: lịch per-rule (`last_run_at` + tần suất, hàm `isDue`) + trần cứng `MAX_RULES_PER_RUN=8`**, rồi hạ xuống **4** khi quota bị siết (2026-06-20). Vấn đề lộ dần: trần cứng làm rule **bị bỏ đói oan** — đến hạn rồi vẫn phải chờ vì lượt này "đủ 4 đứa rồi".
+- **Hiện tại (2026-06-30): bỏ trần cứng.** Pre-filter `isDue` rồi quét hết danh sách tới hạn; `isDue` chính là quota gate tự nhiên (rule 1 tiếng tối đa 24 call/ngày); **deadline 70 giây/lượt** làm lưới an toàn (quá thì dừng, trả phần đã làm, lượt sau quét tiếp — tránh nền tảng kill tiến trình).
+
+### 3c. Nhiều rule cùng tới hạn — quét đứa nào trước?
+- **Đã thử: sắp ở SQL theo `last_run_at` tăng dần** ("lâu chưa quét thì quét trước"). Sai bản chất: bỏ qua chu kỳ riêng từng rule — rule 30 phút trễ 10 phút bị xếp sau rule hằng tuần "lâu chưa quét".
+- **Đã thử: sắp theo `dueAt = last_run_at + chu kỳ`** ("giờ đáng lẽ phải báo"). Đúng hơn, nhưng lộ bug tinh vi (2026-07-04, vụ "thời tiết 8h báo lúc 10h"): rule ghim giờ hôm trước bắn muộn (sự cố nền) → `last+24h` đẩy nó xuống CUỐI hàng đợi đúng 8h sáng hôm sau, xếp sau cả đống rule tồn đọng.
+- **Hiện tại: 2 tầng.** `scanTier` trước (0 = nhắc hẹn — nhạy giờ nhất, 0 AI; 1 = rule GHIM GIỜ — lịch user chủ động đặt; 2 = định kỳ trơn — trễ vài lượt không ai để ý), trong cùng tầng mới so `dueAt`; riêng rule ghim giờ đang trong khung bắn thì `dueAt` = MỐC HẸN hôm nay chứ không phải last+chu kỳ. Kèm bài học code nhỏ: không dùng `.filter(isDue)` trực tiếp vì `isDue(rule, nowMs?)` sẽ nhận INDEX mảng làm `nowMs` (bug kinh điển kiểu `parseInt` trong map).
+
+### 3d. Rule ghim giờ (`run_at`) — từ "lệch 15 phút" đến "đúng phút"
+- **V1: khung bắn [giờ hẹn, giờ hẹn+15').** Khớp nhịp cron 15' — nhưng lượt cron đúng giờ mà dính 429 quota (sáng quota hay cạn) hoặc bị deadline 70s cắt là `diff ≥ 15` → **MẤT NGUYÊN NGÀY**. Đây chính là bug "rule 8h mấy hôm liền không báo" (2026-07-02).
+- **Đã thử thêm: quét SỚM [target-15, target+15)** để "bắn sát giờ kể cả cron lỡ nhịp" — về sau bỏ hướng bắn sớm (gửi trước giờ hẹn là sai với lịch hẹn; nhắc hẹn từng bắn TRƯỚC giờ vì logic kiểu này).
+- **V2 (2026-07-02): catch-up 4 tiếng.** Khung [mốc, mốc+4h) — lỡ lượt nào thử lại lượt cron sau tới khi quét THÀNH CÔNG ("bắn muộn còn hơn nuốt"); chống bắn lặp bằng so `last_run_at` với MỐC HẸN gần nhất; guard chu kỳ trừ hao 5h để hôm-qua-bắn-muộn không làm trượt mốc đúng giờ hôm nay. Đồng thời chốt triết lý: **rule đặt giờ là LỊCH HẸN, không phải bộ lọc** — chế độ "chỉ tin quan trọng" không áp, không có tin mới vẫn giao bản tin fallback đúng hẹn.
+- **V3 (2026-07-04): tick mỗi phút.** Cron phụ `reminder-tick` (vốn cho nhắc hẹn) mở rộng thành tick chung: câu SQL cực rẻ chạy mỗi phút, CÓ rule vừa tới mốc mới gọi HTTP → bản tin 8:00 nổ 8:00±1' thay vì lệch theo nhịp 15'. Tick chạy CHỒNG cron chính → chống bắn đúp bằng **CLAIM nguyên tử** (UPDATE có điều kiện trên `last_run_at` — Postgres đảm bảo chỉ 1 lượt nhận được row); lỗi quota SAU khi claim → trả lại `last_run_at` cũ để khung catch-up còn cứu được hôm đó.
+- **Ghi chú vận hành:** 8h sáng VN là lúc quota cạn nhất (quota reset 0h Pacific = **14h VN**, cron nền đốt từ chiều hôm trước) → rule sáng cần AI thi thoảng vẫn về muộn trong khung catch-up (đã chứng kiến 10:30). Đó là **thiết kế**, không phải bug; muốn đúng tuyệt đối thì đặt giờ sau 14h hoặc trả phí.
+
+### 3e. Nhắc hẹn — vì sao thành loại rule riêng
+- **Đã thử: coi nhắc hẹn như rule định kỳ.** Vỡ 3 chỗ: giới hạn "tối thiểu 30 phút" chặn "nhắc tôi 5 phút nữa"; cron 15' làm nhắc trễ tới 15 phút; và từng **bắn 2 lần + bắn trước giờ** khi nhiều lượt run-monitor chạy chồng (cron chính + tick + quét khi mở app).
+- **Hiện tại:** `source_type='reminder'` + `remind_at` (timestamptz, AI tự quy đổi giờ tương đối "10 phút nữa" từ thời điểm hiện tại được bơm vào đầu prompt); tick mỗi phút bắn đúng phút; claim nguyên tử chống đúp; bắn xong **tự xóa rule nhưng GIỮ thông báo** — mà muốn vậy phải làm migration 0021 cho `notifications.user_id` (xem mục 6b).
+
+### 3f. Tiết kiệm quota thêm
+- **Hash-gate (2026-07-04):** trang web y nguyên lần trước (vân tay FNV-1a trên text đã gọn khoảng trắng, lưu `rules.last_content_hash`) → skip 0 call AI. Không áp cho quét tay và rule ghim giờ.
+- **Cache RSS theo category trong 1 lượt run** — 5 rule tin tức cùng loại chỉ fetch bộ feed 1 lần (cache cả kết quả hỏng để khỏi thử lại n lần).
+- **`isAiFreeRule`:** kẹt quota giữa lượt thì chỉ bỏ các rule cần AI, rule 0-AI (nhắc hẹn, thời tiết/giá không điều kiện) vẫn quét tiếp. Trước đây `break` cả lượt → bản tin 8h 0-AI cũng "chết chùm" chỉ vì đứng sau 1 rule tin tức hết quota.
+- **Cảnh báo chủ động:** vượt ~80% trần grounding → push cho admin, mỗi ngày 1 lần.
+
+---
+
+## 4. CHỐNG THÔNG BÁO TRÙNG & RÁC — 7 lần vá mới "êm"
+
+1. **Dedup theo URL** (đầu tiên) → vỡ khi URL grounding đổi mỗi lần gọi → **chuyển sang tiêu đề chuẩn hóa** (lowercase, gọn khoảng trắng).
+2. **Chủ đề số liệu bị chặn oan:** trang giá vàng URL đứng yên mãi → dedup chặn vĩnh viễn → thêm **`last_value`**: cùng tiêu đề/URL nhưng số liệu ĐỔI thì vẫn báo (migration 0008). Rồi vá tiếp chiều ngược lại: chưa có mốc cũ thì KHÔNG tự nhận "đã đổi" (hết báo lặp mỗi phiên).
+3. **Vòng lặp chết filler (2026-07-02):** Gemini luôn trả đúng 1 bài nổi nhất → trùng tiêu đề đã gửi → bị chặn mãi → user toàn nhận "chưa có thay đổi". Sửa gốc: đưa **~8 tiêu đề bài THẬT đã gửi vào prompt** (`avoidTitles`) bảo Gemini né, chỉ nhắc lại nếu số liệu trong bài đã đổi; lọc filler ra khỏi danh sách này kẻo phí chỗ prompt (`isFillerTitle`).
+4. **Filler không push (2026-07-01):** tin trạng thái ("chưa có thay đổi"/"chưa tìm thấy") gần như vô giá trị để rung máy → chỉ lưu trong app; đã thử gắn theo `notify_mode` lúc tạo rule nhưng rule CŨ vẫn `all` → sửa GỐC ở `insertNotif` (tham số `push=false` cho mọi filler), trừ rule đặt giờ (bản tin đúng hẹn user chủ động yêu cầu — vẫn push).
+5. **Chế độ "Chỉ báo tin quan trọng"** per-rule (migration 0015) + banner gợi ý bật hàng loạt cho rule cũ dễ ồn + nút **"Soi bộ lọc"** trên trang test: chạy 1 lượt Gemini thật rồi cho xem CẢ 2 chế độ sẽ quyết định gì — để tin vào bộ lọc thay vì đoán.
+6. **Dedup 2 lớp tiêu đề + LINK chuẩn hóa (2026-07-04):** báo sửa tít nhẹ nhưng cùng link vẫn bị bắt (`normLink`: bỏ utm_*/fbclid/fragment/www/trailing-slash, sort query).
+7. **Rule đặt giờ gửi trùng nhiều ngày (2026-07-10, mới nhất):** rule ghim giờ cố tình BỎ QUA dedup ("luôn giao đúng hẹn") → trang trending giữ nguyên top vài ngày → AI viết y một tiêu đề → lặp nguyên văn mỗi sáng. Sửa 2 lớp: đường đọc-trang cũng nhận `avoidTitles` (có tin mới → nêu điểm MỚI + title khác; y cũ → GIỮ title cũ, cấm diễn đạt lại để lách dedup); nội dung trùng thật → gửi **"Chưa có thay đổi mới"** trỏ `related_notification_id` về thông báo thật gần nhất thay vì bản sao.
+
+Cộng thêm: **Giờ yên lặng** (bảng `user_settings`, server bỏ qua push trong khung user đặt, xử lý vắt nửa đêm), **"Để êm"** per-rule (cột `muted` — vẫn lưu tin, không push), fallback "chưa có thay đổi" **link về thông báo trước** trong app (cột `related_notification_id`, migration 0009 — vì không có URL bài mới để trỏ).
+
+---
+
+## 5. THEO DÕI TRANG WEB THEO URL — khảo sát thật từng nguồn
+
+### 5a. Đọc trang thế nào?
+- **Nền tảng:** `_shared/webwatch.ts` fetch với UA trình duyệt + timeout 15s; strip HTML bằng regex (đủ cho AI đọc text, không cần DOM chuẩn); **chặn SSRF** (cấm localhost/IP private/metadata — run-monitor chạy service_role, tuyệt đối không được fetch hộ vào mạng nội bộ theo URL người dùng đưa).
+- **Đã thử: cho AI đọc thẳng HTML-đã-strip của mọi trang.** Vấn đề: thông báo trỏ về trang chủ thay vì bài cụ thể; trang tin tức dedup kém.
+- **Hiện tại: ưu tiên FEED trước.** Trang tự khai báo RSS/Atom trong `<head>` (đa số trang tin, WordPress, GitHub) → đọc feed: tiêu đề + link bài CHUẨN. Không có feed → AI đọc text kèm **danh sách link bài bóc từ anchor** để CHỌN đúng bài (anchor text ≥20 ký tự mới tính là tiêu đề bài — lọc menu/nút).
+
+### 5b. Mạng xã hội — khảo sát bằng fetch thật (2026-07-03), quyết định theo dữ liệu
+| Nguồn | Kết quả thử | Quyết định |
+|---|---|---|
+| Telegram `t.me/kênh` | Chỉ card giới thiệu; bản `t.me/s/kênh` mới có nội dung | ✅ tự quy đổi sang `/s/` |
+| Reddit | HTML mới là SPA không khai feed; thêm `/.rss` là có feed chuẩn | ✅ tự quy đổi `.rss` |
+| YouTube kênh | Trang `/@tên` chặn bot; `feeds/videos.xml?channel_id=UC…` mở tự do | ✅ quy đổi (chỉ dạng `/channel/UC…`) |
+| Bluesky, Mastodon, Substack | Có RSS chính chủ | ✅ dùng feed |
+| **Facebook** | Trả **vỏ rỗng 1.5KB** cho bot, JS render + chống bot, cookie không cứu | ❌ BỎ — từ chối khéo + gợi ý nguồn thay thế |
+| **X/Twitter** | Từ 2/2026 đọc phải trả phí API pay-per-use | ❌ BỎ (làm sau nếu user cần) |
+| Instagram/TikTok | Chặn bot tương tự FB | ❌ BỎ |
+
+Tất cả quy đổi nằm trong `normalizeWatchUrl` — người dùng dán link nào quen tay cũng chạy. Tầng trên nữa là "**BẢN ĐỒ NGUỒN**" trong generate-rule: "dự án nổi bật GitHub mỗi sáng" tự dựng `github.com/trending` — người dùng khỏi biết link kỹ thuật.
+
+### 5c. Trang cần đăng nhập
+- **Đã thử: WebView đăng-nhập-1-chạm** (màn `grant-login`, gom `document.cookie`) — chạy được Expo Go nhưng **cookie HttpOnly không lấy được** qua JS, web thì không có WebView → vẫn giữ làm đường phụ.
+- **Hiện tại:** trang trả 401/403 (hoặc AI phát hiện nội dung bị che sau form login) → thông báo 🔒 hướng dẫn dán Cookie từ DevTools vào chi tiết rule (`watch_auth` — nhận cả dạng header từng dòng lẫn chuỗi cookie trần). Từng bị **"hỏi quyền oan"** (trang công khai có nút "Đăng nhập" trên menu làm AI nhận nhầm) → chốt chặn: trang có >6000 ký tự text đọc được thì gần như chắc là trang công khai, không hỏi.
+
+---
+
+## 6. BACKEND SUPABASE — những cú vấp có tên riêng
+
+### 6a. Vì sao Supabase (thay vì tự dựng server)
+Một người làm, cần: Postgres + Auth + phân quyền + serverless function + cron + secret — Supabase cho đủ trong free tier, không phải nuôi VPS. RLS làm "user chỉ thấy dữ liệu của mình" thành ràng buộc Ở TẦNG DATABASE (client có bug cũng không đọc trộm được). Phân quyền run-monitor: cron gửi service_role = quét tất cả; app gửi JWT user = chỉ quét rule CỦA MÌNH, userId lấy **từ token** chứ không tin body (anon key là công khai, không thể tin request tự xưng).
+
+### 6b. Quan hệ notifications ↔ rules — 3 phiên bản
+- **V1: xóa rule phải tự xóa notifications con thủ công** (ở cả admin-api lẫn client) — dễ sót, dính lỗi FK 23503.
+- **V2 (migration 0014): `ON DELETE CASCADE`** — sạch code workaround. Nhưng lộ vấn đề mới với nhắc hẹn: nhắc xong muốn XÓA rule mà GIỮ thông báo → cascade kéo thông báo chết theo.
+- **V3 (migration 0021): `notifications.user_id`** — thông báo có chủ sở hữu TRỰC TIẾP, "sống sót" khi rule bị xóa (detach: set user_id, rule_id=null rồi mới xóa rule); RLS thêm nhánh user_id; client lọc theo user_id (helper `lib/notifQuery.ts` tự fallback qua rule_id nếu migration chưa chạy).
+
+### 6c. Cron gọi Edge Function — vụ 401 mất nhiều ngày nhất
+- **Sự cố 1 (2026-06-20):** cron 401 `UNAUTHORIZED_INVALID_JWT_FORMAT`. Nguyên nhân: project dùng API key kiểu MỚI (`sb_secret_...`) — **không phải JWT** — trong khi Edge Function (verify_jwt) đòi JWT.
+- **Sự cố 2 (2026-07-03):** user chạy lại mọi migration → file cũ dính placeholder `<SERVICE_ROLE_KEY>` + file tick dán nhầm ANON key → cron chết im nhiều ngày ("thời tiết im từ hôm qua").
+- **Chốt quy tắc (0019_fix_cron_keys.sql):** cron PHẢI dùng **legacy service_role JWT** (dạng `eyJ...`, payload có `"role":"service_role"`); debug bằng `net._http_response` (không phải `cron.job_run_details`); mọi file migration có key đều ghi chú to đùng cách lấy key đúng. Kèm bài học phụ: user dán key vào chat/ảnh chụp → phải rotate.
+- **Tự giám sát để không "chết im" lần nữa (migration 0020):** cột `rules.last_error` (lỗi quét hiện ngay trong chi tiết rule), bảng `cron_runs` (mỗi lượt: quét mấy rule, ra mấy tin, có kẹt quota, chạy bao lâu), **watchdog thuần SQL** push cho admin khi quét nền chết >50 phút.
+
+---
+
+## 7. FRONTEND — React Native + Expo và các cú sập có thật
+
+### 7a. Vì sao Expo/React Native
+1 codebase chạy Android + iOS + Web; Expo Go thử trên máy thật qua QR không cần Android Studio; **EAS Update (OTA)**: sửa JS xong đẩy thẳng tới máy người dùng không cần phát hành lại APK — với dự án 1 người sửa nhiều lần mỗi ngày, OTA là tính năng "sống còn". Đổi lại phải tôn trọng kỷ luật: **mọi thay đổi test cả web LẪN Expo Go** — vì các cú sập dưới đây đều chỉ hiện ở MỘT nền:
+
+| Sự cố (thật) | Nguyên nhân | Cách giải hiện tại |
+|---|---|---|
+| Crash/màn trắng Expo Go, web vẫn chạy (06-19) | Reanimated 4 nhưng babel còn plugin cũ `react-native-reanimated/plugin` → worklet không biên dịch | Đổi `react-native-worklets/plugin`, bọc app bằng `GestureHandlerRootView` |
+| Web sập màn tạo rule sau khi thêm giọng nói (07-05) | `import expo-audio` trên web — `AudioRecorderWeb extends globalThis.expo.SharedObject` nổ NGAY LÚC IMPORT | **Tách file theo nền tảng** `voiceInput.web.ts` / `voiceInput.ts` + file types chung — `Platform.OS` check KHÔNG đủ vì import đã nổ trước khi check chạy |
+| Điện thoại (binary cũ) vẫn sập dù đã lazy-require + try/catch (07-06) | OTA chỉ thay JS — binary cũ KHÔNG có native module `ExpoAudio`; metro `guardedLoadModule` ném lỗi ngoài tầm try/catch | Chấp nhận ranh giới OTA: thêm native module là phải build binary mới; JS phải dò module tồn tại trước khi đụng |
+| Bàn phím che ô nhập Android (06-20) | Edge-to-edge Android không tự resize, `KeyboardAvoidingView behavior=undefined` | `behavior="padding"` cho cả 2 nền |
+| Web export `output:"static"` crash | SSR đụng AsyncStorage lúc render tĩnh | Chốt `web.output = "single"` (SPA 1 file) — BẮT BUỘC, đã ghi memory |
+| `Alert.alert` không hiện trên web | RN Web không có Alert native | `lib/dialog.ts`: `alertMessage()`/`confirmAsync()` dùng chung 2 nền |
+
+### 7b. Tốc độ mở app & chuyển màn — 4 đợt tối ưu (mỗi đợt do user than thật)
+- **Đợt 1 (07-03, "mở app load lại mọi thứ lâu"):** trước đó KHÔNG có cache — mọi màn chờ mạng xong mới vẽ. Thêm `lib/screenCache.ts` (AsyncStorage, kiểu **stale-while-revalidate**: vẽ ngay dữ liệu cũ, mạng về thay bản mới), query nối đuôi → chạy song song `Promise.all`, thông báo chỉ lấy 100 dòng gần nhất thay vì toàn bộ lịch sử.
+- **Đợt 2 (07-07, "delay mọi thứ khi mới mở"):** giữ splash native tới khi auth sẵn sàng (`preventAutoHideAsync`) — hết chớp màn trắng; preload font icon (trần chờ 3s — không để font mạng chậm giam app); `getSession` timeout 6s (không kẹt màn chờ vì refresh token treo).
+- **Đợt 3 (07-07, ảnh chụp "vào tab Alerts vẫn chờ tải"):** cache đĩa là async nên khung hình đầu vẫn trống → nâng cache thành **2 tầng RAM + đĩa** (`getMemCache` đọc ĐỒNG BỘ, dùng thẳng trong `useState` initializer) + **`lib/prefetch.ts`**: có session là kéo đĩa→RAM + 4 query mạng song song đổ sẵn vào đúng khóa cache của MỌI tab — bấm sang tab nào dữ liệu cũng hiện ngay khung hình đầu.
+- **Đợt 4 (07-10, "chuyển trang lần đầu lag vài giây"):** thủ phạm còn lại là RENDER — 2 màn vẽ 100 card `ReanimatedSwipeable` một lượt trong ScrollView+map (đợt 3 vô tình làm nặng thêm: cache RAM đầy nên khung hình đầu render đủ 100 item). → **FlatList ảo hóa** (initialNumToRender=8, chỉ vẽ ~10 dòng quanh khung nhìn). Kèm bug hồi quy đã vá: ScrollView ngang (chips lọc) đứng cạnh FlatList bị bóp dẹp → khóa height + flexShrink:0.
+
+### 7c. Tự cập nhật phiên bản
+- **Web:** `lib/webAutoUpdate.ts` — định kỳ 60s + khi quay lại tab, fetch `index.html` no-store, so chữ ký file js/css băm; khác = vừa deploy → reload. (Lần kiểm đầu lùi 10s để không tranh tài nguyên lúc mở app.)
+- **Native:** `lib/nativeAutoUpdate.ts` — `checkForUpdateAsync → fetchUpdateAsync → reload` khi mở app (expo-updates, runtimeVersion policy appVersion).
+- **Bẫy thứ tự deploy (đã dính, đã ghi memory):** `eas update` GHI ĐÈ `dist/` → phải `expo export -p web` LẠI trước `eas deploy`, không thì web 404. Thứ tự chuẩn: **OTA → export web → deploy web**.
+
+### 7d. Push notification
+Expo Push API: 1 endpoint lo cả FCM + APNs, không phải viết native. Hạ tầng Android: Firebase project + `google-services.json` (khóa CLIENT công khai theo thiết kế — commit được; `fcm-service-account.json` thì gitignore tuyệt đối). Token chết (user gỡ app) → Expo trả `DeviceNotRegistered` → server tự xóa khỏi `push_tokens`. Chạm push mở đúng màn chi tiết thông báo (`notificationId` trong data).
+
+### 7e. Giọng nói (2 đường vì 2 nền khác hẳn nhau)
+- **Web:** Web Speech API của trình duyệt — chữ hiện dần theo lời nói, 0 quota (Firefox không hỗ trợ thì ẩn nút).
+- **Mobile:** Web Speech không có → `expo-audio` ghi âm → Edge Function `transcribe` (JWT bắt buộc) → Gemini chép lời (gemini.ts nhận `audio` inline_data). Chuỗi sự cố import của tính năng này chính là nguồn của quy tắc "tách file .web.ts" ở bảng 7a.
+
+---
+
+## 8. CHẤT LƯỢNG & VẬN HÀNH
+
+### 8a. Test
+- **Đã có lúc: 8/9 suite CRASH** (thiếu mock AsyncStorage/expo-font/safe-area) — bộ test tồn tại mà vô dụng. Hồi sinh 2026-06-24: mock chuẩn trong `__tests__/setup.ts`, các test lệch UI viết lại. Hiện **11 suite / 140 test pass**.
+- **Nguyên tắc ăn tiền nhất:** logic thuần của server (lịch quét `isDue/dueAt/isTickDue`, chống trùng, chọn tin, parse feed...) tách vào `_shared/monitorLogic.ts` **không import Deno API** → jest (Node) test được ĐÚNG code chạy thật trên server, không phải bản chép lại.
+- **Kiểm thử hệ AI bằng kịch bản thật:** `scripts/scenario-test.mjs` — 23 kịch bản 7 nhóm (số liệu, tin tức, phải-hỏi-lại, nhắc hẹn, bản đồ nguồn, URL, từ chối khéo) gọi generate-rule THẬT, kết quả chấm trong KICH_BAN_TEST.md. Chính bộ này lôi ra 2 bug server nặng (mục 8b) và các case "hỏi thừa".
+
+### 8b. Deploy Edge Function — vì sao phải có "probe"
+- **Sự cố nền tảng (2026-07-08):** `gemini.ts` khai báo `const parts` 2 lần = SyntaxError. tsc/jest **không phủ code Deno** → lọt mọi kiểm tra, deploy "thành công", function **SẬP LÚC BOOT** — mà function cũ vẫn chạy bundle cũ nên lỗi ẩn: transcribe chết âm thầm 3 NGÀY không ai biết.
+- **Hiện tại:** `scripts/deploy-functions.mjs` gộp **deploy + probe** làm một: gọi thử TỪNG function bằng body RẺ (bị chặn ở validate/auth trước khi tốn quota), phân loại sập bằng field `code` của phản hồi nền tảng (BOOT_ERROR/WORKER_ERROR — code app không bao giờ dùng field `code`). Sửa `_shared/*` = deploy lại MỌI function dùng nó. Quy tắc đã ghi memory: deploy xong PHẢI probe ngay.
+
+### 8c. Trang admin & trang test
+Admin: quota theo từng model, user, log. Trang test (`/admin-test`): **dry-run kế hoạch quét** (rule nào tới hạn, thứ tự ưu tiên, còn chờ bao lâu — 0 quota; đây là NGUỒN DUY NHẤT của logic lịch, client không tính lại), "Soi bộ lọc" per-rule, kết quả quét dễ đọc (`notes[]`: real/nochange/related/none/skipped). Khi cần soi dữ liệu thật: `scripts/audit-sai-gio.sql` (5 khối SQL dán vào Supabase — thông báo lệch mấy phút so run_at, khung giờ nào kẹt quota, tick còn sống không...).
+
+### 8d. Bảo mật khi public repo (2026-07-08)
+Rà toàn bộ lịch sử git trước khi mở: `.env`/`fcm-service-account.json` chưa từng commit; đúng 1 chuỗi ANON key (khóa công khai) từng lọt vào 1 migration → vẫn **tẩy khỏi toàn bộ lịch sử bằng git-filter-repo** + force push (backup bundle trước). Bài học kèm theo: key thật chỉ được nằm ở Supabase secret/dashboard; migration commit lên git chỉ chứa placeholder.
+
+---
+
+## 9. NHỮNG PHƯƠNG ÁN ĐÃ CÂN NHẮC RỒI BỎ (tóm tắt để khỏi bàn lại)
 | Phương án | Vì sao bỏ |
 |---|---|
-| Ollama chạy local | Máy phải bật 24/7, không public được, model yếu |
-| Theo dõi Facebook/Instagram/TikTok/X | FB trả trang rỗng cho bot; X bắt trả phí API — từ chối khéo + gợi ý nguồn thay thế |
-| Digest bản tin sáng (gộp nhiều rule) | User chốt "không cần lắm" — backlog |
-| Quét ở client khi mở app | Trùng với cron, đốt quota gấp đôi — client chỉ đọc |
-| Cap cứng số rule mỗi lượt quét | `isDue` per-rule đã là quota gate tự nhiên; cap cứng làm rule trễ oan |
+| Ollama local | Máy phải bật 24/7, không public được, model yếu |
+| Gemini trả phí Tier 1 | Thẻ Visa ảo bị Google từ chối → thiết kế quanh free tier (hóa ra tốt hơn) |
+| App tự quét khi mở | Trùng với cron, đốt quota gấp đôi — client chỉ đọc |
+| Trần cứng MAX_RULES_PER_RUN | `isDue` per-rule là quota gate tự nhiên; trần cứng làm rule trễ oan |
+| Quét sớm trước giờ hẹn | Lịch hẹn mà gửi trước giờ là sai; nhắc hẹn từng bắn trước giờ vì logic này |
+| AI tự ghi source_url | Bịa URL — phải lấy link từ grounding metadata / feed / danh sách anchor |
+| Theo dõi Facebook/IG/TikTok/X | FB trả vỏ rỗng cho bot (đã fetch thử); X bắt trả phí API |
+| Đăng nhập 1-chạm WebView làm đường chính | Cookie HttpOnly không lấy được qua JS; web không có WebView — giữ làm đường phụ, chính vẫn là dán Cookie |
+| Digest bản tin sáng (gộp nhiều rule) | User chốt "không cần lắm" — nằm backlog |
+| Xóa notifications con thủ công khi xóa rule | FK CASCADE (0014) rồi user_id detach (0021) đúng bản chất hơn |
