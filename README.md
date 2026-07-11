@@ -50,6 +50,9 @@ Thiết lập phần server (Gemini secret, deploy function, bật cron): xem [s
 
 | File | Nội dung |
 |------|----------|
+| [ARCHITECTURE.md](ARCHITECTURE.md) | **English one-pager**: stack, how it works, design decisions born from real failures |
+| [CONG_NGHE.md](CONG_NGHE.md) | Công nghệ theo mạch tiến hóa: **đã thử → vì sao bỏ → vì sao chọn giải pháp hiện tại** |
+| [TINH_NANG.md](TINH_NANG.md) | Cách hoạt động + ví dụ cụ thể của từng tính năng |
 | [KE_HOACH.md](KE_HOACH.md) | Kế hoạch, tiến độ, backlog, **nhật ký + các lỗi đã gặp & cách giải quyết** |
 | [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) | Phân tích kiến trúc & trạng thái phát triển |
 | [supabase/SETUP_GEMINI.md](supabase/SETUP_GEMINI.md) | Các bước thủ công bật pipeline Gemini + cron |
