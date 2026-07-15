@@ -167,6 +167,29 @@ export function contentFingerprint(text: string): string {
   return `${h.toString(16)}:${s.length}`;
 }
 
+export interface NotificationDedupInput {
+  source_type?: string | null;
+  frequency?: string | null;
+  title: string;
+  content: string;
+  source: string;
+  source_url: string;
+}
+
+// Bài báo có URL thật: khóa ổn định vĩnh viễn theo URL. Provider/trang URL/fallback:
+// khóa theo chu kỳ + nội dung, đủ chặn hai lượt chạy chồng nhưng vẫn cho phép bản tin mới.
+export function notificationDedupKey(input: NotificationDedupInput, nowMs = Date.now()): string {
+  const link = normLink(input.source_url);
+  const provider = /coingecko|open-meteo|exchange.?rate|er-api|nhắc hẹn/i.test(input.source.trim());
+  const isArticle = (input.source_type == null || input.source_type === "" || input.source_type === "search") &&
+    !provider && !isFillerTitle(input.title) && Boolean(link);
+  if (isArticle) return `article:${contentFingerprint(link)}`;
+
+  const windowMs = Math.max(30 * 60000, intervalMs(input.frequency ?? undefined));
+  const bucket = Math.floor(nowMs / windowMs);
+  return `cycle:${bucket}:${contentFingerprint(`${normTitle(input.title)}|${input.content}`)}`;
+}
+
 // Query param chỉ để tracking — khác nhau giữa 2 lần đăng cùng 1 bài, phải bỏ khi so trùng.
 const TRACKING_PARAM = /^(utm_|fbclid$|gclid$|yclid$|mc_cid$|mc_eid$|ref$|ref_src$|spm$|share_.*)/i;
 
@@ -190,6 +213,46 @@ export function normLink(url: string): string {
   const path = u.pathname.replace(/\/+$/, "");
   const q = keep.map(([k, v]) => `${k}=${v}`).join("&");
   return `${host}${path}${q ? `?${q}` : ""}`;
+}
+
+function sourceWords(value: string): string[] {
+  return value.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ").trim().split(/\s+/).filter((w) => w.length >= 4);
+}
+
+// Chọn URL grounding khớp đúng bài/nguồn thay vì luôn lấy phần tử đầu tiên.
+// Nhiều nguồn mà không đủ bằng chứng khớp → để trống an toàn hơn gắn sai bài.
+export function pickGroundedSourceUrl(
+  itemTitle: string,
+  sourceName: string,
+  claimedUrl: string,
+  sources: { title: string; uri: string }[],
+): string {
+  const validSources = sources.filter((s) => normLink(s.uri));
+  const wantedSource = sourceWords(sourceName);
+  const wantedTitle = new Set(sourceWords(itemTitle));
+  let best: { uri: string; score: number } | null = null;
+  for (const source of validSources) {
+    const words = sourceWords(source.title);
+    const joined = words.join(" ");
+    let score = words.filter((w) => wantedTitle.has(w)).length;
+    if (wantedSource.length && wantedSource.every((w) => joined.includes(w))) score += 5;
+    if (!best || score > best.score) best = { uri: source.uri, score };
+  }
+  if (best && best.score >= 2) return best.uri;
+  if (validSources.length === 1) return validSources[0].uri;
+
+  // URL model ghi chỉ được dùng khi hostname có thương hiệu trùng tên nguồn.
+  try {
+    const url = new URL(claimedUrl);
+    if (url.protocol === "http:" || url.protocol === "https:") {
+      const brand = sourceWords(url.hostname.replace(/^www\./, "").split(".")[0]);
+      if (brand.length && wantedSource.length && brand.some((w) => wantedSource.some((s) => s.includes(w) || w.includes(s)))) {
+        return url.toString();
+      }
+    }
+  } catch { /* URL model ghi không hợp lệ */ }
+  return "";
 }
 
 // Tiêu đề filler do hệ thống tự sinh (không phải bài báo) — loại khỏi danh sách
@@ -371,7 +434,9 @@ export function composeCryptoNotif(
     ai_summary: `${name} ${fmtNum(usd, digits)} USD${chgTxt}.`,
     source: "CoinGecko",
     source_url: `https://www.coingecko.com/en/coins/${coinId}`,
-    value: `${usd} USD`,
+    // Giữ giá ở đầu để significantChange vẫn so giá; kèm % 24h để điều kiện kiểu
+    // "giảm hơn 5% trong ngày" dùng đúng cửa sổ CoinGecko, không nhầm với lần quét trước.
+    value: `${usd} USD${chg24 == null ? "" : `; 24h ${chg24}%`}`,
   };
 }
 
@@ -410,20 +475,73 @@ export interface PickResult<T> {
 // ---------- THEO DÕI TRANG WEB CỤ THỂ (Pha E — phần thuần, test được) ----------
 
 // Chặn SSRF: run-monitor chạy với service_role nên TUYỆT ĐỐI không được fetch vào
-// mạng nội bộ/metadata theo URL người dùng đưa. Chặn hostname/IP private phổ biến.
-export function isPrivateHost(hostname: string): boolean {
-  const h = hostname.toLowerCase().replace(/^\[|\]$/g, ""); // bỏ ngoặc IPv6
-  if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local") || h.endsWith(".internal")) return true;
-  if (h === "::1" || h === "0.0.0.0" || h === "") return true;
-  const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (m) {
-    const [a, b] = [Number(m[1]), Number(m[2])];
-    if (a === 0 || a === 10 || a === 127) return true;
-    if (a === 169 && b === 254) return true;              // link-local / cloud metadata
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 192 && b === 168) return true;
+// mạng nội bộ/metadata theo URL người dùng đưa. Hàm này nhận cả hostname lẫn IP đã
+// phân giải DNS; webwatch.ts sẽ kiểm tra lại ở MỖI bước redirect.
+function ipv4Parts(hostname: string): number[] | null {
+  const m = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!m) return null;
+  const parts = m.slice(1).map(Number);
+  return parts.every((n) => Number.isInteger(n) && n >= 0 && n <= 255) ? parts : null;
+}
+
+function ipv6Parts(hostname: string): number[] | null {
+  let h = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (!h.includes(":")) return null;
+  if (h.includes("%")) return null; // zone id chỉ có ý nghĩa ở mạng cục bộ
+
+  const dotted = h.match(/(\d{1,3}(?:\.\d{1,3}){3})$/)?.[1];
+  if (dotted) {
+    const v4 = ipv4Parts(dotted);
+    if (!v4) return null;
+    h = `${h.slice(0, -dotted.length)}${((v4[0] << 8) | v4[1]).toString(16)}:${((v4[2] << 8) | v4[3]).toString(16)}`;
   }
-  if (/^(fc|fd|fe8|fe9|fea|feb)/.test(h.replace(/:/g, ""))) return true; // IPv6 ULA/link-local
+
+  if ((h.match(/::/g) ?? []).length > 1) return null;
+  const [leftRaw, rightRaw] = h.split("::");
+  const left = leftRaw ? leftRaw.split(":") : [];
+  const right = rightRaw ? rightRaw.split(":") : [];
+  const missing = 8 - left.length - right.length;
+  if ((!h.includes("::") && missing !== 0) || (h.includes("::") && missing < 1)) return null;
+  const groups = [...left, ...Array(Math.max(0, missing)).fill("0"), ...right];
+  if (groups.length !== 8 || groups.some((g) => !/^[0-9a-f]{1,4}$/.test(g))) return null;
+  return groups.map((g) => parseInt(g, 16));
+}
+
+function isPrivateIpv4(parts: number[]): boolean {
+  const [a, b] = parts;
+  if (a === 0 || a === 10 || a === 127) return true;
+  if (a === 100 && b >= 64 && b <= 127) return true;       // carrier-grade NAT
+  if (a === 169 && b === 254) return true;                  // link-local / cloud metadata
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && (b === 0 || b === 168)) return true;
+  if (a === 192 && b === 88 && parts[2] === 99) return true;
+  if (a === 198 && (b === 18 || b === 19)) return true;     // benchmark networks
+  if (a === 192 && b === 0 && parts[2] === 2) return true;  // documentation networks
+  if (a === 198 && b === 51 && parts[2] === 100) return true;
+  if (a === 203 && b === 0 && parts[2] === 113) return true;
+  return a >= 224;                                          // multicast/reserved/broadcast
+}
+
+export function isPrivateHost(hostname: string): boolean {
+  const h = hostname.trim().toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+  if (!h || h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local") ||
+    h.endsWith(".internal") || h.endsWith(".home") || h.endsWith(".lan")) return true;
+
+  const v4 = ipv4Parts(h);
+  if (v4) return isPrivateIpv4(v4);
+
+  const v6 = ipv6Parts(h);
+  if (v6) {
+    // IPv4-mapped/compatible IPv6 (::ffff:127.0.0.1, ::127.0.0.1).
+    const mapped = v6.slice(0, 5).every((n) => n === 0) && v6[5] === 0xffff;
+    const compatible = v6.slice(0, 6).every((n) => n === 0);
+    if (mapped || compatible) {
+      return isPrivateIpv4([v6[6] >> 8, v6[6] & 255, v6[7] >> 8, v6[7] & 255]);
+    }
+    // Chỉ cho global-unicast 2000::/3. Loại thêm dải tài liệu 2001:db8::/32.
+    if ((v6[0] & 0xe000) !== 0x2000) return true;
+    if (v6[0] === 0x2001 && v6[1] === 0x0db8) return true;
+  }
   return false;
 }
 
@@ -432,6 +550,7 @@ export function isWatchableUrl(url: string): boolean {
   try {
     const u = new URL(url);
     if (u.protocol !== "http:" && u.protocol !== "https:") return false;
+    if (u.username || u.password) return false;
     return !isPrivateHost(u.hostname);
   } catch {
     return false;
@@ -449,7 +568,12 @@ export function parseWatchAuth(raw?: string | null): Record<string, string> {
     const s = line.trim();
     if (!s) continue;
     const m = s.match(/^([A-Za-z][A-Za-z0-9-]*)\s*:\s*(.+)$/);
-    if (m) out[m[1]] = m[2].trim();
+    if (m) {
+      const name = m[1];
+      // Không cho dữ liệu người dùng điều khiển routing/framing của request.
+      if (/^(host|connection|content-length|transfer-encoding|upgrade|proxy-authorization|forwarded|x-forwarded-.+)$/i.test(name)) continue;
+      out[name] = m[2].trim();
+    }
     else out["Cookie"] = out["Cookie"] ? `${out["Cookie"]}; ${s}` : s; // dòng trần = cookie
   }
   return out;

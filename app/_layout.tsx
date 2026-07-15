@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ActivityIndicator, Platform, View } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -24,7 +24,7 @@ import { StatusBar } from "expo-status-bar";
 import "react-native-reanimated";
 
 import { prefetchAppData } from "../lib/prefetch";
-import { registerForPush } from "../lib/push";
+import { registerForPush, unregisterForPush } from "../lib/push";
 import { startWebAutoUpdate } from "../lib/webAutoUpdate";
 import { runNativeAutoUpdate } from "../lib/nativeAutoUpdate";
 
@@ -59,6 +59,7 @@ function RootNavigator() {
   const { session, loading } = useAuth();
   const { isDark, colors } = useTheme();
   const pathname = usePathname();
+  const previousPushUserId = useRef<string | null>(null);
 
   // Nạp trước font icon Ionicons — hết cảnh chữ hiện trước, icon nhảy vào sau.
   const [fontsLoaded, fontError] = useFonts({ ...Ionicons.font });
@@ -117,7 +118,11 @@ function RootNavigator() {
     if (uid) {
       prefetchAppData(uid);
       registerForPush(uid);
+    } else if (previousPushUserId.current) {
+      // Bao phủ cả phiên hết hạn/đăng xuất từ nơi khác, không chỉ hai nút đăng xuất.
+      unregisterForPush().catch((err) => console.log("Push: cleanup khi mất session lỗi:", err));
     }
+    previousPushUserId.current = uid ?? null;
   }, [session?.user?.id]);
 
   // Chạm vào push → mở đúng thông báo.

@@ -40,19 +40,24 @@ export default function TabLayout() {
   const fetchBadges = async () => {
     // Đếm theo user_id (0021) — tính cả thông báo "mồ côi rule"; helper tự fallback
     // qua rule_id khi 0021 chưa chạy nên KHÔNG cần query rules trước ở đây nữa.
-    const [unread, rulesRes] = await Promise.all([
-      countNotificationsFor(user!.id, { unreadOnly: true }),
-      supabase
-        .from("rules")
-        .select("*", { count: "exact", head: true })
-        .eq("user_id", user!.id)
-        .eq("is_active", true),
-    ]);
-    badgeNetDone.current = true;
-    const active = rulesRes.count ?? 0;
-    setUnreadCount(unread);
-    setActiveRulesCount(active);
-    saveCache(badgesCacheKey(user!.id), { unread, active });
+    try {
+      const [unread, rulesRes] = await Promise.all([
+        countNotificationsFor(user!.id, { unreadOnly: true }),
+        supabase
+          .from("rules")
+          .select("*", { count: "exact", head: true })
+          .eq("user_id", user!.id)
+          .eq("is_active", true),
+      ]);
+      if (rulesRes.error) throw new Error(rulesRes.error.message);
+      badgeNetDone.current = true;
+      const active = rulesRes.count ?? 0;
+      setUnreadCount(unread);
+      setActiveRulesCount(active);
+      saveCache(badgesCacheKey(user!.id), { unread, active });
+    } catch (error) {
+      console.log("Không thể làm mới badge, giữ cache cũ:", error);
+    }
   };
 
   return (

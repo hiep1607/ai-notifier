@@ -9,12 +9,14 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders, json } from "../_shared/cors.ts";
 import { CHEAP_FALLBACK, geminiGenerate } from "../_shared/gemini.ts";
+import { enforceRateLimits } from "../_shared/rateLimit.ts";
 
 // ~4MB base64 ≈ 3MB audio ≈ 5-6 phút AAC 64kbps — mô tả rule bằng miệng thì quá đủ.
 const MAX_AUDIO_BASE64 = 4_000_000;
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
   try {
     const supabase = createClient(
       Deno.env.get("SUPABASE_URL")!,
@@ -25,6 +27,21 @@ Deno.serve(async (req) => {
     if (!token) return json({ error: "Cần đăng nhập để dùng nhập liệu giọng nói." }, 401);
     const { data: u, error: uErr } = await supabase.auth.getUser(token);
     if (uErr || !u?.user) return json({ error: "Phiên đăng nhập không hợp lệ." }, 401);
+
+    const rate = await enforceRateLimits(
+      supabase,
+      u.user.id,
+      "transcribe",
+      { limit: 8, seconds: 600 },
+      30,
+    );
+    if (!rate.allowed) {
+      return json(
+        { error: "Bạn đã dùng nhập liệu giọng nói quá nhiều lần. Vui lòng thử lại sau.", retry_after: rate.retryAfterSeconds },
+        429,
+        { "Retry-After": String(rate.retryAfterSeconds) },
+      );
+    }
 
     const body = await req.json().catch(() => ({}));
     const audio = String(body?.audio ?? "");

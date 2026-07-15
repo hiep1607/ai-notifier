@@ -26,7 +26,9 @@ import {
   dueAt,
   scanTier,
   contentFingerprint,
+  notificationDedupKey,
   normLink,
+  pickGroundedSourceUrl,
   vnHourNow,
   isQuietNow,
   normTitle,
@@ -48,8 +50,9 @@ import {
   type ProviderNotif,
 } from "../_shared/monitorLogic.ts";
 import { fetchWeatherNotif, fetchCryptoNotif, fetchFxNotif } from "../_shared/providers.ts";
-import { fetchWatchPage, type WatchPage } from "../_shared/webwatch.ts";
+import { fetchPublicResource, fetchWatchPage, type WatchPage } from "../_shared/webwatch.ts";
 import { feedsForCategory, parseRss, mergeRssItems, sourceFromLink, type RssItem } from "../_shared/rss.ts";
+import { enforceRateLimits } from "../_shared/rateLimit.ts";
 
 // Lỗi hết quota / quá tải tạm thời từ Gemini → nên DỪNG sớm thay vì đốt thêm request.
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -175,8 +178,25 @@ function toBool(v: unknown): boolean {
   return s === "true" || s === "yes" || s === "high" || s === "1";
 }
 
-function isUrl(s: unknown): boolean {
-  return typeof s === "string" && /^https?:\/\//i.test(s);
+interface UserPushSettings {
+  quiet_enabled?: boolean;
+  quiet_start?: number;
+  quiet_end?: number;
+  notifications_enabled?: boolean;
+  sound_enabled?: boolean;
+  vibration_enabled?: boolean;
+  ai_summary_enabled?: boolean;
+  important_alerts_enabled?: boolean;
+}
+
+// deno-lint-ignore no-explicit-any
+async function loadUserPushSettings(supabase: any, userId: string | undefined): Promise<UserPushSettings> {
+  if (!userId) return {};
+  const { data, error } = await supabase.from("user_settings").select(
+    "quiet_enabled,quiet_start,quiet_end,notifications_enabled,sound_enabled,vibration_enabled,ai_summary_enabled,important_alerts_enabled",
+  ).eq("user_id", userId).maybeSingle();
+  if (error) console.log("Đọc user_settings lỗi:", error.message);
+  return data ?? {};
 }
 
 // Gửi push qua Expo Push API tới mọi thiết bị của user (nếu có token).
@@ -187,16 +207,14 @@ async function sendPush(
   title: string,
   body: string,
   notificationId: string,
+  important: boolean,
+  settings: UserPushSettings,
 ) {
   if (!userId) return;
 
-  // Giờ yên lặng: trong khung người dùng đặt → KHÔNG đẩy push (thông báo vẫn đã lưu, xem trong app).
-  const { data: settings } = await supabase
-    .from("user_settings")
-    .select("quiet_enabled, quiet_start, quiet_end")
-    .eq("user_id", userId)
-    .maybeSingle();
-  if (settings?.quiet_enabled && isQuietNow(settings.quiet_start, settings.quiet_end, vnHourNow())) return;
+  if (settings.notifications_enabled === false) return;
+  if (important && settings.important_alerts_enabled === false) return;
+  if (settings.quiet_enabled && isQuietNow(settings.quiet_start ?? 22, settings.quiet_end ?? 7, vnHourNow())) return;
 
   const { data: toks } = await supabase
     .from("push_tokens")
@@ -207,7 +225,10 @@ async function sendPush(
 
   const messages = tokens.map((to: string) => ({
     to,
-    sound: "default",
+    sound: settings.sound_enabled === false ? null : "default",
+    channelId: settings.sound_enabled === false
+      ? settings.vibration_enabled ? "ai-notifier-vibrate" : "ai-notifier-silent"
+      : settings.vibration_enabled ? "ai-notifier-all" : "ai-notifier-sound",
     title: title.slice(0, 150) || "Tin mới",
     body: body.slice(0, 300),
     data: { notificationId },
@@ -270,6 +291,7 @@ interface NotifFields {
 // deno-lint-ignore no-explicit-any
 async function insertNotif(supabase: any, rule: Rule, f: NotifFields, push = true): Promise<number> {
   const title = (f.title || "Tin mới").slice(0, 300);
+  const settings = await loadUserPushSettings(supabase, rule.user_id);
   // deno-lint-ignore no-explicit-any
   const row: Record<string, any> = {
     rule_id: rule.id,
@@ -277,27 +299,49 @@ async function insertNotif(supabase: any, rule: Rule, f: NotifFields, push = tru
     title,
     content: f.content ?? "",
     details: f.details ?? "",
-    ai_summary: f.ai_summary ?? "",
+    ai_summary: settings.ai_summary_enabled === false ? "" : f.ai_summary ?? "",
     source: f.source || "Web",
     source_url: f.source_url ?? "",
     category: rule.category ?? "news",
     sentiment: f.sentiment || "neutral",
     is_important: Boolean(f.is_important),
     is_read: false,
+    dedup_key: notificationDedupKey({
+      source_type: rule.source_type,
+      frequency: rule.frequency,
+      title,
+      content: f.content ?? "",
+      source: f.source || "Web",
+      source_url: f.source_url ?? "",
+    }),
   };
   // Chỉ set khi có (tránh tham chiếu cột nếu migration 0009 chưa chạy).
   if (f.related_notification_id) row.related_notification_id = f.related_notification_id;
   let { data: ins, error } = await supabase.from("notifications")
     .insert([row]).select("id").single();
+  if (error?.code === "23505") return 0; // invocation khác đã chèn cùng bản tin
   if (error) {
-    // Cột user_id chưa có (0021 chưa chạy) → ghi lại không kèm, tuyệt đối không mất thông báo.
+    // Tương thích schema cũ trong lúc rolling deploy; chỉ retry khi PostgREST báo cột mới.
+    if (error.code !== "42703" && error.code !== "PGRST204") {
+      console.error("Insert notification lỗi:", error.message);
+      return 0;
+    }
     delete row.user_id;
+    delete row.dedup_key;
     ({ data: ins, error } = await supabase.from("notifications").insert([row]).select("id").single());
   }
   if (error || !ins) return 0;
   // Rule "để êm" (muted) HOẶC filler (push=false): vẫn lưu để xem trong app, KHÔNG đẩy push.
   if (!rule.muted && push) {
-    await sendPush(supabase, rule.user_id, title, f.ai_summary || f.content || "", ins.id);
+    await sendPush(
+      supabase,
+      rule.user_id,
+      title,
+      settings.ai_summary_enabled === false ? f.content || "" : f.ai_summary || f.content || "",
+      ins.id,
+      Boolean(f.is_important),
+      settings,
+    );
   }
   return 1;
 }
@@ -394,7 +438,7 @@ async function evalConditionAI(supabase: any, rule: Rule, currentValue: string):
   try {
     const { text, model: usedModel } = await geminiGenerate({
       system: "Bạn đánh giá điều kiện số liệu. Chỉ trả JSON thuần, không giải thích.",
-      user: `Điều kiện người dùng: "${rule.condition}".\nGiá trị HIỆN TẠI (số liệu thật từ API): "${currentValue}".\nGiá trị lần trước: "${rule.last_value?.trim() || "chưa có"}".\nĐiều kiện đã THỎA chưa? Trả JSON: {"matches": true/false}`,
+      user: `Điều kiện người dùng: "${rule.condition}".\nGiá trị HIỆN TẠI (số liệu thật từ API): "${currentValue}".\nGiá trị lần quét trước: "${rule.last_value?.trim() || "chưa có"}".\nQuy tắc: nếu điều kiện nói "24h", "trong ngày" hoặc "hôm nay", PHẢI dùng trường biến động 24h trong giá trị hiện tại; KHÔNG tự tính từ lần quét trước. Chỉ so hiện tại với lần quét trước khi điều kiện nói rõ "so với lần trước"/"kể từ lần cập nhật".\nĐiều kiện đã THỎA chưa? Trả JSON: {"matches": true/false}`,
       json: true,
       temperature: 0,
       model: "gemini-2.5-flash-lite",
@@ -709,11 +753,12 @@ async function monitorUrlViaFeed(
 
   let items: RssItem[];
   try {
-    const res = await fetch(feedUrl, {
+    const res = await fetchPublicResource(feedUrl, {
       headers: { "Accept": "application/rss+xml, application/xml, text/xml" },
+      maxBytes: 1_000_000,
     });
-    if (!res.ok) return null;
-    items = parseRss(await res.text());
+    if (res.status < 200 || res.status >= 300) return null;
+    items = parseRss(res.body);
   } catch {
     return null;
   }
@@ -951,9 +996,12 @@ async function fetchRssItems(category?: string | null, cache?: RssCache): Promis
     if (feeds.length === 0) return null;
     const settled = await Promise.allSettled(
       feeds.map(async (u) => {
-        const res = await fetch(u, { headers: { "Accept": "application/rss+xml, application/xml, text/xml" } });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return parseRss(await res.text());
+        const res = await fetchPublicResource(u, {
+          headers: { "Accept": "application/rss+xml, application/xml, text/xml" },
+          maxBytes: 1_000_000,
+        });
+        if (res.status < 200 || res.status >= 300) throw new Error(`HTTP ${res.status}`);
+        return parseRss(res.body);
       }),
     );
     const lists = settled
@@ -1269,8 +1317,12 @@ async function monitorRule(supabase: any, rule: Rule, manual = false, rssCache?:
     const changeOk = !changeGate || toBool(top.changed);
     // Chế độ "chỉ tin quan trọng": tin phải ĐÁNG CHÚ Ý (is_important) hoặc thỏa điều kiện rule mới qua.
     const importantOk = !importantOnly || toBool(top.is_important) || (hasCond && toBool(top.matches_condition));
-    // Link: ưu tiên URL nguồn THẬT từ grounding (top.source_url do AI tự ghi, hay bị bịa/sai bài).
-    const url = pool.length > 0 ? pool[0].uri : (isUrl(top.source_url) ? top.source_url : "");
+    const url = pickGroundedSourceUrl(
+      String(top.title ?? ""),
+      String(top.source ?? ""),
+      String(top.source_url ?? ""),
+      pool,
+    );
 
     if (condOk && changeOk && fresh && importantOk) {
       inserted += await insertNotif(supabase, rule, {
@@ -1297,7 +1349,7 @@ async function monitorRule(supabase: any, rule: Rule, manual = false, rssCache?:
           details: String(top.details ?? ""),
           ai_summary: String(top.ai_summary ?? "Thông tin liên quan gần nhất."),
           source: String(top.source ?? "Web"),
-          source_url: pool.length > 0 ? pool[0].uri : (isUrl(top.source_url) ? top.source_url : ""),
+          source_url: url,
           sentiment: normSentiment(top.sentiment),
           is_important: false,
         }
@@ -1555,6 +1607,7 @@ async function previewGate(supabase: any, rule: Rule): Promise<GatePreview> {
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
   const startedAt = Date.now();
   try {
@@ -1584,6 +1637,28 @@ Deno.serve(async (req) => {
       ruleId?: string; userId?: string; dryRun?: boolean; gateCheck?: boolean;
       reminderOnly?: boolean; tick?: boolean;
     };
+
+    if (!isAdmin && authUserId) {
+      const rateConfig = ruleId
+        ? gateCheck
+          ? { bucket: "run-monitor:gate", short: { limit: 6, seconds: 600 }, daily: 40 }
+          : { bucket: "run-monitor:manual", short: { limit: 3, seconds: 300 }, daily: 30 }
+        : { bucket: "run-monitor:user", short: { limit: 2, seconds: 900 }, daily: 12 };
+      const rate = await enforceRateLimits(
+        supabase,
+        authUserId,
+        rateConfig.bucket,
+        rateConfig.short,
+        rateConfig.daily,
+      );
+      if (!rate.allowed) {
+        return json(
+          { error: "Bạn đang yêu cầu quét quá nhanh. Vui lòng thử lại sau.", retry_after: rate.retryAfterSeconds },
+          429,
+          { "Retry-After": String(rate.retryAfterSeconds) },
+        );
+      }
+    }
 
     // manual = bấm "Kiểm tra tin ngay" cho 1 rule → bỏ qua lịch, quét luôn.
     const manual = Boolean(ruleId);

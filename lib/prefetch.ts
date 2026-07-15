@@ -5,7 +5,11 @@
 // Best-effort: lỗi mạng thì im lặng, từng màn vẫn tự fetch khi mở như cũ.
 
 import { supabase } from "./supabase";
-import { countNotificationsFor, fetchNotificationsFor } from "./notifQuery";
+import {
+  countNotificationsFor,
+  fetchNotificationsFor,
+  NOTIFICATIONS_PAGE_SIZE,
+} from "./notifQuery";
 import { loadCache, saveCache } from "./screenCache";
 import { Rule } from "../types/Rule";
 import { Notification } from "../types/Notification";
@@ -21,6 +25,7 @@ export interface HomeCache {
 export interface NotifsCache {
   nameMap: Record<string, string>;
   notifs: Notification[];
+  unreadCount?: number;
 }
 export interface RulesCache {
   rules: Rule[];
@@ -52,13 +57,15 @@ export async function prefetchAppData(userId: string): Promise<void> {
 
   // (2) Mạng → cache: 4 truy vấn SONG SONG, đủ dữ liệu cho cả 3 màn + badge.
   try {
-    const [rulesRes, notifs, unread, unreadRowsRes] = await Promise.all([
+    const [rulesRes, notifs, total, importantCount, unread, unreadRowsRes] = await Promise.all([
       supabase
         .from("rules")
         .select("*")
         .eq("user_id", userId)
         .order("created_at", { ascending: true }),
-      fetchNotificationsFor(userId, { limit: 100 }),
+      fetchNotificationsFor(userId, { limit: NOTIFICATIONS_PAGE_SIZE }),
+      countNotificationsFor(userId),
+      countNotificationsFor(userId, { importantOnly: true }),
       countNotificationsFor(userId, { unreadOnly: true }),
       supabase
         .from("notifications")
@@ -72,8 +79,8 @@ export async function prefetchAppData(userId: string): Promise<void> {
     const important = notifs.filter((n) => n.is_important);
     saveCache(homeCacheKey(userId), {
       rules,
-      notificationsCount: notifs.length,
-      importantCount: important.length,
+      notificationsCount: total,
+      importantCount,
       latestImportant: important[0] ?? null,
       latestNotif: notifs[0] ?? null,
     } satisfies HomeCache);
@@ -82,7 +89,7 @@ export async function prefetchAppData(userId: string): Promise<void> {
     rules.forEach((r) => {
       nameMap[r.id] = r.title || r.keyword || "Rule";
     });
-    saveCache(notifsCacheKey(userId), { nameMap, notifs } satisfies NotifsCache);
+    saveCache(notifsCacheKey(userId), { nameMap, notifs, unreadCount: unread } satisfies NotifsCache);
 
     // Thiếu cột user_id (0021 chưa chạy) → đếm tạm từ 100 tin gần nhất, màn Rules
     // tự sửa lại khi mở (nó có fallback đếm theo rule_id đầy đủ).

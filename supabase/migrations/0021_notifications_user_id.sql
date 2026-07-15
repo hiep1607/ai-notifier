@@ -35,6 +35,9 @@ create policy "notifications_update" on notifications
   for update using (
     user_id = auth.uid()
     or rule_id in (select id from rules where user_id = auth.uid())
+  ) with check (
+    user_id = auth.uid()
+    or rule_id in (select id from rules where user_id = auth.uid())
   );
 
 drop policy if exists "notifications_delete" on notifications;

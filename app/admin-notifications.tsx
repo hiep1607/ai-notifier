@@ -43,17 +43,27 @@ export default function AdminNotificationsScreen() {
   const [items, setItems] = useState<AdminNotification[]>([]);
   const [sentiment, setSentiment] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
 
-  const load = useCallback(async (sent: string) => {
+  const load = useCallback(async (sent: string, nextPage = 1) => {
+    if (nextPage > 1) setLoadingMore(true);
     try {
       setError(null);
-      const res = await adminCall<{ notifications: AdminNotification[] }>("notifications", sent ? { sentiment: sent } : {});
-      setItems(res.notifications ?? []);
+      const res = await adminCall<{ notifications: AdminNotification[]; hasMore: boolean }>(
+        "notifications",
+        { ...(sent ? { sentiment: sent } : {}), page: nextPage, pageSize: 80 },
+      );
+      setItems((prev) => nextPage === 1 ? (res.notifications ?? []) : [...prev, ...(res.notifications ?? [])]);
+      setPage(nextPage);
+      setHasMore(Boolean(res.hasMore));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
       setRefreshing(false);
+      setLoadingMore(false);
     }
   }, []);
 
@@ -126,6 +136,19 @@ export default function AdminNotificationsScreen() {
         ))
       )}
       {!loading && items.length === 0 && !error && <Text style={styles.muted}>Không có thông báo.</Text>}
+      {!loading && !error && hasMore && (
+        <Pressable
+          style={[styles.loadMore, loadingMore && { opacity: 0.6 }]}
+          onPress={() => load(sentiment, page + 1)}
+          disabled={loadingMore}
+        >
+          {loadingMore ? (
+            <ActivityIndicator size="small" color={colors.primary} />
+          ) : (
+            <Text style={styles.loadMoreText}>Tải thêm</Text>
+          )}
+        </Pressable>
+      )}
     </ScrollView>
   );
 }
@@ -157,5 +180,7 @@ function createStyles(C: AppColors) {
     linkText: { color: C.primary, fontSize: 12, fontWeight: "600" },
     muted: { color: C.muted, fontSize: 14, textAlign: "center", paddingVertical: 20 },
     error: { color: C.danger, fontSize: 13.5, textAlign: "center", paddingVertical: 20 },
+    loadMore: { alignItems: "center", paddingVertical: 14, marginTop: 4 },
+    loadMoreText: { color: C.primary, fontSize: 14, fontWeight: "700" },
   });
 }

@@ -71,7 +71,7 @@ export interface AdminUser {
 
 export interface AdminNotification {
   id: string;
-  rule_id: string;
+  rule_id: string | null;
   keyword: string;
   email: string;
   title: string;

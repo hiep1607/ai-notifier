@@ -32,3 +32,10 @@ export function saveCache(key: string, value: unknown): void {
   mem.set(key, value);
   AsyncStorage.setItem(key, JSON.stringify(value)).catch(() => {});
 }
+
+export async function clearScreenCache(): Promise<void> {
+  mem.clear();
+  const keys = await AsyncStorage.getAllKeys();
+  const cacheKeys = keys.filter((key) => key.startsWith("@cache_"));
+  if (cacheKeys.length > 0) await AsyncStorage.multiRemove(cacheKeys);
+}

@@ -87,10 +87,18 @@ describe("Home Screen (index)", () => {
 
     rulesChain = createQueryChain(mockRules);
     notificationsChain = createQueryChain(mockNotifications);
+    let notificationQueryIndex = 0;
 
     mockFrom.mockImplementation((table: string) => {
       if (table === "rules") return rulesChain;
-      if (table === "notifications") return notificationsChain;
+      if (table === "notifications") {
+        notificationQueryIndex += 1;
+        // Home tạo 4 query notifications theo thứ tự: tin mới nhất, tin quan trọng
+        // mới nhất, tổng số, tổng quan trọng. Mock không tự lọc `.eq`, nên query thứ
+        // tư cần trả đúng tập important để kiểm tra count chính xác.
+        if (notificationQueryIndex % 4 === 0) return createQueryChain([mockNotifications[0]]);
+        return notificationsChain;
+      }
       return createQueryChain([]);
     });
   });

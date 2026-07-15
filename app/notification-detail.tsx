@@ -22,6 +22,7 @@ import { useTheme } from "../contexts/ThemeContext";
 import { Notification } from "../types/Notification";
 import { findCategory, findSentiment } from "../lib/ruleOptions";
 import { RADIUS, type AppColors } from "../lib/theme";
+import { alertMessage } from "../lib/dialog";
 
 export default function NotificationDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -50,20 +51,23 @@ export default function NotificationDetailScreen() {
   const fetchNotification = async () => {
     setLoading(true);
 
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("notifications")
       .select("*")
       .eq("id", id)
       .single();
 
-    if (data) {
+    if (error) {
+      alertMessage("Không thể tải thông báo", error.message);
+    } else if (data) {
       setNotification(data as Notification);
 
       if (!data.is_read) {
-        await supabase
+        const { error: readError } = await supabase
           .from("notifications")
           .update({ is_read: true })
           .eq("id", id);
+        if (readError) console.log("Không thể đánh dấu thông báo đã đọc:", readError);
       }
     }
 

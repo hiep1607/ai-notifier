@@ -189,15 +189,20 @@ export default function RulesScreen() {
     let unreadRows = unreadRes.data;
     if (unreadRes.error) {
       const ids = data.map((r) => r.id);
-      unreadRows = ids.length
-        ? (
-            await supabase
-              .from("notifications")
-              .select("rule_id")
-              .in("rule_id", ids)
-              .eq("is_read", false)
-          ).data
-        : [];
+      if (ids.length) {
+        const fallback = await supabase
+          .from("notifications")
+          .select("rule_id")
+          .in("rule_id", ids)
+          .eq("is_read", false);
+        if (fallback.error) {
+          console.log("Không thể tải số thông báo chưa đọc, giữ cache cũ:", fallback.error);
+          return;
+        }
+        unreadRows = fallback.data;
+      } else {
+        unreadRows = [];
+      }
     }
 
     const counts: Record<string, number> = {};
@@ -212,8 +217,16 @@ export default function RulesScreen() {
     const ok = await confirmAsync("Xóa rule", "Rule và tất cả thông báo liên quan sẽ bị xóa vĩnh viễn?");
     if (!ok) return;
     // Thông báo con tự xóa theo nhờ FK ON DELETE CASCADE (migration 0014).
-    await supabase.from("rules").delete().eq("id", id);
-    setRules((prev) => prev.filter((r) => r.id !== id));
+    const { error } = await supabase.from("rules").delete().eq("id", id);
+    if (error) {
+      alertMessage("Chưa xóa được", error.message);
+      return;
+    }
+    setRules((prev) => {
+      const next = prev.filter((r) => r.id !== id);
+      if (user) saveCache(rulesCacheKey(user.id), { rules: next, counts: unreadCounts });
+      return next;
+    });
   };
 
   // Dọn 1 lần mọi nhắc hẹn đã xong (kèm thông báo nhắc của chúng — cascade).
@@ -225,8 +238,16 @@ export default function RulesScreen() {
       `Xóa ${ids.length} nhắc hẹn đã nhắc xong (kèm thông báo nhắc của chúng)?`,
     );
     if (!ok) return;
-    await supabase.from("rules").delete().in("id", ids);
-    setRules((prev) => prev.filter((r) => !ids.includes(r.id)));
+    const { error } = await supabase.from("rules").delete().in("id", ids);
+    if (error) {
+      alertMessage("Chưa xóa được", error.message);
+      return;
+    }
+    setRules((prev) => {
+      const next = prev.filter((r) => !ids.includes(r.id));
+      if (user) saveCache(rulesCacheKey(user.id), { rules: next, counts: unreadCounts });
+      return next;
+    });
   };
 
   const renderRightActions = (id: string) => (
@@ -297,18 +318,33 @@ export default function RulesScreen() {
       alertMessage("Chưa bật được", "Cần chạy migration 0015 (cột notify_mode) trong Supabase trước.");
       return;
     }
-    setRules((prev) =>
-      prev.map((r) => (ids.includes(r.id) ? { ...r, notify_mode: "important" } : r))
-    );
+    setRules((prev) => {
+      const next = prev.map((r) =>
+        ids.includes(r.id) ? { ...r, notify_mode: "important" as const } : r
+      );
+      if (user) saveCache(rulesCacheKey(user.id), { rules: next, counts: unreadCounts });
+      return next;
+    });
     alertMessage("Đã bật", `${ids.length} rule chuyển sang "Chỉ báo tin quan trọng" — hết filler, chỉ còn tin đáng chú ý. Đổi lại được trong chi tiết từng rule.`);
   };
 
   const toggleRule = async (item: Rule) => {
     const newValue = !item.is_active;
-    setRules((prev) =>
-      prev.map((rule) => (rule.id === item.id ? { ...rule, is_active: newValue } : rule))
-    );
-    await supabase.from("rules").update({ is_active: newValue }).eq("id", item.id);
+    const applyValue = (value: boolean) => {
+      setRules((prev) => {
+        const next = prev.map((rule) =>
+          rule.id === item.id ? { ...rule, is_active: value } : rule
+        );
+        if (user) saveCache(rulesCacheKey(user.id), { rules: next, counts: unreadCounts });
+        return next;
+      });
+    };
+    applyValue(newValue);
+    const { error } = await supabase.from("rules").update({ is_active: newValue }).eq("id", item.id);
+    if (error) {
+      applyValue(item.is_active);
+      alertMessage("Chưa cập nhật được", error.message);
+    }
   };
 
   // 1 card rule cho FlatList (ảo hóa — chỉ những card trong khung nhìn mới được dựng).

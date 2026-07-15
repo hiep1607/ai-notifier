@@ -20,7 +20,11 @@ import { useFocusEffect } from "@react-navigation/native";
 import ReanimatedSwipeable from "react-native-gesture-handler/ReanimatedSwipeable";
 
 import { supabase } from "../../lib/supabase";
-import { fetchNotificationsFor } from "../../lib/notifQuery";
+import {
+  countNotificationsFor,
+  fetchNotificationsFor,
+  NOTIFICATIONS_PAGE_SIZE,
+} from "../../lib/notifQuery";
 import { getMemCache, loadCache, saveCache } from "../../lib/screenCache";
 import { notifsCacheKey, type NotifsCache } from "../../lib/prefetch";
 import { useAuth } from "../../contexts/AuthContext";
@@ -29,6 +33,7 @@ import { Notification } from "../../types/Notification";
 import { SCREEN, RADIUS, type AppColors } from "../../lib/theme";
 import IconBadge from "../../components/IconBadge";
 import FilterTabs from "../../components/FilterTabs";
+import { alertMessage } from "../../lib/dialog";
 
 const TABS = [
   { key: "all", label: "Tất cả" },
@@ -48,6 +53,7 @@ export default function NotificationsScreen() {
   const initialCache = user ? getMemCache<NotifsCache>(notifsCacheKey(user.id)) : null;
   const [notifications, setNotifications] = useState<Notification[]>(initialCache?.notifs ?? []);
   const [ruleNames, setRuleNames] = useState<Record<string, string>>(initialCache?.nameMap ?? {});
+  const [unreadCount, setUnreadCount] = useState(initialCache?.unreadCount ?? 0);
   // Chưa từng có dữ liệu (cache trống + mạng chưa về) → hiện vòng xoay thay vì
   // câu "Chưa có thông báo" gây hiểu lầm.
   const [firstLoadDone, setFirstLoadDone] = useState(Boolean(initialCache));
@@ -55,10 +61,13 @@ export default function NotificationsScreen() {
   const [searchMode, setSearchMode] = useState(false);
   const [searchText, setSearchText] = useState("");
   const [aiSummaryEnabled, setAiSummaryEnabled] = useState(true);
+  const [hasMore, setHasMore] = useState((initialCache?.notifs.length ?? 0) >= NOTIFICATIONS_PAGE_SIZE);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await fetchNotifications();
+    await fetchNotifications(true);
     setRefreshing(false);
   };
 
@@ -72,14 +81,35 @@ export default function NotificationsScreen() {
           }
         }
       });
-      if (user) fetchNotifications();
+      if (user) fetchNotifications(true);
       // fetchNotifications chỉ đọc `user` (đã có trong deps) → không thêm vào deps để tránh tạo lại mỗi render.
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [user])
   );
 
-  const fetchNotifications = async () => {
+  const fetchNotifications = async (reset: boolean) => {
     if (!user) return;
+
+    if (!reset) {
+      if (loadingMore || !hasMore) return;
+      setLoadingMore(true);
+      try {
+        const more = await fetchNotificationsFor(user.id, {
+          limit: NOTIFICATIONS_PAGE_SIZE,
+          offset: notifications.length,
+        });
+        setNotifications((prev) => {
+          const known = new Set(prev.map((n) => n.id));
+          return [...prev, ...more.filter((n) => !known.has(n.id))];
+        });
+        setHasMore(more.length === NOTIFICATIONS_PAGE_SIZE);
+      } catch (error) {
+        alertMessage("Chưa tải thêm được", error instanceof Error ? error.message : String(error));
+      } finally {
+        setLoadingMore(false);
+      }
+      return;
+    }
 
     // (1) Lần vào đầu: vẽ NGAY từ cache lần trước — chạy SONG SONG với mạng
     // (trước đây chờ đọc cache xong mới gọi mạng); mạng về trước thì bỏ qua cache.
@@ -97,21 +127,32 @@ export default function NotificationsScreen() {
     // (2) Bản mới: 2 truy vấn SONG SONG; thông báo lọc theo user_id (0021 — thấy cả
     // "mồ côi rule", helper tự fallback rule_id) và chỉ lấy 100 dòng gần nhất
     // (trước đây tải TOÀN BỘ lịch sử nên vừa chậm mạng vừa chậm render).
-    const [rulesRes, notifs] = await Promise.all([
-      supabase.from("rules").select("id, title, keyword").eq("user_id", user.id),
-      fetchNotificationsFor(user.id, { limit: 100 }),
-    ]);
-    networkDone = true;
+    try {
+      const [rulesRes, notifs, unread] = await Promise.all([
+        supabase.from("rules").select("id, title, keyword").eq("user_id", user.id),
+        fetchNotificationsFor(user.id, { limit: NOTIFICATIONS_PAGE_SIZE }),
+        countNotificationsFor(user.id, { unreadOnly: true }),
+      ]);
+      if (rulesRes.error) throw new Error(rulesRes.error.message);
+      networkDone = true;
 
-    // Map rule_id → tên rule để gắn nhãn lên từng thông báo (nhìn là biết của rule nào).
-    const nameMap: Record<string, string> = {};
-    (rulesRes.data ?? []).forEach((r: { id: string; title?: string; keyword?: string }) => {
-      nameMap[r.id] = r.title || r.keyword || "Rule";
-    });
-    setRuleNames(nameMap);
-    setNotifications(notifs);
-    setFirstLoadDone(true);
-    saveCache(notifsCacheKey(user.id), { nameMap, notifs });
+      const nameMap: Record<string, string> = {};
+      (rulesRes.data ?? []).forEach((r: { id: string; title?: string; keyword?: string }) => {
+        nameMap[r.id] = r.title || r.keyword || "Rule";
+      });
+      setRuleNames(nameMap);
+      setNotifications(notifs);
+      setUnreadCount(unread);
+      setHasMore(notifs.length === NOTIFICATIONS_PAGE_SIZE);
+      setLoadError(null);
+      setFirstLoadDone(true);
+      saveCache(notifsCacheKey(user.id), { nameMap, notifs, unreadCount: unread });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setLoadError(message);
+      setFirstLoadDone(true);
+      console.log("Không thể làm mới thông báo, giữ cache cũ:", error);
+    }
   };
 
   const tabFiltered =
@@ -141,20 +182,41 @@ export default function NotificationsScreen() {
     setSearchText("");
   };
 
-  const unreadNotifications = notifications.filter((n) => !n.is_read);
-
   const handleMarkAllRead = async () => {
-    if (!unreadNotifications.length) return;
-    await supabase
+    if (!user || unreadCount === 0) return;
+    const { error } = await supabase
       .from("notifications")
       .update({ is_read: true })
-      .in("id", unreadNotifications.map((n) => n.id));
-    setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
+      .eq("user_id", user.id)
+      .eq("is_read", false);
+    if (error) {
+      alertMessage("Chưa đánh dấu được", error.message);
+      return;
+    }
+    const next = notifications.map((n) => ({ ...n, is_read: true }));
+    setNotifications(next);
+    setUnreadCount(0);
+    saveCache(notifsCacheKey(user.id), { nameMap: ruleNames, notifs: next, unreadCount: 0 });
   };
 
   const handleDelete = async (id: string) => {
-    await supabase.from("notifications").delete().eq("id", id);
-    setNotifications((prev) => prev.filter((n) => n.id !== id));
+    if (!user) return;
+    const removed = notifications.find((n) => n.id === id);
+    const { error } = await supabase.from("notifications").delete()
+      .eq("id", id).eq("user_id", user.id);
+    if (error) {
+      alertMessage("Chưa xóa được", error.message);
+      return;
+    }
+    const next = notifications.filter((n) => n.id !== id);
+    const nextUnread = removed && !removed.is_read ? Math.max(0, unreadCount - 1) : unreadCount;
+    setNotifications(next);
+    setUnreadCount(nextUnread);
+    saveCache(notifsCacheKey(user.id), {
+      nameMap: ruleNames,
+      notifs: next.slice(0, NOTIFICATIONS_PAGE_SIZE),
+      unreadCount: nextUnread,
+    });
   };
 
   const renderRightActions = (id: string) => (
@@ -285,7 +347,7 @@ export default function NotificationsScreen() {
           <>
             <Text style={styles.title}>Thông báo</Text>
             <View style={styles.headerActions}>
-              {unreadNotifications.length > 0 && (
+              {unreadCount > 0 && (
                 <TouchableOpacity onPress={handleMarkAllRead} style={styles.markAllBtn}>
                   <Ionicons name="checkmark-done-outline" size={18} color={colors.primary} />
                   <Text style={styles.markAllText}>Đọc hết</Text>
@@ -349,6 +411,8 @@ export default function NotificationsScreen() {
         initialNumToRender={8}
         maxToRenderPerBatch={10}
         windowSize={7}
+        onEndReached={() => fetchNotifications(false)}
+        onEndReachedThreshold={0.4}
         refreshControl={
           <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
         }
@@ -358,6 +422,14 @@ export default function NotificationsScreen() {
             <View style={styles.empty}>
               <ActivityIndicator size="large" color={colors.primary} />
               <Text style={styles.emptyText}>Đang tải thông báo...</Text>
+            </View>
+          ) : loadError && notifications.length === 0 ? (
+            <View style={styles.empty}>
+              <Ionicons name="cloud-offline-outline" size={48} color={colors.muted} />
+              <Text style={styles.emptyText}>Không thể tải thông báo</Text>
+              <TouchableOpacity style={styles.emptyButton} onPress={() => fetchNotifications(true)}>
+                <Text style={styles.emptyButtonText}>Thử lại</Text>
+              </TouchableOpacity>
             </View>
           ) : (
             <View style={styles.empty}>
@@ -377,6 +449,9 @@ export default function NotificationsScreen() {
               )}
             </View>
           )
+        }
+        ListFooterComponent={
+          loadingMore ? <ActivityIndicator style={{ paddingVertical: 18 }} color={colors.primary} /> : null
         }
       />
     </View>

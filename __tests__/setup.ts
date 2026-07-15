@@ -88,5 +88,13 @@ jest.mock(
   () => require("@react-native-async-storage/async-storage/jest/async-storage-mock")
 );
 
+// Swipeable phụ thuộc worklet/UI thread thật; Jest chỉ cần kiểm tra nội dung và
+// hành động trong card. Mock wrapper tránh cảnh báo "mixed worklet callbacks"
+// giả do môi trường test không chạy Reanimated UI runtime.
+jest.mock("react-native-gesture-handler/ReanimatedSwipeable", () => {
+  const React = require("react");
+  return ({ children }: { children: unknown }) => React.createElement(React.Fragment, null, children);
+});
+
 // Silence console.log in tests (remove if you want to see logs)
 global.console.log = jest.fn();

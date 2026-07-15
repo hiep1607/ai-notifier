@@ -6,7 +6,7 @@ export const createQueryChain = (
   data: any = [],
   error: any = null
 ) => {
-  const result = { data, error };
+  const result = { data, error, count: Array.isArray(data) ? data.length : null };
 
   const chain: any = {
     select: jest.fn(),
@@ -15,6 +15,7 @@ export const createQueryChain = (
     in: jest.fn(),
     order: jest.fn(),
     limit: jest.fn(),
+    range: jest.fn(),
     update: jest.fn(),
     filter: jest.fn(),
     single: jest
@@ -40,6 +41,7 @@ export const createQueryChain = (
     "in",
     "order",
     "limit",
+    "range",
     "update",
     "filter",
   ].forEach((method) => {

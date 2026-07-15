@@ -119,10 +119,14 @@ export default function RuleDetailScreen() {
     const newValue = !rule.is_active;
     setRule({ ...rule, is_active: newValue });
 
-    await supabase
+    const { error } = await supabase
       .from("rules")
       .update({ is_active: newValue })
       .eq("id", rule.id);
+    if (error) {
+      setRule(rule);
+      alertMessage("Chưa cập nhật được", error.message);
+    }
   };
 
   // "Để êm": rule vẫn chạy & vẫn nhận thông báo trong app, chỉ KHÔNG đẩy push về máy.
@@ -195,7 +199,12 @@ export default function RuleDetailScreen() {
   const denyWatchAuth = async () => {
     if (!rule) return;
     setRule({ ...rule, is_active: false });
-    await supabase.from("rules").update({ is_active: false }).eq("id", rule.id);
+    const { error } = await supabase.from("rules").update({ is_active: false }).eq("id", rule.id);
+    if (error) {
+      setRule(rule);
+      alertMessage("Chưa tạm dừng được", error.message);
+      return;
+    }
     alertMessage(
       "Đã tạm dừng rule",
       "Rule sẽ không theo dõi trang này nữa và bạn sẽ không bị nhắc cấp quyền. Muốn theo dõi lại, bật công tắc của rule bất cứ lúc nào."

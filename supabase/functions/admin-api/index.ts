@@ -36,6 +36,30 @@ function pacificDay(ms: number): string {
   }).format(new Date(ms));
 }
 
+async function listAllUsers(supabase: any): Promise<any[]> {
+  const all: any[] = [];
+  const perPage = 1000;
+  for (let page = 1; ; page++) {
+    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage });
+    if (error) throw error;
+    const batch = data?.users ?? [];
+    all.push(...batch);
+    if (batch.length < perPage) return all;
+  }
+}
+
+async function fetchAllRows(factory: () => any): Promise<any[]> {
+  const all: any[] = [];
+  const pageSize = 1000;
+  for (let from = 0; ; from += pageSize) {
+    const { data, error } = await factory().range(from, from + pageSize - 1);
+    if (error) throw error;
+    const batch = data ?? [];
+    all.push(...batch);
+    if (batch.length < pageSize) return all;
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
@@ -62,7 +86,7 @@ Deno.serve(async (req) => {
       const head = { count: "exact" as const, head: true };
       const [users, rulesTotal, rulesActive, rulesMuted, notifTotal, notifToday, tokens] =
         await Promise.all([
-          supabase.auth.admin.listUsers({ page: 1, perPage: 1000 }),
+          listAllUsers(supabase),
           supabase.from("rules").select("id", head),
           supabase.from("rules").select("id", head).eq("is_active", true),
           supabase.from("rules").select("id", head).eq("muted", true),
@@ -70,8 +94,11 @@ Deno.serve(async (req) => {
           supabase.from("notifications").select("id", head).gte("created_at", vnTodayStartIso()),
           supabase.from("push_tokens").select("id", head),
         ]);
+      const failed = [rulesTotal, rulesActive, rulesMuted, notifTotal, notifToday, tokens]
+        .find((result) => result.error);
+      if (failed?.error) return json({ error: failed.error.message }, 500);
       return json({
-        users: users.data?.users?.length ?? 0,
+        users: users.length,
         rulesTotal: rulesTotal.count ?? 0,
         rulesActive: rulesActive.count ?? 0,
         rulesMuted: rulesMuted.count ?? 0,
@@ -83,14 +110,14 @@ Deno.serve(async (req) => {
 
     // ===== RULES (toàn hệ thống) =====
     if (action === "rules") {
-      const { data: rules, error } = await supabase
-        .from("rules")
-        .select("id,user_id,keyword,category,frequency,condition,run_at,last_run_at,last_value,muted,is_active,created_at")
-        .order("last_run_at", { ascending: true, nullsFirst: true });
-      if (error) return json({ error: error.message }, 500);
-
-      const { data: usersList } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
-      const emailMap = new Map((usersList?.users ?? []).map((x) => [x.id, x.email ?? "?"]));
+      const [rules, usersList] = await Promise.all([
+        fetchAllRows(() => supabase
+          .from("rules")
+          .select("id,user_id,keyword,category,frequency,condition,run_at,last_run_at,last_value,muted,is_active,created_at")
+          .order("last_run_at", { ascending: true, nullsFirst: true })),
+        listAllUsers(supabase),
+      ]);
+      const emailMap = new Map(usersList.map((x) => [x.id, x.email ?? "?"]));
       const enriched = (rules ?? []).map((r) => ({ ...r, email: emailMap.get(r.user_id) ?? "?" }));
       return json({ rules: enriched });
     }
@@ -145,17 +172,18 @@ Deno.serve(async (req) => {
 
     // ===== USERS (danh sách + thống kê) =====
     if (action === "users") {
-      const { data: usersList } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
-      const users = usersList?.users ?? [];
-      const { data: rules } = await supabase.from("rules").select("id,user_id");
-      const { data: notifs } = await supabase.from("notifications").select("rule_id,created_at");
+      const [users, rules, notifs] = await Promise.all([
+        listAllUsers(supabase),
+        fetchAllRows(() => supabase.from("rules").select("id,user_id")),
+        fetchAllRows(() => supabase.from("notifications").select("user_id,rule_id,created_at")),
+      ]);
       const ruleToUser = new Map((rules ?? []).map((r) => [r.id, r.user_id]));
       const ruleCount = new Map<string, number>();
       for (const r of rules ?? []) ruleCount.set(r.user_id, (ruleCount.get(r.user_id) ?? 0) + 1);
       const notifCount = new Map<string, number>();
       const lastAct = new Map<string, string>();
       for (const n of notifs ?? []) {
-        const uid = ruleToUser.get(n.rule_id);
+        const uid = n.user_id ?? ruleToUser.get(n.rule_id);
         if (!uid) continue;
         notifCount.set(uid, (notifCount.get(uid) ?? 0) + 1);
         const prev = lastAct.get(uid);
@@ -178,16 +206,13 @@ Deno.serve(async (req) => {
       const userId = body.userId as string | undefined;
       if (!userId) return json({ error: "Thiếu userId." }, 400);
       const { data: ures } = await supabase.auth.admin.getUserById(userId);
-      const { data: rules } = await supabase.from("rules").select("*")
+      const { data: rules, error: rulesError } = await supabase.from("rules").select("*")
         .eq("user_id", userId).order("created_at", { ascending: true });
-      const ruleIds = (rules ?? []).map((r) => r.id);
-      let notifs: unknown[] = [];
-      if (ruleIds.length) {
-        const { data } = await supabase.from("notifications")
-          .select("id,rule_id,title,ai_summary,category,sentiment,created_at")
-          .in("rule_id", ruleIds).order("created_at", { ascending: false }).limit(30);
-        notifs = data ?? [];
-      }
+      if (rulesError) return json({ error: rulesError.message }, 500);
+      const { data: notifs, error: notifsError } = await supabase.from("notifications")
+        .select("id,rule_id,title,ai_summary,category,sentiment,created_at")
+        .eq("user_id", userId).order("created_at", { ascending: false }).limit(30);
+      if (notifsError) return json({ error: notifsError.message }, 500);
       const { data: tokens } = await supabase.from("push_tokens")
         .select("token,platform,created_at").eq("user_id", userId);
       const { data: settings } = await supabase.from("user_settings")
@@ -198,7 +223,7 @@ Deno.serve(async (req) => {
           ? { id: usr.id, email: usr.email, created_at: usr.created_at, last_sign_in_at: usr.last_sign_in_at }
           : null,
         rules: rules ?? [],
-        notifications: notifs,
+        notifications: notifs ?? [],
         tokens: tokens ?? [],
         settings: settings ?? null,
       });
@@ -208,25 +233,36 @@ Deno.serve(async (req) => {
     if (action === "notifications") {
       const category = body.category as string | undefined;
       const sentiment = body.sentiment as string | undefined;
+      const page = Math.max(1, Number(body.page) || 1);
+      const pageSize = Math.min(100, Math.max(1, Number(body.pageSize) || 80));
+      const from = (page - 1) * pageSize;
       let q = supabase.from("notifications")
-        .select("id,rule_id,title,ai_summary,source,source_url,category,sentiment,is_important,created_at")
-        .order("created_at", { ascending: false }).limit(80);
+        .select("id,user_id,rule_id,title,ai_summary,source,source_url,category,sentiment,is_important,created_at")
+        .order("created_at", { ascending: false }).range(from, from + pageSize);
       if (category) q = q.eq("category", category);
       if (sentiment) q = q.eq("sentiment", sentiment);
-      const { data: notifs } = await q;
+      const { data: notifs, error: notifError } = await q;
+      if (notifError) return json({ error: notifError.message }, 500);
       const ruleIds = [...new Set((notifs ?? []).map((n) => n.rule_id).filter(Boolean))];
       const ruleMap = new Map<string, { keyword: string; user_id: string }>();
       if (ruleIds.length) {
-        const { data: rules } = await supabase.from("rules").select("id,keyword,user_id").in("id", ruleIds);
+        const { data: rules, error: rulesError } = await supabase.from("rules")
+          .select("id,keyword,user_id").in("id", ruleIds);
+        if (rulesError) return json({ error: rulesError.message }, 500);
         for (const r of rules ?? []) ruleMap.set(r.id, { keyword: r.keyword, user_id: r.user_id });
       }
-      const { data: usersList } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
-      const emailMap = new Map((usersList?.users ?? []).map((x) => [x.id, x.email ?? "?"]));
+      const usersList = await listAllUsers(supabase);
+      const emailMap = new Map(usersList.map((x) => [x.id, x.email ?? "?"]));
       const enriched = (notifs ?? []).map((n) => {
         const r = ruleMap.get(n.rule_id);
-        return { ...n, keyword: r?.keyword ?? "?", email: r ? (emailMap.get(r.user_id) ?? "?") : "?" };
+        const ownerId = n.user_id ?? r?.user_id;
+        return {
+          ...n,
+          keyword: r?.keyword ?? "Thông báo hệ thống / rule đã xóa",
+          email: ownerId ? (emailMap.get(ownerId) ?? "?") : "?",
+        };
       });
-      return json({ notifications: enriched });
+      return json({ notifications: enriched.slice(0, pageSize), hasMore: enriched.length > pageSize });
     }
 
     // ===== USAGE (quota Gemini 7 ngày — đếm theo TỪNG MODEL, mỗi model 1 trần ngày riêng) =====

@@ -27,7 +27,7 @@ export interface FrequencyOption {
 }
 
 // frequency lưu dạng: "change" (theo điều kiện) HOẶC số phút (chuỗi) cho theo dõi định kỳ.
-// Định kỳ tối thiểu 30 phút; theo điều kiện hệ thống tự quét 15 phút (không hiện ra).
+// Định kỳ tối thiểu 30 phút; theo điều kiện hệ thống tự quét 60 phút (không hiện ra).
 // Các mốc dưới chỉ là gợi ý chọn nhanh khi chỉnh tay — vẫn nhận số phút bất kỳ ≥30.
 export const FREQUENCIES: FrequencyOption[] = [
   { key: "change", label: "Theo điều kiện" },
@@ -52,7 +52,7 @@ export function freqMinutes(freq?: string): number {
   return Number.isFinite(n) && n >= 30 ? n : 30;
 }
 
-// frequency → nhãn hiển thị thân thiện. Theo điều kiện KHÔNG lộ "15 phút".
+// frequency → nhãn hiển thị thân thiện. Theo điều kiện không lộ nhịp quét nội bộ.
 export function formatFrequency(freq?: string): string {
   if (freq === "change") return "Theo điều kiện";
   const m = freqMinutes(freq);

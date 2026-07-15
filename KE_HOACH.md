@@ -31,7 +31,7 @@ pg_cron (mỗi 15 phút) → run-monitor (quét nền, lọc rule tới hạn th
 - [x] Thông báo **theo điều kiện**: rule có `condition` chỉ báo khi bài thỏa.
 - [x] Thông báo **chi tiết hơn**: `content` đầy đủ + mục `details` (phân tích sâu).
 - [x] Mỗi lần quét 1 rule **chỉ 1 thông báo** (MAX_PER_RUN = 1).
-- [x] **Tần suất linh hoạt**: lưu số phút, tối thiểu 30 phút; "Theo điều kiện" quét 15 phút (ẩn).
+- [x] **Tần suất linh hoạt**: lưu số phút, tối thiểu 30 phút; "Theo điều kiện" quét 60 phút (ẩn, giãn quota).
 - [x] **Đặt giờ cụ thể** (`run_at`, giờ VN): vd "Hằng ngày lúc 08:00".
 - [x] Tạo rule **chặt chẽ**: thiếu info thì hỏi, yêu cầu vô lý thì giải thích.
 - [x] **Sắp xếp rule** theo thời gian tạo (cũ → mới) ở Home + Rules.

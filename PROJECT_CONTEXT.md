@@ -48,7 +48,7 @@
 | `auth.users` | Supabase built-in auth |
 
 **rules:** `id, user_id, title, description, keyword, category, sources, frequency, run_at, condition, is_active, last_run_at, last_value, created_at`
-- `frequency`: `"change"` (theo điều kiện, quét mỗi 15') HOẶC số phút (định kỳ, tối thiểu 30).
+- `frequency`: `"change"` (theo điều kiện, quét mỗi 60') HOẶC số phút (định kỳ, tối thiểu 30).
 - `run_at`: giờ báo "HH:MM" (giờ VN) khi muốn ghim giờ cố định; "" nếu không.
 - `last_run_at`: mốc quét gần nhất (để cron tính lịch per-rule).
 - `last_value`: số liệu chính lần trước (trigger "thay đổi" — chỉ báo khi số liệu thực sự đổi).

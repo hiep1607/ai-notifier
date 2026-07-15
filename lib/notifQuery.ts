@@ -7,15 +7,42 @@
 import { supabase } from "./supabase";
 import { Notification } from "../types/Notification";
 
+export const NOTIFICATIONS_PAGE_SIZE = 50;
+
 export interface NotifOpts {
-  limit?: number;        // giới hạn số dòng — màn danh sách chỉ cần ~100 dòng gần nhất
+  limit?: number;
+  offset?: number;
   unreadOnly?: boolean;
   importantOnly?: boolean;
 }
 
+type QueryError = { code?: string; message?: string; details?: string };
+
+function isMissingUserId(error: QueryError | null): boolean {
+  if (!error) return false;
+  const text = `${error.message ?? ""} ${error.details ?? ""}`.toLowerCase();
+  return ["42703", "PGRST204"].includes(error.code ?? "") && text.includes("user_id");
+}
+
+function queryError(context: string, error: QueryError | null): Error {
+  const result = new Error(`${context}: ${error?.message ?? "lỗi truy vấn không xác định"}`);
+  if (error?.code) Object.assign(result, { code: error.code });
+  return result;
+}
+
 async function userRuleIds(userId: string): Promise<string[]> {
-  const { data } = await supabase.from("rules").select("id").eq("user_id", userId);
+  const { data, error } = await supabase.from("rules").select("id").eq("user_id", userId);
+  if (error) throw queryError("Không thể tải danh sách rule", error);
   return (data ?? []).map((r: { id: string }) => r.id);
+}
+
+function applyWindow<T>(query: T, opts: NotifOpts): T {
+  if (!opts.limit) return query;
+  const start = Math.max(0, opts.offset ?? 0);
+  return (query as T & { range(from: number, to: number): T }).range(
+    start,
+    start + opts.limit - 1,
+  );
 }
 
 export async function fetchNotificationsFor(
@@ -26,9 +53,10 @@ export async function fetchNotificationsFor(
   if (opts.unreadOnly) q = q.eq("is_read", false);
   if (opts.importantOnly) q = q.eq("is_important", true);
   q = q.order("created_at", { ascending: false });
-  if (opts.limit) q = q.limit(opts.limit);
+  q = applyWindow(q, opts);
   const { data, error } = await q;
   if (!error) return (data ?? []) as Notification[];
+  if (!isMissingUserId(error)) throw queryError("Không thể tải thông báo", error);
 
   const ids = await userRuleIds(userId);
   if (ids.length === 0) return [];
@@ -36,8 +64,9 @@ export async function fetchNotificationsFor(
   if (opts.unreadOnly) q2 = q2.eq("is_read", false);
   if (opts.importantOnly) q2 = q2.eq("is_important", true);
   q2 = q2.order("created_at", { ascending: false });
-  if (opts.limit) q2 = q2.limit(opts.limit);
-  const { data: old } = await q2;
+  q2 = applyWindow(q2, opts);
+  const { data: old, error: oldError } = await q2;
+  if (oldError) throw queryError("Không thể tải thông báo theo schema cũ", oldError);
   return (old ?? []) as Notification[];
 }
 
@@ -53,6 +82,7 @@ export async function countNotificationsFor(
   if (opts.importantOnly) q = q.eq("is_important", true);
   const { count, error } = await q;
   if (!error) return count ?? 0;
+  if (!isMissingUserId(error)) throw queryError("Không thể đếm thông báo", error);
 
   const ids = await userRuleIds(userId);
   if (ids.length === 0) return 0;
@@ -62,6 +92,7 @@ export async function countNotificationsFor(
     .in("rule_id", ids);
   if (opts.unreadOnly) q2 = q2.eq("is_read", false);
   if (opts.importantOnly) q2 = q2.eq("is_important", true);
-  const { count: c2 } = await q2;
+  const { count: c2, error: oldError } = await q2;
+  if (oldError) throw queryError("Không thể đếm thông báo theo schema cũ", oldError);
   return c2 ?? 0;
 }

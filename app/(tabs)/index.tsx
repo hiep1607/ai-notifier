@@ -17,7 +17,7 @@ import { useFocusEffect } from "@react-navigation/native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import { supabase } from "../../lib/supabase";
-import { fetchNotificationsFor } from "../../lib/notifQuery";
+import { countNotificationsFor, fetchNotificationsFor } from "../../lib/notifQuery";
 import { getMemCache, loadCache, saveCache } from "../../lib/screenCache";
 import { homeCacheKey, type HomeCache } from "../../lib/prefetch";
 import { runMonitorForActiveRules } from "../../lib/monitor";
@@ -107,25 +107,30 @@ export default function HomeScreen() {
       });
     }
 
-    // (2) Lấy bản mới: 2 truy vấn chạy SONG SONG (trước đây nối đuôi), thông báo chỉ
-    // lấy 100 dòng gần nhất thay vì toàn bộ lịch sử (đủ cho thẻ số liệu + AI Insight).
-    const [rulesRes, typed] = await Promise.all([
-      supabase.from("rules").select("*").eq("user_id", user.id)
-        .order("created_at", { ascending: true }),
-      fetchNotificationsFor(user.id, { limit: 100 }),
-    ]);
-    networkDone = true;
+    try {
+      const [rulesRes, latestRows, latestImportantRows, total, importantTotal] = await Promise.all([
+        supabase.from("rules").select("*").eq("user_id", user.id)
+          .order("created_at", { ascending: true }),
+        fetchNotificationsFor(user.id, { limit: 1 }),
+        fetchNotificationsFor(user.id, { importantOnly: true, limit: 1 }),
+        countNotificationsFor(user.id),
+        countNotificationsFor(user.id, { importantOnly: true }),
+      ]);
+      if (rulesRes.error) throw new Error(rulesRes.error.message);
+      networkDone = true;
 
-    const important = typed.filter((n) => n.is_important);
-    const fresh: HomeCache = {
-      rules: (rulesRes.data ?? []) as Rule[],
-      notificationsCount: typed.length,
-      importantCount: important.length,
-      latestImportant: important[0] ?? null,
-      latestNotif: typed[0] ?? null,
-    };
-    applyHome(fresh);
-    saveCache(homeCacheKey(user.id), fresh);
+      const fresh: HomeCache = {
+        rules: (rulesRes.data ?? []) as Rule[],
+        notificationsCount: total,
+        importantCount: importantTotal,
+        latestImportant: latestImportantRows[0] ?? null,
+        latestNotif: latestRows[0] ?? null,
+      };
+      applyHome(fresh);
+      saveCache(homeCacheKey(user.id), fresh);
+    } catch (error) {
+      console.log("Không thể làm mới Home, giữ cache cũ:", error);
+    }
   };
 
   const activeRules = rules.filter((r) => r.is_active);

@@ -12,6 +12,8 @@ import { SCREEN, RADIUS, type AppColors } from "../../lib/theme";
 import { useAuth } from "../../contexts/AuthContext";
 import { useTheme } from "../../contexts/ThemeContext";
 import { isAdminEmail } from "../../lib/admin";
+import { unregisterForPush } from "../../lib/push";
+import { clearScreenCache } from "../../lib/screenCache";
 import SettingRow from "../../components/SettingRow";
 
 const fmtHour = (h: number) => `${String(h).padStart(2, "0")}:00`;
@@ -36,6 +38,14 @@ const DEFAULT_SETTINGS: Settings = {
   darkMode: true,
 };
 
+const DB_SETTING_COLUMN: Partial<Record<keyof Settings, string>> = {
+  notificationsEnabled: "notifications_enabled",
+  soundEnabled: "sound_enabled",
+  vibrationEnabled: "vibration_enabled",
+  aiSummaryEnabled: "ai_summary_enabled",
+  importantAlertsEnabled: "important_alerts_enabled",
+};
+
 export default function SettingsScreen() {
   const { colors, setDarkMode } = useTheme();
   const { user } = useAuth();
@@ -48,33 +58,48 @@ export default function SettingsScreen() {
   const [quietEnd, setQuietEnd] = useState(7);
 
   useEffect(() => {
+    let cancelled = false;
     const loadSettings = async () => {
-      const raw = await AsyncStorage.getItem(SETTINGS_KEY);
-      if (raw) setSettings({ ...DEFAULT_SETTINGS, ...JSON.parse(raw) });
+      let next = DEFAULT_SETTINGS;
+      try {
+        const raw = await AsyncStorage.getItem(SETTINGS_KEY);
+        if (raw) next = { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+      } catch { /* cache lỗi → dùng mặc định */ }
+
+      if (user) {
+        const { data, error } = await supabase.from("user_settings").select(
+          "quiet_enabled,quiet_start,quiet_end,notifications_enabled,sound_enabled,vibration_enabled,ai_summary_enabled,important_alerts_enabled",
+        ).eq("user_id", user.id).maybeSingle();
+        if (error) console.log("user_settings read error:", error);
+        if (data) {
+          next = {
+            ...next,
+            notificationsEnabled: data.notifications_enabled ?? true,
+            soundEnabled: data.sound_enabled ?? true,
+            vibrationEnabled: data.vibration_enabled ?? false,
+            aiSummaryEnabled: data.ai_summary_enabled ?? true,
+            importantAlertsEnabled: data.important_alerts_enabled ?? true,
+          };
+          if (!cancelled) {
+            setQuietEnabled(Boolean(data.quiet_enabled));
+            setQuietStart(data.quiet_start ?? 22);
+            setQuietEnd(data.quiet_end ?? 7);
+          }
+        }
+      }
+      if (!cancelled) {
+        setSettings(next);
+        await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(next));
+      }
     };
     loadSettings();
-  }, []);
-
-  useEffect(() => {
-    if (!user) return;
-    supabase
-      .from("user_settings")
-      .select("quiet_enabled, quiet_start, quiet_end")
-      .eq("user_id", user.id)
-      .maybeSingle()
-      .then(({ data }) => {
-        if (data) {
-          setQuietEnabled(Boolean(data.quiet_enabled));
-          setQuietStart(data.quiet_start ?? 22);
-          setQuietEnd(data.quiet_end ?? 7);
-        }
-      });
+    return () => { cancelled = true; };
   }, [user]);
 
   // Lưu trạng thái giờ yên lặng. Dùng update→insert thay cho upsert(onConflict) để khỏi
   // phụ thuộc ràng buộc unique trên user_id (bảng user_settings có thể đã tồn tại sẵn).
-  const persistQuiet = async (enabled: boolean, start: number, end: number) => {
-    if (!user) return;
+  const persistQuiet = async (enabled: boolean, start: number, end: number): Promise<boolean> => {
+    if (!user) return false;
     const payload = {
       quiet_enabled: enabled,
       quiet_start: start,
@@ -82,58 +107,67 @@ export default function SettingsScreen() {
       updated_at: new Date().toISOString(),
     };
 
-    const { data: updated, error: updErr } = await supabase
+    const { error } = await supabase
       .from("user_settings")
-      .update(payload)
-      .eq("user_id", user.id)
-      .select("user_id");
-
-    if (updErr) {
-      console.log("user_settings update error:", updErr);
-      alertMessage("Chưa lưu được", `${updErr.message}${updErr.code ? ` (mã ${updErr.code})` : ""}`);
-      return;
+      .upsert({ user_id: user.id, ...payload }, { onConflict: "user_id" });
+    if (error) {
+      console.log("user_settings quiet error:", error);
+      alertMessage("Chưa lưu được", `${error.message}${error.code ? ` (mã ${error.code})` : ""}`);
+      return false;
     }
-
-    // Chưa có dòng nào của user này → tạo mới.
-    if (!updated || updated.length === 0) {
-      const { error: insErr } = await supabase
-        .from("user_settings")
-        .insert({ user_id: user.id, ...payload });
-      if (insErr) {
-        console.log("user_settings insert error:", insErr);
-        alertMessage("Chưa lưu được", `${insErr.message}${insErr.code ? ` (mã ${insErr.code})` : ""}`);
-      }
-    }
+    return true;
   };
 
-  const onToggleQuiet = (v: boolean) => {
+  const onToggleQuiet = async (v: boolean) => {
+    const previous = quietEnabled;
     setQuietEnabled(v);
-    persistQuiet(v, quietStart, quietEnd);
+    if (!(await persistQuiet(v, quietStart, quietEnd))) setQuietEnabled(previous);
   };
 
   const updateSetting = async (key: keyof Settings, value: boolean) => {
+    const previous = settings;
     const updated = { ...settings, [key]: value };
     setSettings(updated);
     await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(updated));
 
     if (key === "darkMode") {
       setDarkMode(value);
+      return;
+    }
+
+    const column = DB_SETTING_COLUMN[key];
+    if (user && column) {
+      const { error } = await supabase.from("user_settings").upsert({
+        user_id: user.id,
+        [column]: value,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "user_id" });
+      if (error) {
+        setSettings(previous);
+        await AsyncStorage.setItem(SETTINGS_KEY, JSON.stringify(previous));
+        alertMessage("Chưa lưu được", error.message);
+      }
     }
   };
 
   const handleLogout = async () => {
     const ok = await confirmAsync("Đăng xuất", "Bạn có chắc muốn đăng xuất?");
     if (!ok) return;
-    await supabase.auth.signOut();
+    try {
+      await unregisterForPush();
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+    } catch (err) {
+      alertMessage("Chưa thể đăng xuất", err instanceof Error ? err.message : String(err));
+      return;
+    }
     router.replace("/login");
   };
 
   const handleClearCache = async () => {
     const ok = await confirmAsync("Xóa cache", "Xóa dữ liệu tạm của ứng dụng? (không ảnh hưởng tài khoản)");
     if (!ok) return;
-    await AsyncStorage.removeItem(SETTINGS_KEY);
-    setSettings(DEFAULT_SETTINGS);
-    setDarkMode(true);
+    await clearScreenCache();
     alertMessage("Đã xóa", "Cache ứng dụng đã được xóa.");
   };
 

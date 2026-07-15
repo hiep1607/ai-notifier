@@ -8,7 +8,9 @@ import {
   dueAt,
   scanTier,
   contentFingerprint,
+  notificationDedupKey,
   normLink,
+  pickGroundedSourceUrl,
   vnMinutesOfDay,
   isQuietNow,
   normTitle,
@@ -345,7 +347,7 @@ describe("compose bản tin provider", () => {
     expect(p.title).toContain("Bitcoin");
     expect(p.title).toContain("-2.34% 24h");
     expect(p.content).toContain("CoinGecko");
-    expect(p.value).toBe("67123.45 USD");
+    expect(p.value).toBe("67123.45 USD; 24h -2.34%");
     expect(p.source_url).toContain("coingecko.com/en/coins/bitcoin");
   });
 
@@ -377,23 +379,41 @@ describe("extractWatchUrl & detectSourceType 'url'", () => {
 });
 
 describe("isPrivateHost & isWatchableUrl (chống SSRF)", () => {
-  it("chặn localhost/IP nội bộ/metadata", () => {
+  it("chặn localhost/IP nội bộ/metadata/reserved", () => {
     expect(isPrivateHost("localhost")).toBe(true);
     expect(isPrivateHost("127.0.0.1")).toBe(true);
     expect(isPrivateHost("10.0.0.5")).toBe(true);
     expect(isPrivateHost("192.168.1.1")).toBe(true);
     expect(isPrivateHost("172.20.3.4")).toBe(true);
     expect(isPrivateHost("169.254.169.254")).toBe(true); // cloud metadata
+    expect(isPrivateHost("100.64.0.1")).toBe(true);      // carrier-grade NAT
+    expect(isPrivateHost("198.18.0.1")).toBe(true);      // benchmark network
+    expect(isPrivateHost("203.0.113.10")).toBe(true);    // documentation network
+    expect(isPrivateHost("224.0.0.1")).toBe(true);       // multicast
     expect(isPrivateHost("db.internal")).toBe(true);
+    expect(isPrivateHost("router.lan")).toBe(true);
     expect(isPrivateHost("vnexpress.net")).toBe(false);
     expect(isPrivateHost("172.32.0.1")).toBe(false); // ngoài dải 172.16-31
+    expect(isPrivateHost("8.8.8.8")).toBe(false);
   });
 
-  it("chỉ nhận http/https tới host công khai", () => {
+  it("chặn IPv6 local/mapped/reserved nhưng nhận global-unicast", () => {
+    expect(isPrivateHost("::1")).toBe(true);
+    expect(isPrivateHost("fe80::1")).toBe(true);
+    expect(isPrivateHost("fd12:3456::1")).toBe(true);
+    expect(isPrivateHost("::ffff:127.0.0.1")).toBe(true);
+    expect(isPrivateHost("2001:db8::1")).toBe(true);
+    expect(isPrivateHost("2001:4860:4860::8888")).toBe(false);
+  });
+
+  it("chỉ nhận http/https tới host công khai, không nhận credentials trong URL", () => {
     expect(isWatchableUrl("https://shop.vn/x")).toBe(true);
     expect(isWatchableUrl("http://example.com")).toBe(true);
     expect(isWatchableUrl("ftp://example.com")).toBe(false);
     expect(isWatchableUrl("https://127.0.0.1/admin")).toBe(false);
+    expect(isWatchableUrl("http://2130706433/admin")).toBe(false); // dạng số của 127.0.0.1
+    expect(isWatchableUrl("http://0x7f000001/admin")).toBe(false); // dạng hex của 127.0.0.1
+    expect(isWatchableUrl("https://user:pass@example.com/private")).toBe(false);
     expect(isWatchableUrl("không phải url")).toBe(false);
   });
 });
@@ -412,6 +432,11 @@ describe("parseWatchAuth", () => {
     });
     expect(parseWatchAuth("")).toEqual({});
     expect(parseWatchAuth(null)).toEqual({});
+  });
+
+  it("bỏ các header có thể điều khiển routing/framing request", () => {
+    expect(parseWatchAuth("Host: 127.0.0.1\nContent-Length: 1\nX-Forwarded-Host: internal\nX-Api-Key: ok"))
+      .toEqual({ "X-Api-Key": "ok" });
   });
 });
 
@@ -602,6 +627,29 @@ describe("contentFingerprint — vân tay nội dung trang", () => {
   });
 });
 
+describe("notificationDedupKey — idempotency khi cron/manual chạy chồng", () => {
+  const now = Date.parse("2026-07-15T10:05:00Z");
+
+  it("bài báo cùng URL luôn cùng khóa dù query tracking/title đổi", () => {
+    const base = { source_type: "search", frequency: "60", title: "Tin A", content: "Nội dung", source: "VnExpress" };
+    const a = notificationDedupKey({ ...base, source_url: "https://vnexpress.net/a?utm_source=x" }, now);
+    const b = notificationDedupKey({ ...base, title: "Tin A cập nhật", source_url: "https://vnexpress.net/a" }, now + 86400000);
+    expect(a).toBe(b);
+    expect(a).toMatch(/^article:/);
+  });
+
+  it("provider cùng nội dung trong một chu kỳ trùng khóa, chu kỳ sau được phép gửi", () => {
+    const base = { source_type: "search", frequency: "60", title: "Bitcoin 67000 USD", content: "Giá hiện tại", source: "CoinGecko", source_url: "https://coingecko.com/bitcoin" };
+    expect(notificationDedupKey(base, now)).toBe(notificationDedupKey(base, now + 5 * 60000));
+    expect(notificationDedupKey(base, now)).not.toBe(notificationDedupKey(base, now + 61 * 60000));
+  });
+
+  it("URL watcher dùng khóa theo chu kỳ, không khóa vĩnh viễn theo URL sản phẩm", () => {
+    const base = { source_type: "url", frequency: "30", title: "Giá áo 500k", content: "Còn hàng", source: "shop.vn", source_url: "https://shop.vn/ao" };
+    expect(notificationDedupKey(base, now)).toMatch(/^cycle:/);
+  });
+});
+
 // ---------- CHỐNG TRÙNG THEO LINK (lớp 2 bên cạnh normTitle) ----------
 
 describe("normLink — chuẩn hóa URL bài viết", () => {
@@ -623,5 +671,28 @@ describe("normLink — chuẩn hóa URL bài viết", () => {
     expect(normLink("")).toBe("");
     expect(normLink("mailto:x@y.z")).toBe("");
     expect(normLink("không phải url")).toBe("");
+  });
+});
+
+describe("pickGroundedSourceUrl — gắn đúng nguồn grounding", () => {
+  const sources = [
+    { title: "Giá vàng SJC tăng mạnh - VnExpress", uri: "https://grounding.example/vnexpress" },
+    { title: "Bitcoin falls after market selloff - Reuters", uri: "https://grounding.example/reuters" },
+  ];
+
+  it("chọn nguồn khớp tên báo/tiêu đề, không mặc định phần tử đầu", () => {
+    expect(pickGroundedSourceUrl("Bitcoin falls after market selloff", "Reuters", "", sources))
+      .toBe("https://grounding.example/reuters");
+  });
+
+  it("nhiều nguồn không khớp thì không gắn bừa; một nguồn thì dùng được", () => {
+    expect(pickGroundedSourceUrl("Tin hoàn toàn khác", "Báo khác", "", sources)).toBe("");
+    expect(pickGroundedSourceUrl("Tin khác", "", "", [sources[0]])).toBe(sources[0].uri);
+  });
+
+  it("chấp nhận URL model ghi khi hostname khớp thương hiệu nguồn", () => {
+    expect(pickGroundedSourceUrl("Một bài", "VnExpress", "https://vnexpress.net/bai-that", []))
+      .toBe("https://vnexpress.net/bai-that");
+    expect(pickGroundedSourceUrl("Một bài", "Reuters", "https://evil.example/fake", [])).toBe("");
   });
 });

@@ -289,7 +289,7 @@ export default function AdminTestScreen() {
         <View style={styles.quotaPill}>
           <Ionicons name="speedometer-outline" size={16} color={colors.primary} />
           <Text style={styles.quotaPillText}>
-            Quota hôm nay: {usage.today ?? 0}/{usage.limit ?? 1500}
+            Quota hôm nay: {usage.today ?? 0} lượt
             {(usage.todayErrors ?? 0) > 0 ? ` · ${usage.todayErrors} lỗi` : ""}
           </Text>
         </View>

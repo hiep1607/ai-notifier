@@ -6,6 +6,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 import { corsHeaders, json } from "../_shared/cors.ts";
 import { geminiGenerate, parseJsonLoose, SMART_FALLBACK } from "../_shared/gemini.ts";
+import { enforceRateLimits } from "../_shared/rateLimit.ts";
+import { validateAiRules } from "../_shared/ruleValidation.ts";
 
 const RULE_SYSTEM = `Bạn là trợ lý tạo "rule theo dõi thông tin tự động" cho một app thông báo.
 Nhiệm vụ: qua hội thoại, thu thập đủ thông tin để dựng 1 rule hoàn chỉnh.
@@ -173,12 +175,51 @@ QUY TẮC SỬA:
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  if (req.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
   try {
-    const { history, edit_rule } = await req.json();
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+    );
+    const token = (req.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
+    if (!token) return json({ error: "Cần đăng nhập để dùng trợ lý tạo rule." }, 401);
+    const { data: auth, error: authError } = await supabase.auth.getUser(token);
+    if (authError || !auth?.user) return json({ error: "Phiên đăng nhập không hợp lệ." }, 401);
+
+    const rate = await enforceRateLimits(
+      supabase,
+      auth.user.id,
+      "generate-rule",
+      { limit: 12, seconds: 600 },
+      60,
+    );
+    if (!rate.allowed) {
+      return json(
+        { error: "Bạn gửi yêu cầu tạo rule quá nhanh. Vui lòng thử lại sau.", retry_after: rate.retryAfterSeconds },
+        429,
+        { "Retry-After": String(rate.retryAfterSeconds) },
+      );
+    }
+
+    const contentLength = Number(req.headers.get("content-length") ?? 0);
+    if (contentLength > 100_000) return json({ error: "Nội dung hội thoại quá lớn." }, 413);
+    const rawBody = await req.text();
+    if (rawBody.length > 100_000) return json({ error: "Nội dung hội thoại quá lớn." }, 413);
+    let body: { history?: unknown; edit_rule?: unknown };
+    try { body = JSON.parse(rawBody); } catch { return json({ error: "JSON không hợp lệ." }, 400); }
+    const { history, edit_rule } = body;
     if (!Array.isArray(history) || history.length === 0) {
       return json({ error: "Thiếu history" }, 400);
     }
+    if (history.length > 20 || history.some((m) =>
+      !m || (m.role !== "user" && m.role !== "assistant") ||
+      typeof m.content !== "string" || m.content.length > 4_000
+    )) {
+      return json({ error: "Lịch sử hội thoại không hợp lệ hoặc quá dài." }, 400);
+    }
+    const historyChars = history.reduce((sum, m) => sum + m.content.length, 0);
+    if (historyChars > 20_000) return json({ error: "Lịch sử hội thoại quá dài." }, 413);
     const editing = edit_rule && typeof edit_rule === "object"
       ? editRulePrompt(edit_rule as Record<string, unknown>)
       : "";
@@ -207,10 +248,6 @@ Deno.serve(async (req) => {
 
     // Đếm vào quota chung theo bucket model (best-effort — bảng/cột có thể chưa tạo).
     try {
-      const supabase = createClient(
-        Deno.env.get("SUPABASE_URL")!,
-        Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
-      );
       const row = { kind: "gemini", ok: true };
       const { error: logErr } = await supabase.from("usage_logs").insert({ ...row, model: usedModel });
       if (logErr) await supabase.from("usage_logs").insert(row);
@@ -226,49 +263,21 @@ Deno.serve(async (req) => {
         : [];
 
     if (data.status === "ready" && rawRules.length > 0) {
-      const rules = rawRules.slice(0, 5).map((item) => {
-        const r = (item ?? {}) as Record<string, unknown>;
-        // Rule "theo điều kiện" (change) hoặc có condition → bản chất đã ít rác, ép noise_risk = low.
-        const freq = asText(r.frequency) || "1440";
-        const cond = asText(r.condition);
-        const risk = asText(r.noise_risk).toLowerCase() === "high" && freq !== "change" && !cond
-          ? "high"
-          : "low";
-        // NHẮC HẸN: chỉ nhận khi remind_at parse được; lưu kèm offset +07:00 (giờ VN)
-        // để timestamptz trong DB đúng thời điểm tuyệt đối.
-        const rawRemind = asText(r.remind_at).trim();
-        const isRem = asText(r.source_type).toLowerCase() === "reminder" &&
-          /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(rawRemind) &&
-          Number.isFinite(Date.parse(`${rawRemind.slice(0, 16)}:00+07:00`));
-        // THEO DÕI TRANG WEB: chỉ nhận khi watch_url là http(s) thật sự.
-        const rawWatch = asText(r.watch_url).trim();
-        const isUrlWatch = !isRem &&
-          asText(r.source_type).toLowerCase() === "url" &&
-          /^https?:\/\/\S+$/i.test(rawWatch);
-        return {
-          title: asText(r.title),
-          description: asText(r.description),
-          keyword: asText(r.keyword),
-          category: asText(r.category) || "other",
-          sources: asText(r.sources),
-          frequency: freq,
-          run_at: asText(r.run_at),
-          condition: cond,
-          noise_risk: isRem ? "low" : risk,
-          noise_reason: !isRem && risk === "high" ? asText(r.noise_reason) : "",
-          source_type: isRem ? "reminder" : (isUrlWatch ? "url" : ""),
-          remind_at: isRem ? `${rawRemind.slice(0, 16)}:00+07:00` : "",
-          watch_url: isUrlWatch ? rawWatch : "",
-        };
-      }).filter((r) => r.keyword); // bỏ rule rỗng (thiếu keyword)
+      const validated = validateAiRules(rawRules);
+      const rules = validated.rules;
 
-      if (rules.length > 0) {
+      if (rules.length > 0 && validated.errors.length === 0) {
         return json({
           status: "ready",
           message: asText(data.message) || "Đây là rule tôi đề xuất:",
           rules,
         });
       }
+      console.warn("AI rule validation failed:", validated.errors.join(" "));
+      return json({
+        status: "need_info",
+        message: "Mình chưa tạo được rule hợp lệ từ câu trả lời vừa rồi. Bạn mô tả lại chủ đề, tần suất/điều kiện và giờ báo giúp mình nhé.",
+      });
     }
 
     return json({

@@ -18,6 +18,7 @@ import { alertMessage, confirmAsync } from "../lib/dialog";
 import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";
 import { RADIUS, SCREEN, type AppColors } from "../lib/theme";
+import { unregisterForPush } from "../lib/push";
 
 export default function ProfileScreen() {
   const { user } = useAuth();
@@ -113,7 +114,14 @@ export default function ProfileScreen() {
   const handleSignOut = async () => {
     const ok = await confirmAsync("Đăng xuất", "Bạn muốn đăng xuất khỏi tài khoản này?");
     if (!ok) return;
-    await supabase.auth.signOut();
+    try {
+      await unregisterForPush();
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+    } catch (err) {
+      alertMessage("Chưa thể đăng xuất", err instanceof Error ? err.message : String(err));
+      return;
+    }
     router.replace("/login");
   };
 
