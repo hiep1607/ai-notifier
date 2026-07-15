@@ -1,5 +1,5 @@
 import React from "react";
-import { render, waitFor } from "@testing-library/react-native";
+import { render, fireEvent, waitFor } from "@testing-library/react-native";
 
 import NotificationDetailScreen from "../../app/notification-detail";
 import { createQueryChain } from "../helpers/supabase-mock";
@@ -185,5 +185,21 @@ describe("Notification Detail Screen", () => {
 
     // is_read=true → không cần update
     expect(chain.update).not.toHaveBeenCalled();
+  });
+
+  it("lưu phản hồi Không liên quan cho đúng notification", async () => {
+    const { getByText } = render(<NotificationDetailScreen />);
+
+    await waitFor(() => expect(getByText("Không liên quan")).toBeTruthy());
+    fireEvent.press(getByText("Không liên quan"));
+
+    await waitFor(() => {
+      expect(chain.update).toHaveBeenCalledWith(expect.objectContaining({
+        feedback: "not_relevant",
+        feedback_at: expect.any(String),
+      }));
+      expect(getByText("Đã ghi nhận phản hồi của bạn.")).toBeTruthy();
+    });
+    expect(updateChain.eq).toHaveBeenCalledWith("id", "notif-detail-1");
   });
 });

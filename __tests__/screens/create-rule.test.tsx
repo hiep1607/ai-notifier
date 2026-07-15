@@ -15,6 +15,7 @@ const mockBack = jest.fn();
 const mockFrom = jest.fn();
 const mockUseAuth = jest.fn();
 const mockChatRule = jest.fn();
+const mockPreviewRule = jest.fn();
 
 jest.mock("expo-router", () => ({
   router: { push: jest.fn(), replace: jest.fn(), back: () => mockBack() },
@@ -30,6 +31,10 @@ jest.mock("../../lib/supabase", () => ({
 // việc giả lập setTimeout như bản cũ.
 jest.mock("../../lib/ruleAI", () => ({
   chatRule: (...args: any[]) => mockChatRule(...args),
+}));
+
+jest.mock("../../lib/monitor", () => ({
+  previewRule: (...args: any[]) => mockPreviewRule(...args),
 }));
 
 jest.mock("../../contexts/AuthContext", () => ({
@@ -102,6 +107,39 @@ describe("Create Rule Screen", () => {
       expect(getByText("Tạo rule")).toBeTruthy();
       expect(getByText("Giá vàng")).toBeTruthy();
     });
+  });
+
+  it("xem thử rule bằng pipeline server mà chưa lưu", async () => {
+    mockChatRule.mockResolvedValue({ status: "ready", message: "Đã tạo rule.", rules: [sampleDraft] });
+    mockPreviewRule.mockResolvedValue({
+      gateCheck: true,
+      keyword: "giá vàng",
+      currentMode: "all",
+      provider: "rss",
+      found: true,
+      candidateTitle: "Giá vàng SJC tăng nhẹ sáng nay",
+      value: "",
+      isImportant: true,
+      matchesCondition: true,
+      changed: true,
+      fresh: true,
+      allKind: "real",
+      importantPushed: true,
+      importantReason: "",
+    });
+
+    const { getByPlaceholderText, getByText, getByTestId } = render(<CreateRuleScreen />);
+    fireEvent.changeText(getByPlaceholderText("Nhập mô tả hoặc trả lời AI..."), "Theo dõi giá vàng");
+    fireEvent.press(getByTestId("send-button"));
+    await waitFor(() => expect(getByText("Xem thử kết quả")).toBeTruthy());
+
+    fireEvent.press(getByText("Xem thử kết quả"));
+    await waitFor(() => expect(getByText("Giá vàng SJC tăng nhẹ sáng nay")).toBeTruthy());
+    expect(mockPreviewRule).toHaveBeenCalledWith(expect.objectContaining({
+      keyword: "giá vàng",
+      notify_mode: "all",
+    }));
+    expect(mockFrom).not.toHaveBeenCalledWith("rules");
   });
 
   it("insert rule với user_id đúng khi xác nhận", async () => {

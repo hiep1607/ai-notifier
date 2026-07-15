@@ -13,5 +13,7 @@ export interface Notification {
   sentiment?: string;  // positive | neutral | negative
   is_read: boolean;
   is_important: boolean;
+  feedback?: "useful" | "not_relevant" | null;
+  feedback_at?: string | null;
   created_at?: string;
 }

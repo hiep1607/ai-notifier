@@ -44,10 +44,27 @@ const mockNotifications = [
   },
 ];
 
+const mockScanLogs = [
+  {
+    id: 7,
+    rule_id: "rule-abc",
+    user_id: "user-test-123",
+    trigger: "cron",
+    status: "no_change",
+    reason: "Nguồn đã được kiểm tra nhưng nội dung chưa thay đổi đáng kể.",
+    candidate_title: "Giá vàng SJC sáng nay",
+    notification_count: 0,
+    started_at: "2026-07-15T08:00:00Z",
+    finished_at: "2026-07-15T08:00:01Z",
+    duration_ms: 1000,
+  },
+];
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 describe("Rule Detail Screen", () => {
   let rulesChain: ReturnType<typeof createQueryChain>;
   let notificationsChain: ReturnType<typeof createQueryChain>;
+  let scanLogsChain: ReturnType<typeof createQueryChain>;
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -56,10 +73,12 @@ describe("Rule Detail Screen", () => {
 
     rulesChain = createQueryChain(mockRule);
     notificationsChain = createQueryChain(mockNotifications);
+    scanLogsChain = createQueryChain(mockScanLogs);
 
     mockFrom.mockImplementation((table: string) => {
       if (table === "rules") return rulesChain;
       if (table === "notifications") return notificationsChain;
+      if (table === "rule_scan_logs") return scanLogsChain;
       return createQueryChain([]);
     });
   });
@@ -91,6 +110,18 @@ describe("Rule Detail Screen", () => {
     });
 
     expect(notificationsChain.eq).toHaveBeenCalledWith("rule_id", "rule-abc");
+  });
+
+  it("fetch và hiển thị lịch sử hoạt động của rule", async () => {
+    const { getByText } = render(<RuleDetailScreen />);
+
+    await waitFor(() => {
+      expect(mockFrom).toHaveBeenCalledWith("rule_scan_logs");
+      expect(getByText("Chưa thay đổi")).toBeTruthy();
+      expect(getByText("Nguồn đã được kiểm tra nhưng nội dung chưa thay đổi đáng kể.")).toBeTruthy();
+    });
+
+    expect(scanLogsChain.eq).toHaveBeenCalledWith("rule_id", "rule-abc");
   });
 
   it("hiển thị tiêu đề rule thật (không phải mock hardcode)", async () => {

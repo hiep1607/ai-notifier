@@ -20,13 +20,26 @@ import { router, useLocalSearchParams } from "expo-router";
 
 import { supabase } from "../lib/supabase";
 import { confirmAsync, alertMessage } from "../lib/dialog";
-import { runMonitorForRule } from "../lib/monitor";
+import { previewRule, RulePreviewResult, runMonitorForRule } from "../lib/monitor";
 import { editRuleAI, RuleDraft } from "../lib/ruleAI";
 import { CATEGORIES, FREQUENCIES, findCategory, formatSchedule, toFreqKey } from "../lib/ruleOptions";
 import { useTheme } from "../contexts/ThemeContext";
 import { Rule } from "../types/Rule";
 import { Notification } from "../types/Notification";
+import { RuleScanLog, RuleScanStatus } from "../types/RuleScanLog";
+import { nextDueAt } from "../supabase/functions/_shared/monitorLogic";
 import { RADIUS, type AppColors } from "../lib/theme";
+import RulePreviewPanel from "../components/RulePreviewPanel";
+
+const SCAN_STATUS_UI: Record<RuleScanStatus, { label: string; icon: keyof typeof Ionicons.glyphMap }> = {
+  sent: { label: "Đã gửi", icon: "checkmark-circle-outline" },
+  filtered: { label: "Đã lọc", icon: "funnel-outline" },
+  no_change: { label: "Chưa thay đổi", icon: "remove-circle-outline" },
+  related: { label: "Chỉ có tin liên quan", icon: "git-branch-outline" },
+  no_result: { label: "Không có kết quả", icon: "search-outline" },
+  error: { label: "Lỗi", icon: "warning-outline" },
+  quota: { label: "Chờ AI", icon: "hourglass-outline" },
+};
 
 // "x phút/giờ/ngày trước" cho dòng "Quét lần cuối" — người dùng thấy ngay rule còn sống không.
 function timeAgoVi(iso?: string | null): string {
@@ -62,6 +75,7 @@ export default function RuleDetailScreen() {
 
   const [rule, setRule] = useState<Rule | null>(null);
   const [notifications, setNotifications] = useState<Notification[]>([]);
+  const [scanLogs, setScanLogs] = useState<RuleScanLog[]>([]);
   const [showAllNotifs, setShowAllNotifs] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -75,6 +89,8 @@ export default function RuleDetailScreen() {
   const [editCondition, setEditCondition] = useState("");
   const [saving, setSaving] = useState(false);
   const [monitoring, setMonitoring] = useState(false);
+  const [previewingEdit, setPreviewingEdit] = useState(false);
+  const [editPreview, setEditPreview] = useState<RulePreviewResult | null>(null);
 
   // "Cấp quyền đăng nhập" cho rule theo dõi trang web (source_type 'url'): người dùng
   // dán Cookie/headers → server fetch trang kèm các header này. Lưu ở cột watch_auth.
@@ -92,14 +108,19 @@ export default function RuleDetailScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
+  useEffect(() => {
+    setEditPreview(null);
+  }, [editTitle, editDescription, editKeyword, editCategory, editSources, editFrequency, editCondition]);
+
   const fetchData = async () => {
     setLoading(true);
 
-    // 2 truy vấn SONG SONG (trước đây nối đuôi → mở màn chậm gấp đôi cần thiết).
-    const [ruleRes, notifRes] = await Promise.all([
+    const [ruleRes, notifRes, scanRes] = await Promise.all([
       supabase.from("rules").select("*").eq("id", id).single(),
       supabase.from("notifications").select("*").eq("rule_id", id)
         .order("created_at", { ascending: false }).limit(50),
+      supabase.from("rule_scan_logs").select("*").eq("rule_id", id)
+        .order("started_at", { ascending: false }).limit(20),
     ]);
 
     if (ruleRes.data) {
@@ -108,6 +129,9 @@ export default function RuleDetailScreen() {
     }
     if (notifRes.data) {
       setNotifications(notifRes.data as Notification[]);
+    }
+    if (scanRes.data) {
+      setScanLogs(scanRes.data as RuleScanLog[]);
     }
 
     setLoading(false);
@@ -340,6 +364,34 @@ export default function RuleDetailScreen() {
     setSaving(false);
   };
 
+  const handlePreviewEdit = async () => {
+    if (!rule || !editTitle.trim() || !editKeyword.trim()) {
+      alertMessage("Chưa đủ thông tin", "Nhập tên rule và từ khóa trước khi xem thử.");
+      return;
+    }
+    setPreviewingEdit(true);
+    try {
+      setEditPreview(await previewRule({
+        title: editTitle.trim(),
+        description: editDescription.trim() || `Theo dõi ${editKeyword.trim()}`,
+        keyword: editKeyword.trim(),
+        category: editCategory,
+        sources: editSources.trim(),
+        frequency: editFrequency,
+        run_at: rule.run_at ?? "",
+        condition: editCondition.trim(),
+        notify_mode: rule.notify_mode ?? "all",
+        source_type: rule.source_type ?? "search",
+        remind_at: rule.remind_at ?? "",
+        watch_url: rule.watch_url ?? "",
+      }, rule.id));
+    } catch (err) {
+      alertMessage("Chưa xem thử được", String((err as Error).message ?? err));
+    } finally {
+      setPreviewingEdit(false);
+    }
+  };
+
   const handleRunMonitor = async () => {
     if (!rule) return;
     setMonitoring(true);
@@ -358,8 +410,8 @@ export default function RuleDetailScreen() {
         alertMessage("Đã cập nhật", "Không có tin mới — tất cả bài tìm được đã có trong thông báo.");
       } else {
         alertMessage("Thành công", `Đã tạo ${inserted} thông báo mới từ tin thật!`);
-        fetchData();
       }
+      await fetchData();
     } catch (err: any) {
       alertMessage("Lỗi", err.message?.includes("fetch") || err.message?.includes("Network")
         ? "Không kết nối được máy chủ. Kiểm tra mạng rồi thử lại."
@@ -416,6 +468,21 @@ export default function RuleDetailScreen() {
   const cat = findCategory(rule.category);
   // Rule theo dõi TRANG WEB cụ thể (source_type 'url' — hoặc rule cũ có URL trong keyword).
   const isUrlRule = rule.source_type === "url" || Boolean(rule.watch_url);
+  const nextScanMs = nextDueAt(rule);
+  const nextScanText = !rule.is_active
+    ? "Đang tạm dừng"
+    : Number.isFinite(nextScanMs) && nextScanMs <= Date.now() + 60000
+      ? "Đang chờ lượt quét gần nhất"
+      : Number.isFinite(nextScanMs)
+        ? new Date(nextScanMs).toLocaleString("vi-VN", { dateStyle: "short", timeStyle: "short" })
+        : "Chưa xác định";
+  const scanStatusColor = (status: RuleScanStatus) => {
+    if (status === "sent") return colors.success;
+    if (status === "error") return colors.danger;
+    if (status === "quota") return colors.warning;
+    if (status === "no_change" || status === "no_result") return colors.subText;
+    return colors.primary;
+  };
 
   return (
     <ScrollView
@@ -608,6 +675,15 @@ export default function RuleDetailScreen() {
           </View>
         ) : null}
 
+        {isEditing ? (
+          <RulePreviewPanel
+            result={editPreview}
+            loading={previewingEdit}
+            onPreview={handlePreviewEdit}
+            disabled={saving}
+          />
+        ) : null}
+
         {/* Trạng thái — nhắc hẹn đã bắn xong hiện "Đã nhắc xong" thay vì "Tạm dừng" khó hiểu */}
         <View style={styles.infoRow}>
           <Text style={styles.label}>Trạng thái</Text>
@@ -635,6 +711,12 @@ export default function RuleDetailScreen() {
           <View style={styles.infoRow}>
             <Text style={styles.label}>Quét lần cuối</Text>
             <Text style={styles.value}>{timeAgoVi(rule.last_run_at)}</Text>
+          </View>
+        )}
+        {!isEditing && rule.source_type !== "reminder" && (
+          <View style={styles.infoRow}>
+            <Text style={styles.label}>Quét tiếp theo</Text>
+            <Text style={[styles.value, styles.valueRight]}>{nextScanText}</Text>
           </View>
         )}
         {!isEditing && rule.last_error ? (
@@ -834,6 +916,59 @@ export default function RuleDetailScreen() {
             <Text style={styles.deleteText}>{saving ? "Đang xóa..." : "Xóa rule"}</Text>
           </TouchableOpacity>
         </>
+      )}
+
+      {/* LỊCH SỬ HOẠT ĐỘNG — giải thích mỗi lượt quét có gửi, bị lọc hay gặp lỗi. */}
+      {!isEditing && (
+        <View style={styles.historySection}>
+          <Text style={styles.sectionTitle}>Lịch sử hoạt động</Text>
+          {scanLogs.length === 0 ? (
+            <View style={styles.historyEmpty}>
+              <Ionicons name="pulse-outline" size={22} color={colors.subText} />
+              <Text style={styles.historyEmptyText}>
+                Chưa có lịch sử quét. Dữ liệu sẽ xuất hiện sau lượt kiểm tra tiếp theo.
+              </Text>
+            </View>
+          ) : (
+            scanLogs.map((log, index) => {
+              const meta = SCAN_STATUS_UI[log.status] ?? SCAN_STATUS_UI.filtered;
+              const statusColor = scanStatusColor(log.status);
+              return (
+                <View key={log.id} style={styles.historyCard}>
+                  <View style={styles.historyHeader}>
+                    <View style={[styles.historyBadge, { backgroundColor: statusColor + "18" }]}>
+                      <Ionicons name={meta.icon} size={16} color={statusColor} />
+                      <Text style={[styles.historyBadgeText, { color: statusColor }]}>{meta.label}</Text>
+                    </View>
+                    <Text style={styles.historyTime}>
+                      {new Date(log.started_at).toLocaleString("vi-VN", { dateStyle: "short", timeStyle: "short" })}
+                    </Text>
+                  </View>
+                  <Text style={styles.historyReason}>{log.reason}</Text>
+                  {log.candidate_title ? (
+                    <Text style={styles.historyCandidate} numberOfLines={2}>
+                      Kết quả: {log.candidate_title}
+                    </Text>
+                  ) : null}
+                  <Text style={styles.historyMeta}>
+                    {log.trigger === "manual" ? "Kiểm tra thủ công" : "Quét tự động"}
+                    {` · ${log.duration_ms < 1000 ? `${log.duration_ms} ms` : `${(log.duration_ms / 1000).toFixed(1)} giây`}`}
+                  </Text>
+                  {index === 0 && rule.is_active && (log.status === "error" || log.status === "quota") ? (
+                    <TouchableOpacity
+                      style={[styles.historyRetry, monitoring && { opacity: 0.6 }]}
+                      onPress={handleRunMonitor}
+                      disabled={monitoring}
+                    >
+                      <Ionicons name="refresh-outline" size={16} color={colors.primary} />
+                      <Text style={styles.historyRetryText}>{monitoring ? "Đang thử lại..." : "Thử lại ngay"}</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+              );
+            })
+          )}
+        </View>
       )}
 
       {/* RECENT NOTIFICATIONS */}
@@ -1068,6 +1203,86 @@ function createStyles(C: AppColors) {
     emptyNotif: {
       alignItems: "center",
       paddingVertical: 24,
+    },
+    historySection: {
+      marginTop: 24,
+    },
+    historyEmpty: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 10,
+      backgroundColor: C.card,
+      borderRadius: RADIUS.lg,
+      padding: 18,
+    },
+    historyEmptyText: {
+      flex: 1,
+      color: C.subText,
+      lineHeight: 20,
+    },
+    historyCard: {
+      backgroundColor: C.card,
+      borderRadius: RADIUS.lg,
+      padding: 16,
+      marginBottom: 12,
+      borderWidth: 1,
+      borderColor: C.border,
+    },
+    historyHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 12,
+      marginBottom: 10,
+    },
+    historyBadge: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+      borderRadius: 14,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+    },
+    historyBadgeText: {
+      fontSize: 12,
+      fontWeight: "700",
+    },
+    historyTime: {
+      flex: 1,
+      color: C.subText,
+      fontSize: 12,
+      textAlign: "right",
+    },
+    historyReason: {
+      color: C.text,
+      lineHeight: 20,
+    },
+    historyCandidate: {
+      color: C.subText,
+      fontSize: 13,
+      lineHeight: 19,
+      marginTop: 7,
+    },
+    historyMeta: {
+      color: C.subText,
+      fontSize: 12,
+      marginTop: 9,
+    },
+    historyRetry: {
+      alignSelf: "flex-start",
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 6,
+      marginTop: 12,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderRadius: 14,
+      backgroundColor: C.primary + "12",
+    },
+    historyRetryText: {
+      color: C.primary,
+      fontSize: 13,
+      fontWeight: "700",
     },
     notificationCard: {
       backgroundColor: C.card,

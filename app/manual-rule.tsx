@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
 import {
   KeyboardAvoidingView,
@@ -21,6 +21,8 @@ import { useTheme } from "../contexts/ThemeContext";
 import { CATEGORIES, FREQUENCIES } from "../lib/ruleOptions";
 import { SCREEN, RADIUS, type AppColors } from "../lib/theme";
 import PrimaryButton from "../components/PrimaryButton";
+import RulePreviewPanel from "../components/RulePreviewPanel";
+import { previewRule, RulePreviewResult } from "../lib/monitor";
 
 export default function ManualRuleScreen() {
   const { user } = useAuth();
@@ -32,10 +34,44 @@ export default function ManualRuleScreen() {
   const [keyword, setKeyword] = useState("");
   const [category, setCategory] = useState("news");
   const [sources, setSources] = useState("");
-  const [frequency, setFrequency] = useState("daily");
+  const [frequency, setFrequency] = useState("1440");
   const [condition, setCondition] = useState("");
   const [isActive, setIsActive] = useState(true);
   const [loading, setLoading] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
+  const [previewResult, setPreviewResult] = useState<RulePreviewResult | null>(null);
+
+  useEffect(() => {
+    setPreviewResult(null);
+  }, [title, description, keyword, category, sources, frequency, condition, isActive]);
+
+  const draft = () => ({
+    title: title.trim(),
+    description: description.trim() || `Theo dõi ${keyword.trim()}`,
+    keyword: keyword.trim(),
+    category,
+    sources: sources.trim(),
+    frequency,
+    run_at: "",
+    condition: condition.trim(),
+    notify_mode: "all",
+    source_type: "search",
+  });
+
+  const handlePreview = async () => {
+    if (!title.trim() || !keyword.trim()) {
+      alertMessage("Chưa đủ thông tin", "Nhập tên rule và từ khóa trước khi xem thử.");
+      return;
+    }
+    setPreviewing(true);
+    try {
+      setPreviewResult(await previewRule(draft()));
+    } catch (err) {
+      alertMessage("Chưa xem thử được", String((err as Error).message ?? err));
+    } finally {
+      setPreviewing(false);
+    }
+  };
 
   const handleCreate = async () => {
     if (!title.trim()) {
@@ -204,6 +240,13 @@ export default function ManualRuleScreen() {
               trackColor={{ true: colors.primary + "66", false: colors.border }}
             />
           </View>
+
+          <RulePreviewPanel
+            result={previewResult}
+            loading={previewing}
+            onPreview={handlePreview}
+            disabled={loading}
+          />
         </View>
 
         <PrimaryButton

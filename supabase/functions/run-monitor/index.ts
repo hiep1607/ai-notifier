@@ -35,6 +35,8 @@ import {
   normVal,
   isFillerTitle,
   recentRealTitles,
+  buildFeedbackProfile,
+  rejectedByFeedback,
   pickFreshItem,
   detectSourceType,
   significantChange,
@@ -48,11 +50,13 @@ import {
   type PageLink,
   type SourceType,
   type ProviderNotif,
+  type FeedbackProfile,
 } from "../_shared/monitorLogic.ts";
 import { fetchWeatherNotif, fetchCryptoNotif, fetchFxNotif } from "../_shared/providers.ts";
 import { fetchPublicResource, fetchWatchPage, type WatchPage } from "../_shared/webwatch.ts";
 import { feedsForCategory, parseRss, mergeRssItems, sourceFromLink, type RssItem } from "../_shared/rss.ts";
 import { enforceRateLimits } from "../_shared/rateLimit.ts";
+import { validateAiRules } from "../_shared/ruleValidation.ts";
 
 // Lỗi hết quota / quá tải tạm thời từ Gemini → nên DỪNG sớm thay vì đốt thêm request.
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -137,16 +141,19 @@ QUY TẮC TRÌNH BÀY (áp dụng cho MỌI thông báo):
 
 // avoidTitles: tiêu đề các bài ĐÃ GỬI trước đó — bảo Gemini né, sửa gốc vòng lặp chết
 // "Gemini luôn trả đúng 1 bài nổi nhất → trùng tiêu đề → chặn mãi → toàn filler".
-function buildPrompt(rule: Rule, avoidTitles: string[] = []): string {
+function buildPrompt(rule: Rule, avoidTitles: string[] = [], rejectedTitles: string[] = []): string {
   const hasCond = Boolean(rule.condition && rule.condition.trim());
   const prev = rule.last_value && rule.last_value.trim() ? rule.last_value.trim() : "";
   const avoid = avoidTitles.length
     ? `\nCÁC BÀI ĐÃ GỬI CHO NGƯỜI DÙNG RỒI (TRÁNH chọn lại các bài này — hãy tìm bài MỚI KHÁC; chỉ được nhắc lại nếu số liệu trong đó ĐÃ THAY ĐỔI):\n${avoidTitles.map((t) => `- ${t}`).join("\n")}\n`
     : "";
+  const rejected = rejectedTitles.length
+    ? `\nCÁC KẾT QUẢ NGƯỜI DÙNG ĐÃ ĐÁNH DẤU "KHÔNG LIÊN QUAN" (KHÔNG chọn lại bài giống hoặc cùng nội dung):\n${rejectedTitles.map((t) => `- ${t}`).join("\n")}\n`
+    : "";
   return `Hãy tìm trên web tin tức MỚI NHẤT (trong vài ngày gần đây) về chủ đề: "${rule.keyword}".
 ${rule.sources ? `Ưu tiên các nguồn: ${rule.sources}.` : ""}
 ${hasCond ? `Điều kiện người dùng quan tâm: "${rule.condition}".` : "Người dùng muốn nhận tin mới liên quan."}
-${prev ? `Số liệu/giá trị GHI NHẬN LẦN TRƯỚC của chủ đề này: "${prev}". Hãy so sánh với giá trị mới tìm được.` : ""}${avoid}
+${prev ? `Số liệu/giá trị GHI NHẬN LẦN TRƯỚC của chủ đề này: "${prev}". Hãy so sánh với giá trị mới tìm được.` : ""}${avoid}${rejected}
 Chọn TỐI ĐA 3 bài MỚI và đáng chú ý nhất (khác nhau, sắp theo mức đáng chú ý GIẢM DẦN). Trả về JSON THUẦN (không markdown) là MẢNG 1-3 phần tử, mỗi phần tử:
 {
   "title": "tiêu đề bài báo thật",
@@ -270,6 +277,69 @@ interface MonitorRuleResult {
   value?: string; // số liệu mới để lưu làm baseline cho lần sau
   contentHash?: string; // vân tay trang (rule url) → lưu rules.last_content_hash
   note?: { title: string; kind: NotifKind };
+}
+
+type RuleScanStatus = "sent" | "filtered" | "no_change" | "related" | "no_result" | "error" | "quota";
+type RuleScanTrigger = "cron" | "tick" | "manual" | "user";
+
+function describeScanResult(result: MonitorRuleResult): { status: RuleScanStatus; reason: string } {
+  if (result.inserted > 0) {
+    return {
+      status: "sent",
+      reason: `Đã tạo ${result.inserted} thông báo mới.`,
+    };
+  }
+  switch (result.note?.kind) {
+    case "nochange":
+      return { status: "no_change", reason: "Nguồn đã được kiểm tra nhưng nội dung chưa thay đổi đáng kể." };
+    case "related":
+      return { status: "related", reason: "Chưa có kết quả đúng điều kiện; hệ thống chỉ tìm thấy nội dung liên quan." };
+    case "none":
+      return { status: "no_result", reason: "Không tìm thấy kết quả phù hợp trong lần quét này." };
+    case "real":
+      return { status: "filtered", reason: "Kết quả phù hợp đã tồn tại nên không tạo thông báo trùng." };
+    default:
+      return {
+        status: "filtered",
+        reason: "Kết quả chưa vượt qua điều kiện, độ quan trọng, mức thay đổi hoặc bộ lọc chống trùng.",
+      };
+  }
+}
+
+// Lịch sử chỉ phục vụ quan sát nên luôn best-effort: schema đang rolling deploy hoặc lỗi ghi log
+// không được phép làm hỏng chính lượt quét/thông báo của người dùng.
+// deno-lint-ignore no-explicit-any
+async function logRuleScan(
+  supabase: any,
+  rule: Rule,
+  trigger: RuleScanTrigger,
+  status: RuleScanStatus,
+  reason: string,
+  candidateTitle: string,
+  notificationCount: number,
+  startedAtMs: number,
+): Promise<void> {
+  if (!rule.user_id) return;
+  const finishedAtMs = Date.now();
+  try {
+    const { error } = await supabase.from("rule_scan_logs").insert([{
+      rule_id: rule.id,
+      user_id: rule.user_id,
+      trigger,
+      status,
+      reason: String(reason || "").slice(0, 600),
+      candidate_title: String(candidateTitle || "").slice(0, 300),
+      notification_count: Math.max(0, Math.floor(notificationCount || 0)),
+      started_at: new Date(startedAtMs).toISOString(),
+      finished_at: new Date(finishedAtMs).toISOString(),
+      duration_ms: Math.max(0, finishedAtMs - startedAtMs),
+    }]);
+    if (error && error.code !== "42P01" && error.code !== "PGRST205") {
+      console.log("Ghi lịch sử quét lỗi:", error.message);
+    }
+  } catch (e) {
+    console.log("Ghi lịch sử quét lỗi:", (e as Error).message);
+  }
 }
 
 interface NotifFields {
@@ -524,7 +594,14 @@ interface UrlExtract {
 // không đụng quota 1.500). links = link bài trên trang để AI CHỌN (thông báo trỏ đúng bài
 // thay vì trang chủ — quan trọng với trang tin tức). Lỗi → throw để caller xử lý.
 // deno-lint-ignore no-explicit-any
-async function extractUrlAI(supabase: any, rule: Rule, page: WatchPage, links: PageLink[] = [], avoidTitles: string[] = []): Promise<UrlExtract> {
+async function extractUrlAI(
+  supabase: any,
+  rule: Rule,
+  page: WatchPage,
+  links: PageLink[] = [],
+  avoidTitles: string[] = [],
+  rejectedTitles: string[] = [],
+): Promise<UrlExtract> {
   const hasCond = Boolean(rule.condition && rule.condition.trim());
   const prev = rule.last_value?.trim() ?? "";
   const linkList = links.length
@@ -535,6 +612,9 @@ async function extractUrlAI(supabase: any, rule: Rule, page: WatchPage, links: P
   // trùng so tiêu đề; sửa gốc vụ "rule đặt giờ mấy hôm liền gửi cùng 1 thông báo").
   const avoid = avoidTitles.length
     ? `\nCÁC BẢN TIN ĐÃ GỬI CHO NGƯỜI DÙNG RỒI (mới nhất trước):\n${avoidTitles.map((t) => `- ${t}`).join("\n")}\nNếu trang CÓ thông tin mới so với các bản tin trên → tập trung vào điểm MỚI và đặt "title" KHÁC hẳn các tiêu đề trên. Nếu trang KHÔNG có gì mới hơn → đặt "title" GIỐNG HỆT tiêu đề gần nhất ở trên và "changed": false (TUYỆT ĐỐI không diễn đạt lại tiêu đề cũ cho khác đi).\n`
+    : "";
+  const rejected = rejectedTitles.length
+    ? `\nCÁC KẾT QUẢ NGƯỜI DÙNG ĐÃ ĐÁNH DẤU "KHÔNG LIÊN QUAN":\n${rejectedTitles.map((t) => `- ${t}`).join("\n")}\nKhông chọn lại nội dung giống các kết quả trên.\n`
     : "";
   try {
     const { text, model: usedModel } = await geminiGenerate({
@@ -550,7 +630,7 @@ NỘI DUNG TRANG (đã bỏ HTML):
 """
 ${page.text.slice(0, 12000)}
 """
-${linkList}${avoid}
+${linkList}${avoid}${rejected}
 Trả JSON:
 {
   "found": true nếu trang CÓ thông tin người dùng cần, false nếu không thấy,
@@ -690,12 +770,14 @@ async function monitorFeedItems(
   seenTitles: Set<string>,
   seenLinks: Set<string>,
   g: UrlGates,
+  feedback?: FeedbackProfile,
 ): Promise<MonitorRuleResult | null> {
   if (items.length === 0) return null;
 
   // Chống trùng 2 lớp: tiêu đề + LINK chuẩn hóa (báo sửa tít nhẹ thì link vẫn bắt được).
   const unseen = items
     .filter((it) => {
+      if (feedback && rejectedByFeedback({ title: it.title, source_url: it.link }, feedback)) return false;
       if (seenTitles.has(normTitle(it.title))) return false;
       const l = normLink(it.link);
       return !l || !seenLinks.has(l);
@@ -747,6 +829,7 @@ async function monitorUrlViaFeed(
   seenTitles: Set<string>,
   seenLinks: Set<string>,
   g: UrlGates,
+  feedback?: FeedbackProfile,
 ): Promise<MonitorRuleResult | null> {
   const feedUrl = discoverFeedUrl(page.html, page.finalUrl);
   if (!feedUrl || !isWatchableUrl(feedUrl)) return null;
@@ -762,7 +845,7 @@ async function monitorUrlViaFeed(
   } catch {
     return null;
   }
-  return await monitorFeedItems(supabase, rule, items, seenTitles, seenLinks, g);
+  return await monitorFeedItems(supabase, rule, items, seenTitles, seenLinks, g, feedback);
 }
 
 // Quét 1 rule THEO DÕI TRANG WEB: fetch URL (kèm quyền đăng nhập nếu người dùng đã cấp)
@@ -805,7 +888,7 @@ async function monitorUrl(supabase: any, rule: Rule, manual = false): Promise<Mo
 
   // Tiêu đề + link đã gửi — chống báo lại cùng 1 bài (giữa 2 bài mới, đọc lại trang vẫn thấy bài cũ).
   const { data: existing } = await supabase
-    .from("notifications").select("id, title, source_url").eq("rule_id", rule.id)
+    .from("notifications").select("id, title, source, source_url, feedback").eq("rule_id", rule.id)
     .order("created_at", { ascending: false }).limit(60);
   const seenTitles = new Set<string>(
     (existing ?? []).map((n: { title: string }) => normTitle(String(n.title ?? ""))).filter(Boolean),
@@ -813,26 +896,27 @@ async function monitorUrl(supabase: any, rule: Rule, manual = false): Promise<Mo
   const seenLinks = new Set<string>(
     (existing ?? []).map((n: { source_url?: string }) => normLink(String(n.source_url ?? ""))).filter(Boolean),
   );
+  const feedback = buildFeedbackProfile(existing ?? []);
 
   // watch_url là FEED TRỰC TIẾP (reddit .rss / youtube feeds/videos.xml / github .atom —
   // người dùng dán thẳng hoặc normalizeWatchUrl quy đổi) → xử lý dạng feed, khỏi bóc HTML.
   if (looksLikeFeed(page.html)) {
     const items = parseRss(page.html);
     if (items.length > 0) {
-      const viaSelf = await monitorFeedItems(supabase, rule, items, seenTitles, seenLinks, gates);
+      const viaSelf = await monitorFeedItems(supabase, rule, items, seenTitles, seenLinks, gates, feedback);
       // Feed là TOÀN BỘ nội dung nguồn: không bài mới/liên quan → im, chờ lượt sau.
       return withHash(viaSelf ?? { inserted: 0, note: { title: "", kind: "skipped" } });
     }
   }
 
   // ƯU TIÊN FEED trang tự khai báo (tin tức/blog) — link bài thật, dedup chuẩn.
-  const viaFeed = await monitorUrlViaFeed(supabase, rule, page, seenTitles, seenLinks, gates);
+  const viaFeed = await monitorUrlViaFeed(supabase, rule, page, seenTitles, seenLinks, gates, feedback);
   if (viaFeed) return withHash(viaFeed);
 
   // ĐỌC TRANG: kèm danh sách link bài để AI chọn — thông báo trỏ đúng BÀI thay vì trang chủ.
   const links = extractPageLinks(page.html, page.finalUrl);
   const avoidTitles = recentRealTitles((existing ?? []).map((n: { title: string }) => n.title));
-  const ex = await extractUrlAI(supabase, rule, page, links, avoidTitles);
+  const ex = await extractUrlAI(supabase, rule, page, links, avoidTitles, feedback.rejectedTitles);
 
   // Nhiều trang trả 200 nhưng nội dung chính bị che sau form login → AI phát hiện.
   // CHỐT CHẶN chống hỏi quyền oan: trang có NHIỀU text đọc được (>6000 ký tự) gần như
@@ -853,6 +937,10 @@ async function monitorUrl(supabase: any, rule: Rule, manual = false): Promise<Mo
   // "Thực sự đổi": lần đầu (chưa có mốc) = đổi; còn lại tin AI + so sánh giá trị chuẩn hóa.
   const reallyChanged = prevNorm === "" || (curNorm !== "" && curNorm !== prevNorm) || ex.changed;
   const title = ex.title.trim() || `Cập nhật từ ${host}`;
+  const selectedUrl = ex.link_index >= 0 && links[ex.link_index]
+    ? links[ex.link_index].url
+    : page.finalUrl;
+  if (rejectedByFeedback({ title, source_url: selectedUrl }, feedback)) return skipped;
   // CHỐNG TRÙNG: tiêu đề đã gửi + giá trị không đổi = nội dung y nguyên lần trước → im.
   const fresh = !seenTitles.has(normTitle(title)) || (curNorm !== "" && curNorm !== prevNorm);
   if (!fresh) {
@@ -1088,6 +1176,7 @@ async function monitorRssPath(
   seenLinks: Set<string>,
   prev: PrevNotif | undefined,
   rssCache?: RssCache,
+  feedback?: FeedbackProfile,
 ): Promise<MonitorRuleResult | null> {
   const items = await fetchRssItems(rule.category, rssCache);
   if (!items || items.length === 0) return null;
@@ -1096,6 +1185,7 @@ async function monitorRssPath(
   // (2 lớp: tiêu đề + link chuẩn hóa — báo sửa tít nhẹ thì link vẫn bắt được).
   const unseen = items
     .filter((it) => {
+      if (feedback && rejectedByFeedback({ title: it.title, source_url: it.link }, feedback)) return false;
       if (seenTitles.has(normTitle(it.title))) return false;
       const l = normLink(it.link);
       return !l || !seenLinks.has(l);
@@ -1257,7 +1347,7 @@ async function monitorRule(supabase: any, rule: Rule, manual = false, rssCache?:
   // NÉ các bài đó (sửa gốc vòng lặp "luôn trả đúng 1 bài nổi nhất → trùng mãi → toàn filler").
   const { data: existing } = await supabase
     .from("notifications")
-    .select("id, title, source, source_url, created_at")
+    .select("id, title, source, source_url, created_at, feedback")
     .eq("rule_id", rule.id)
     .order("created_at", { ascending: false });
   const seenTitles = new Set<string>(
@@ -1267,6 +1357,7 @@ async function monitorRule(supabase: any, rule: Rule, manual = false, rssCache?:
     (existing ?? []).map((n: { source_url?: string }) => normLink(String(n.source_url ?? ""))).filter(Boolean)
   );
   const avoidTitles = recentRealTitles((existing ?? []).map((n: { title: string }) => n.title));
+  const feedback = buildFeedbackProfile(existing ?? []);
   const prev = (existing ?? [])[0] as PrevNotif | undefined;
 
   const ctx: GateCtx = { hasCond, forceSend, scheduled, importantOnly, changeGate, lastValNorm };
@@ -1274,7 +1365,7 @@ async function monitorRule(supabase: any, rule: Rule, manual = false, rssCache?:
   // ĐƯỜNG RSS TRƯỚC (Pha C): tin lấy từ feed báo VN — link luôn thật, dedup chuẩn,
   // chỉ tốn 1 call flash-lite (không grounding). Chỉ khi hạ tầng RSS/AI hỏng mới
   // rơi xuống Gemini + Google Search bên dưới (giữ grounding làm phương án cuối).
-  const rssResult = await monitorRssPath(supabase, rule, ctx, seenTitles, seenLinks, prev, rssCache);
+  const rssResult = await monitorRssPath(supabase, rule, ctx, seenTitles, seenLinks, prev, rssCache, feedback);
   if (rssResult) return rssResult;
 
   // Gọi Gemini (lỗi mạng/quota sẽ THROW → caller xử lý; chỉ nuốt lỗi parse).
@@ -1283,7 +1374,7 @@ async function monitorRule(supabase: any, rule: Rule, manual = false, rssCache?:
   try {
     const gen = await geminiGenerate({
       system: SEARCH_SYSTEM,
-      user: buildPrompt(rule, avoidTitles),
+      user: buildPrompt(rule, avoidTitles, feedback.rejectedTitles),
       grounding: true,
       temperature: 0.2,
     });
@@ -1303,7 +1394,11 @@ async function monitorRule(supabase: any, rule: Rule, manual = false, rssCache?:
 
   // Chọn ứng viên: Gemini trả tối đa 3 bài — lấy bài ĐẦU TIÊN chưa trùng tiêu đề đã gửi
   // (bỏ bài quá cũ theo published_date). Tất cả trùng → giữ bài đầu cho nhánh fallback.
-  const { top, fresh } = pickFreshItem(items, seenTitles, lastValNorm);
+  const feedbackFilteredItems = items.filter((item) => !rejectedByFeedback({
+    title: item.title,
+    source_url: item.source_url,
+  }, feedback));
+  const { top, fresh } = pickFreshItem(feedbackFilteredItems, seenTitles, lastValNorm);
   let value: string | undefined;
   let inserted = 0;
   let note: { title: string; kind: NotifKind } | undefined;
@@ -1403,6 +1498,19 @@ async function previewGate(supabase: any, rule: Rule): Promise<GatePreview> {
     importantPushed: false,
     importantReason: "",
   };
+
+  if (isReminder(rule)) {
+    base.provider = "reminder";
+    base.found = true;
+    base.candidateTitle = rule.title || rule.keyword;
+    base.isImportant = true;
+    base.matchesCondition = true;
+    base.changed = true;
+    base.fresh = true;
+    base.allKind = "real";
+    base.importantPushed = true;
+    return base;
+  }
 
   // ROUTER: rule "url" → soi bằng fetch trang thật + flash-lite (giống monitorUrl, không insert).
   const srcType: SourceType = ruleWatchUrl(rule) ? "url" : detectSourceType(rule.keyword);
@@ -1633,14 +1741,15 @@ Deno.serve(async (req) => {
     }
 
     const body = await req.json().catch(() => ({}));
-    const { ruleId, userId, dryRun, gateCheck, reminderOnly, tick } = body as {
+    const { ruleId, userId, dryRun, gateCheck, reminderOnly, tick, previewRule } = body as {
       ruleId?: string; userId?: string; dryRun?: boolean; gateCheck?: boolean;
       reminderOnly?: boolean; tick?: boolean;
+      previewRule?: Record<string, unknown>;
     };
 
     if (!isAdmin && authUserId) {
-      const rateConfig = ruleId
-        ? gateCheck
+      const rateConfig = ruleId || previewRule
+        ? gateCheck || previewRule
           ? { bucket: "run-monitor:gate", short: { limit: 6, seconds: 600 }, daily: 40 }
           : { bucket: "run-monitor:manual", short: { limit: 3, seconds: 300 }, daily: 30 }
         : { bucket: "run-monitor:user", short: { limit: 2, seconds: 900 }, daily: 12 };
@@ -1657,6 +1766,69 @@ Deno.serve(async (req) => {
           429,
           { "Retry-After": String(rate.retryAfterSeconds) },
         );
+      }
+    }
+
+    // PREVIEW BẢN NHÁP: chạy cùng pipeline dữ liệu/gate như rule thật nhưng không insert rule hay notification.
+    // Có ruleId = preview bản chỉnh sửa (giữ baseline/dedup của rule cũ); không có = rule chưa lưu.
+    if (previewRule) {
+      let saved: Rule | null = null;
+      if (ruleId) {
+        const { data, error } = await supabase.from("rules").select("*").eq("id", ruleId).maybeSingle();
+        if (error) return json({ error: error.message }, 500);
+        if (!data) return json({ error: "Không tìm thấy rule." }, 404);
+        saved = data as Rule;
+        if (!isAdmin && saved.user_id !== authUserId) {
+          return json({ error: "Bạn không có quyền với rule này." }, 403);
+        }
+      }
+
+      const raw = { ...(saved ?? {}), ...previewRule } as Record<string, unknown>;
+      const legacyFrequency: Record<string, string> = {
+        m30: "30", hourly: "60", daily: "1440", weekly: "10080", realtime: "30",
+      };
+      const frequency = legacyFrequency[String(raw.frequency ?? "")] ?? raw.frequency ?? "1440";
+      const validation = validateAiRules([{
+        ...raw,
+        title: raw.title || raw.keyword,
+        description: raw.description || `Theo dõi ${String(raw.keyword ?? "")}`,
+        category: raw.category || "other",
+        frequency,
+        run_at: raw.run_at || "",
+        condition: raw.condition || "",
+        sources: raw.sources || "",
+        source_type: raw.source_type || "search",
+      }]);
+      if (validation.rules.length === 0) {
+        return json({ error: validation.errors[0] || "Bản nháp rule không hợp lệ." }, 400);
+      }
+
+      const draft = validation.rules[0];
+      const sameWatchUrl = Boolean(saved?.watch_url && saved.watch_url === draft.watch_url);
+      const rule: Rule = {
+        ...(saved ?? {}),
+        id: saved?.id ?? "00000000-0000-0000-0000-000000000000",
+        user_id: saved?.user_id ?? authUserId ?? undefined,
+        title: draft.title,
+        description: draft.description,
+        keyword: draft.keyword,
+        category: draft.category,
+        sources: draft.sources,
+        frequency: draft.frequency,
+        run_at: draft.run_at || null,
+        condition: draft.condition,
+        source_type: draft.source_type || null,
+        remind_at: draft.remind_at || null,
+        watch_url: draft.watch_url || null,
+        watch_auth: sameWatchUrl ? saved?.watch_auth ?? null : null,
+        notify_mode: raw.notify_mode === "important" ? "important" : "all",
+        is_active: false,
+      };
+      try {
+        return json(await previewGate(supabase, rule));
+      } catch (e) {
+        if (isQuotaErr(e)) return json({ error: "AI đang quá tải/hết lượt (quota). Thử lại sau." }, 429);
+        return json({ error: (e as Error).message }, 500);
       }
     }
 
@@ -1803,11 +1975,14 @@ Deno.serve(async (req) => {
       if (checked > 0) await sleep(4000);
       checked++;
       if (rule.keyword) scannedNames.push(rule.keyword);
+      const scanStartedAt = Date.now();
       let newValue: string | undefined;
       let newHash: string | undefined;
+      let scanResult: MonitorRuleResult | null = null;
       let scanError: string | null = null; // lỗi lượt này (null = quét êm) → rules.last_error
       try {
         const res = await monitorRule(supabase, rule, manual, rssCache);
+        scanResult = res;
         inserted += res.inserted;
         newValue = res.value;
         newHash = res.contentHash;
@@ -1824,6 +1999,16 @@ Deno.serve(async (req) => {
           if (!manual && isScheduled(rule)) {
             await supabase.from("rules").update({ last_run_at: prevRunAt }).eq("id", rule.id);
           }
+          await logRuleScan(
+            supabase,
+            rule,
+            trigger,
+            "quota",
+            "Dịch vụ AI đang quá tải hoặc hết hạn mức; hệ thống sẽ tự thử lại ở lượt kế tiếp.",
+            "",
+            0,
+            scanStartedAt,
+          );
           continue;
         }
         scanError = String((e as Error).message ?? e).slice(0, 300);
@@ -1847,6 +2032,24 @@ Deno.serve(async (req) => {
         // tuyệt đối không để mất last_run_at (mất là loạn lịch quét).
         delete upd.last_error;
         await supabase.from("rules").update(upd).eq("id", rule.id);
+      }
+
+      if (scanError) {
+        await logRuleScan(
+          supabase, rule, trigger, "error", scanError, "", 0, scanStartedAt,
+        );
+      } else if (scanResult) {
+        const outcome = describeScanResult(scanResult);
+        await logRuleScan(
+          supabase,
+          rule,
+          trigger,
+          outcome.status,
+          outcome.reason,
+          scanResult.note?.title ?? "",
+          scanResult.inserted,
+          scanStartedAt,
+        );
       }
     }
 

@@ -11,6 +11,24 @@ export interface MonitorResult {
   quotaHit?: boolean; // server dừng sớm vì hết quota Gemini
 }
 
+export type PreviewKind = "real" | "nochange" | "related" | "none" | "skipped";
+export interface RulePreviewResult {
+  gateCheck: true;
+  keyword: string;
+  currentMode: string;
+  provider?: string;
+  found: boolean;
+  candidateTitle: string;
+  value: string;
+  isImportant: boolean;
+  matchesCondition: boolean;
+  changed: boolean;
+  fresh: boolean;
+  allKind: PreviewKind;
+  importantPushed: boolean;
+  importantReason: string;
+}
+
 // Không retry với lỗi do hết quota / quyền (4xx, 429) — retry chỉ tổ đốt thêm quota.
 function isNonRetryable(msg: string): boolean {
   const m = msg.toLowerCase();
@@ -18,7 +36,7 @@ function isNonRetryable(msg: string): boolean {
     m.includes("401") || m.includes("403");
 }
 
-async function invokeMonitor(body: Record<string, unknown>): Promise<MonitorResult> {
+async function invokeRunMonitor<T>(body: Record<string, unknown>): Promise<T> {
   let lastErr: unknown;
   // Tối đa 3 lần, backoff 1s/2s — chỉ retry lỗi tạm thời (mạng/5xx/timeout).
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -26,11 +44,7 @@ async function invokeMonitor(body: Record<string, unknown>): Promise<MonitorResu
       const { data, error } = await supabase.functions.invoke("run-monitor", { body });
       if (error) throw new Error(error.message);
       if (data?.error) throw new Error(data.error);
-      return {
-        inserted: data?.inserted ?? 0,
-        checked: data?.checked ?? 0,
-        quotaHit: Boolean(data?.quotaHit),
-      };
+      return data as T;
     } catch (err) {
       lastErr = err;
       const msg = err instanceof Error ? err.message : String(err);
@@ -43,10 +57,28 @@ async function invokeMonitor(body: Record<string, unknown>): Promise<MonitorResu
 
 // Quét 1 rule ngay (nút "Kiểm tra tin ngay").
 export async function runMonitorForRule(rule: Rule): Promise<MonitorResult> {
-  return invokeMonitor({ ruleId: rule.id });
+  const data = await invokeRunMonitor<Partial<MonitorResult>>({ ruleId: rule.id });
+  return {
+    inserted: data.inserted ?? 0,
+    checked: data.checked ?? 0,
+    quotaHit: Boolean(data.quotaHit),
+  };
 }
 
 // Quét mọi rule active của user (khi mở app). Cron lo phần nền 24/7.
 export async function runMonitorForActiveRules(userId: string): Promise<MonitorResult> {
-  return invokeMonitor({ userId });
+  const data = await invokeRunMonitor<Partial<MonitorResult>>({ userId });
+  return {
+    inserted: data.inserted ?? 0,
+    checked: data.checked ?? 0,
+    quotaHit: Boolean(data.quotaHit),
+  };
+}
+
+// Soi bản nháp bằng dữ liệu thật nhưng không lưu rule/notification. Có ruleId khi preview chỉnh sửa.
+export async function previewRule(
+  draft: Record<string, unknown>,
+  ruleId?: string,
+): Promise<RulePreviewResult> {
+  return invokeRunMonitor<RulePreviewResult>({ previewRule: draft, ...(ruleId ? { ruleId } : {}) });
 }

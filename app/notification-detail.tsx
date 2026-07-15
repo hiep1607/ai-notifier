@@ -33,6 +33,7 @@ export default function NotificationDetailScreen() {
   const [notification, setNotification] = useState<Notification | null>(null);
   const [loading, setLoading] = useState(true);
   const [aiSummaryEnabled, setAiSummaryEnabled] = useState(true);
+  const [savingFeedback, setSavingFeedback] = useState(false);
 
   useEffect(() => {
     AsyncStorage.getItem("@settings").then((raw) => {
@@ -102,6 +103,23 @@ export default function NotificationDetailScreen() {
       await Share.share({ message: parts.join("\n\n") });
     } catch {
       // user cancelled
+    }
+  };
+
+  const handleFeedback = async (feedback: "useful" | "not_relevant") => {
+    if (savingFeedback || notification.feedback === feedback) return;
+    const previous = notification;
+    const feedbackAt = new Date().toISOString();
+    setNotification({ ...notification, feedback, feedback_at: feedbackAt });
+    setSavingFeedback(true);
+    const { error } = await supabase
+      .from("notifications")
+      .update({ feedback, feedback_at: feedbackAt })
+      .eq("id", notification.id);
+    setSavingFeedback(false);
+    if (error) {
+      setNotification(previous);
+      alertMessage("Chưa lưu được phản hồi", error.message);
     }
   };
 
@@ -194,6 +212,57 @@ export default function NotificationDetailScreen() {
           <Text style={styles.boxText}>{notification.details}</Text>
         </View>
       ) : null}
+
+      {/* PHẢN HỒI — dùng cho chính rule này để giảm các kết quả tương tự ở lần quét sau. */}
+      <View style={styles.feedbackBox}>
+        <Text style={styles.feedbackTitle}>Thông báo này có phù hợp không?</Text>
+        <Text style={styles.feedbackHint}>
+          Phản hồi giúp hệ thống ưu tiên kết quả hữu ích hơn cho rule này.
+        </Text>
+        <View style={styles.feedbackActions}>
+          <TouchableOpacity
+            style={[
+              styles.feedbackButton,
+              notification.feedback === "useful" && styles.feedbackUsefulSelected,
+            ]}
+            onPress={() => handleFeedback("useful")}
+            disabled={savingFeedback}
+          >
+            <Ionicons
+              name={notification.feedback === "useful" ? "thumbs-up" : "thumbs-up-outline"}
+              size={18}
+              color={notification.feedback === "useful" ? colors.success : colors.subText}
+            />
+            <Text style={[
+              styles.feedbackButtonText,
+              notification.feedback === "useful" && { color: colors.success },
+            ]}>Hữu ích</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[
+              styles.feedbackButton,
+              notification.feedback === "not_relevant" && styles.feedbackNegativeSelected,
+            ]}
+            onPress={() => handleFeedback("not_relevant")}
+            disabled={savingFeedback}
+          >
+            <Ionicons
+              name={notification.feedback === "not_relevant" ? "thumbs-down" : "thumbs-down-outline"}
+              size={18}
+              color={notification.feedback === "not_relevant" ? colors.warning : colors.subText}
+            />
+            <Text style={[
+              styles.feedbackButtonText,
+              notification.feedback === "not_relevant" && { color: colors.warning },
+            ]}>Không liên quan</Text>
+          </TouchableOpacity>
+        </View>
+        {notification.feedback ? (
+          <Text style={styles.feedbackSaved}>
+            {savingFeedback ? "Đang lưu..." : "Đã ghi nhận phản hồi của bạn."}
+          </Text>
+        ) : null}
+      </View>
 
       {/* THÔNG BÁO "CẦN CẤP QUYỀN" (🔒 từ rule theo dõi trang web): nút đi thẳng tới màn
           cấp quyền của rule — người dùng bấm Cho phép/Không, khỏi tự mò đường. */}
@@ -364,11 +433,67 @@ function createStyles(C: AppColors) {
       backgroundColor: C.primary,
       borderRadius: RADIUS.md,
       paddingVertical: 16,
+      marginBottom: 12,
     },
     sourceButtonText: {
       color: "white",
       fontSize: 16,
       fontWeight: "bold",
+    },
+    feedbackBox: {
+      backgroundColor: C.card,
+      borderRadius: RADIUS.lg,
+      padding: 18,
+      marginBottom: 22,
+      borderWidth: 1,
+      borderColor: C.border,
+    },
+    feedbackTitle: {
+      color: C.text,
+      fontSize: 16,
+      fontWeight: "700",
+    },
+    feedbackHint: {
+      color: C.subText,
+      fontSize: 13,
+      lineHeight: 19,
+      marginTop: 6,
+    },
+    feedbackActions: {
+      flexDirection: "row",
+      gap: 10,
+      marginTop: 14,
+    },
+    feedbackButton: {
+      flex: 1,
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 7,
+      borderWidth: 1,
+      borderColor: C.border,
+      borderRadius: RADIUS.md,
+      paddingVertical: 12,
+      backgroundColor: C.inputBg,
+    },
+    feedbackUsefulSelected: {
+      borderColor: C.success,
+      backgroundColor: C.success + "12",
+    },
+    feedbackNegativeSelected: {
+      borderColor: C.warning,
+      backgroundColor: C.warning + "12",
+    },
+    feedbackButtonText: {
+      color: C.subText,
+      fontSize: 13,
+      fontWeight: "700",
+    },
+    feedbackSaved: {
+      color: C.subText,
+      fontSize: 12,
+      marginTop: 10,
+      textAlign: "center",
     },
   });
 }

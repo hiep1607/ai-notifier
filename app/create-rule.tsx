@@ -23,6 +23,8 @@ import { useTheme } from "../contexts/ThemeContext";
 import { findCategory, formatSchedule } from "../lib/ruleOptions";
 import { SCREEN, RADIUS, type AppColors } from "../lib/theme";
 import SuggestionChip from "../components/SuggestionChip";
+import RulePreviewPanel from "../components/RulePreviewPanel";
+import { previewRule, RulePreviewResult } from "../lib/monitor";
 
 interface ChatMessage {
   role: "user" | "ai";
@@ -66,6 +68,8 @@ export default function CreateRuleScreen() {
   // important[i] = true → rule i sẽ lưu notify_mode "important" (chỉ báo tin quan trọng).
   // Mặc định bật sẵn cho rule mà AI chấm noise_risk = "high".
   const [important, setImportant] = useState<boolean[]>([]);
+  const [rulePreviews, setRulePreviews] = useState<(RulePreviewResult | null)[]>([]);
+  const [previewingIndex, setPreviewingIndex] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [confirming, setConfirming] = useState(false);
   // Nhập bằng GIỌNG NÓI: web = Web Speech API (chữ hiện dần), mobile = ghi âm → Gemini
@@ -76,9 +80,12 @@ export default function CreateRuleScreen() {
   const showPreview = (rules: RuleDraft[]) => {
     setPreviewRules(rules);
     setImportant(rules.map((r) => r.noise_risk === "high"));
+    setRulePreviews(rules.map(() => null));
   };
-  const toggleImportant = (idx: number) =>
+  const toggleImportant = (idx: number) => {
     setImportant((prev) => prev.map((v, i) => (i === idx ? !v : v)));
+    setRulePreviews((prev) => prev.map((v, i) => (i === idx ? null : v)));
+  };
   // Chọn mẫu → KHÔNG tạo ngay, mà hiện thẻ preview để người dùng XEM LẠI rồi mới bấm Tạo.
   // Không gọi AI nên dùng được cả khi Gemini kẹt quota.
   const applyTemplate = (t: (typeof QUICK_TEMPLATES)[number]) => {
@@ -119,6 +126,7 @@ export default function CreateRuleScreen() {
     historyRef.current.push({ role: "user", content: text });
     setInput("");
     setPreviewRules([]);
+    setRulePreviews([]);
     setLoading(true);
     scrollToBottom();
 
@@ -190,6 +198,7 @@ export default function CreateRuleScreen() {
 
   const handleDiscard = () => {
     setPreviewRules([]);
+    setRulePreviews([]);
     setMessages((prev) => [
       ...prev,
       { role: "ai", text: "Đã bỏ các rule đó. Bạn muốn chỉnh gì hoặc mô tả lại nhé!" },
@@ -201,6 +210,24 @@ export default function CreateRuleScreen() {
   const removePreviewAt = (idx: number) => {
     setPreviewRules((prev) => prev.filter((_, i) => i !== idx));
     setImportant((prev) => prev.filter((_, i) => i !== idx));
+    setRulePreviews((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  const handlePreviewAt = async (rule: RuleDraft, idx: number) => {
+    setPreviewingIndex(idx);
+    try {
+      const result = await previewRule({
+        ...rule,
+        description: rule.description || `Theo dõi ${rule.keyword}`,
+        notify_mode: important[idx] ? "important" : "all",
+        source_type: rule.source_type || "search",
+      });
+      setRulePreviews((prev) => prev.map((value, i) => (i === idx ? result : value)));
+    } catch (err) {
+      alertMessage("Chưa xem thử được", String((err as Error).message ?? err));
+    } finally {
+      setPreviewingIndex(null);
+    }
   };
 
   const renderRuleCard = (r: RuleDraft, idx: number, total: number) => {
@@ -273,6 +300,14 @@ export default function CreateRuleScreen() {
             </TouchableOpacity>
           </View>
         )}
+        {r.source_type !== "reminder" || r.remind_at ? (
+          <RulePreviewPanel
+            result={rulePreviews[idx]}
+            loading={previewingIndex === idx}
+            onPreview={() => handlePreviewAt(r, idx)}
+            disabled={confirming || (previewingIndex !== null && previewingIndex !== idx)}
+          />
+        ) : null}
       </View>
     );
   };

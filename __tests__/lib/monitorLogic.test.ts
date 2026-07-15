@@ -3,6 +3,7 @@
 // edge function nên không test được; giờ import cùng 1 file code chạy thật trên server.
 import {
   intervalMs,
+  nextDueAt,
   isDue,
   isTickDue,
   dueAt,
@@ -14,6 +15,8 @@ import {
   vnMinutesOfDay,
   isQuietNow,
   normTitle,
+  buildFeedbackProfile,
+  rejectedByFeedback,
   normVal,
   isFillerTitle,
   recentRealTitles,
@@ -38,6 +41,66 @@ import {
   looksLikeFeed,
 } from "../../supabase/functions/_shared/monitorLogic";
 import { parseRss } from "../../supabase/functions/_shared/rss";
+
+describe("nextDueAt", () => {
+  it("returns last run plus frequency for a periodic rule that is not due", () => {
+    const now = Date.parse("2026-07-01T10:30:00Z");
+    expect(nextDueAt({ frequency: "60", last_run_at: "2026-07-01T10:00:00Z" }, now))
+      .toBe(Date.parse("2026-07-01T11:00:00Z"));
+  });
+
+  it("returns now when a periodic rule is already due", () => {
+    const now = Date.parse("2026-07-01T10:30:00Z");
+    expect(nextDueAt({ frequency: "60", last_run_at: "2026-07-01T09:00:00Z" }, now)).toBe(now);
+    expect(nextDueAt({ frequency: "60", last_run_at: null }, now)).toBe(now);
+  });
+
+  it("uses the nearest scheduled Vietnam-time slot", () => {
+    const before8vn = Date.parse("2026-07-01T00:30:00Z");
+    expect(nextDueAt({ frequency: "1440", run_at: "08:00", last_run_at: "2026-06-30T01:00:00Z" }, before8vn))
+      .toBe(Date.parse("2026-07-01T01:00:00Z"));
+
+    const afterRun = Date.parse("2026-07-01T02:00:00Z");
+    expect(nextDueAt({ frequency: "1440", run_at: "08:00", last_run_at: "2026-07-01T01:02:00Z" }, afterRun))
+      .toBe(Date.parse("2026-07-02T01:00:00Z"));
+  });
+
+  it("returns the selected reminder timestamp", () => {
+    const remindAt = "2026-07-20T09:00:00+07:00";
+    expect(nextDueAt({ source_type: "reminder", remind_at: remindAt }, Date.parse("2026-07-01T00:00:00Z")))
+      .toBe(Date.parse(remindAt));
+  });
+});
+
+describe("feedback quality filter", () => {
+  it("rejects the same or strongly similar title marked not relevant", () => {
+    const profile = buildFeedbackProfile([
+      { title: "Bitcoin tăng mạnh sau quyết định lãi suất mới", source_url: "https://news.vn/a", feedback: "not_relevant" },
+    ]);
+    expect(rejectedByFeedback({
+      title: "Bitcoin tăng mạnh sau quyết định lãi suất mới nhất",
+      source_url: "https://other.vn/b",
+    }, profile)).toBe(true);
+    expect(rejectedByFeedback({ title: "Giá vàng SJC giảm nhẹ sáng nay" }, profile)).toBe(false);
+  });
+
+  it("only blocks a source after three negative ratings and no useful rating", () => {
+    const negatives = [1, 2, 3].map((i) => ({
+      title: `Bài không phù hợp số ${i}`,
+      source_url: `https://spam.example/post-${i}`,
+      feedback: "not_relevant",
+    }));
+    const blocked = buildFeedbackProfile(negatives);
+    expect(blocked.blockedHosts).toEqual(["spam.example"]);
+    expect(rejectedByFeedback({ title: "Nội dung hoàn toàn khác", source_url: "https://spam.example/new" }, blocked)).toBe(true);
+
+    const redeemed = buildFeedbackProfile([
+      ...negatives,
+      { title: "Bài tốt", source_url: "https://spam.example/good", feedback: "useful" },
+    ]);
+    expect(redeemed.blockedHosts).toEqual([]);
+  });
+});
 
 describe("intervalMs", () => {
   it("đổi số phút dạng chuỗi sang ms, tối thiểu 30 phút", () => {

@@ -119,6 +119,34 @@ export function dueAt(rule: SchedulableRule, nowMs = Date.now()): number {
   return (rule.last_run_at ? Date.parse(rule.last_run_at) : 0) + intervalMs(rule.frequency);
 }
 
+// Mốc chạy tiếp theo để hiển thị cho người dùng. Khi rule đang tới hạn thì trả `now`
+// (nghĩa là hệ thống sẽ quét ở nhịp gần nhất), không trả một mốc quá khứ khó hiểu.
+export function nextDueAt(rule: SchedulableRule, nowMs = Date.now()): number {
+  if (isReminder(rule)) return Date.parse(String(rule.remind_at));
+  if (isDue(rule, nowMs)) return nowMs;
+
+  if (isScheduled(rule)) {
+    const [h, m] = String(rule.run_at).split(":").map(Number);
+    const vn = new Date(nowMs + 7 * 3600000);
+    let candidate = Date.UTC(
+      vn.getUTCFullYear(),
+      vn.getUTCMonth(),
+      vn.getUTCDate(),
+      h - 7,
+      m,
+    );
+    const last = rule.last_run_at ? Date.parse(rule.last_run_at) : 0;
+    const interval = intervalMs(rule.frequency);
+    while (candidate <= nowMs || (last > 0 && candidate - last < interval - 5 * 3600000)) {
+      candidate += 24 * 3600000;
+    }
+    return candidate;
+  }
+
+  const last = rule.last_run_at ? Date.parse(rule.last_run_at) : nowMs;
+  return Math.max(nowMs, last + intervalMs(rule.frequency));
+}
+
 // Tầng ưu tiên khi nhiều rule cùng tới hạn trong 1 lượt (deadline 70s chỉ kịp một phần):
 // 0 = nhắc hẹn (nhạy giờ nhất, 0 AI) · 1 = rule GHIM GIỜ (lịch hẹn người dùng chủ động
 // đặt, phải đúng giờ) · 2 = còn lại (định kỳ trơn — trễ vài lượt cron không ai để ý).
@@ -148,6 +176,76 @@ export function isTickDue(rule: SchedulableRule, nowMs = Date.now()): boolean {
 
 export function normTitle(t: string): string {
   return t.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+export interface FeedbackRow {
+  title?: string | null;
+  source_url?: string | null;
+  feedback?: string | null;
+}
+
+export interface FeedbackProfile {
+  rejectedTitles: string[];
+  blockedHosts: string[];
+}
+
+function feedbackHost(raw?: string | null): string {
+  try {
+    return new URL(String(raw ?? "")).hostname.toLowerCase().replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+}
+
+// Học bảo thủ từ phản hồi: luôn né tiêu đề bị đánh dấu; chỉ né cả một nguồn khi nguồn đó
+// có >=3 phản hồi "không liên quan" và chưa từng có phản hồi "hữu ích" cho cùng rule.
+export function buildFeedbackProfile(rows: FeedbackRow[]): FeedbackProfile {
+  const rejectedTitles: string[] = [];
+  const negativeHosts = new Map<string, number>();
+  const usefulHosts = new Set<string>();
+
+  for (const row of rows) {
+    const host = feedbackHost(row.source_url);
+    if (row.feedback === "useful") {
+      if (host) usefulHosts.add(host);
+      continue;
+    }
+    if (row.feedback !== "not_relevant") continue;
+    const title = String(row.title ?? "").trim();
+    if (title && !rejectedTitles.includes(title)) rejectedTitles.push(title);
+    if (host) negativeHosts.set(host, (negativeHosts.get(host) ?? 0) + 1);
+  }
+
+  const blockedHosts = [...negativeHosts.entries()]
+    .filter(([host, count]) => count >= 3 && !usefulHosts.has(host))
+    .map(([host]) => host);
+  return { rejectedTitles: rejectedTitles.slice(0, 20), blockedHosts };
+}
+
+function feedbackTitleSimilar(candidate: string, rejected: string): boolean {
+  const a = normTitle(candidate);
+  const b = normTitle(rejected);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  if (Math.min(a.length, b.length) >= 18 && (a.includes(b) || b.includes(a))) return true;
+
+  const aTokens = new Set(a.split(/[^\p{L}\p{N}]+/u).filter((t) => t.length >= 2));
+  const bTokens = new Set(b.split(/[^\p{L}\p{N}]+/u).filter((t) => t.length >= 2));
+  if (aTokens.size === 0 || bTokens.size === 0) return false;
+  let common = 0;
+  for (const token of aTokens) if (bTokens.has(token)) common++;
+  const union = new Set([...aTokens, ...bTokens]).size;
+  return common >= 3 && common / union >= 0.6;
+}
+
+export function rejectedByFeedback(
+  candidate: { title?: string | null; source_url?: string | null },
+  profile: FeedbackProfile,
+): boolean {
+  const title = String(candidate.title ?? "");
+  if (profile.rejectedTitles.some((rejected) => feedbackTitleSimilar(title, rejected))) return true;
+  const host = feedbackHost(candidate.source_url);
+  return Boolean(host && profile.blockedHosts.includes(host));
 }
 
 export function normVal(s: string): string {
