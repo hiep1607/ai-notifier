@@ -58,6 +58,19 @@ describe("mergeRssItems", () => {
     expect(merged.filter((i) => i.link === a[0].link)).toHaveLength(1); // hết trùng
     expect(merged[0].title).toBe("Bài khác"); // 20:00 mới nhất lên đầu
   });
+
+  it("không để một feed nhiều bài chiếm hết danh sách", () => {
+    const item = (host: string, i: number) => ({
+      title: `${host}-${i}`,
+      link: `https://${host}/${i}`,
+      description: "",
+      pubDate: new Date(Date.parse("2026-07-02T12:00:00Z") - i * 60000).toISOString(),
+    });
+    const dominant = Array.from({ length: 10 }, (_, i) => item("a.vn", i));
+    const secondary = [item("b.vn", 20), item("b.vn", 21)];
+    const merged = mergeRssItems([dominant, secondary], 4);
+    expect(merged.filter((x) => x.link.includes("b.vn"))).toHaveLength(2);
+  });
 });
 
 describe("feedsForCategory & sourceFromLink", () => {
@@ -66,6 +79,14 @@ describe("feedsForCategory & sourceFromLink", () => {
     expect(feedsForCategory(null)).toEqual(CATEGORY_FEEDS.other);
     expect(feedsForCategory("khong-ton-tai")).toEqual(CATEGORY_FEEDS.other);
     expect(feedsForCategory("weather")).toEqual([]);
+  });
+
+  it("mỗi category RSS dùng các tòa soạn khác nhau", () => {
+    for (const [category, feeds] of Object.entries(CATEGORY_FEEDS)) {
+      if (category === "weather") continue;
+      const hosts = feeds.map((url) => new URL(url).hostname.replace(/^www\./, ""));
+      expect(new Set(hosts).size).toBe(hosts.length);
+    }
   });
 
   it("map hostname → tên báo; link hỏng → 'Web'", () => {

@@ -114,7 +114,16 @@ select cron.schedule(
               + 1440,
             1440
           ) < 10
-          and (last_run_at is null or last_run_at < now() - interval '10 minutes')
+          and (
+            last_run_at is null
+            or last_run_at < (
+              date_trunc('day', now() at time zone 'Asia/Ho_Chi_Minh')
+              + make_interval(
+                  hours => split_part(run_at, ':', 1)::int,
+                  mins => split_part(run_at, ':', 2)::int
+                )
+            ) at time zone 'Asia/Ho_Chi_Minh'
+          )
       )
     );
   $cron$

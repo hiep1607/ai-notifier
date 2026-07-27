@@ -13,7 +13,7 @@
 | AI | Google Gemini (server-side) with Search grounding + multi-model quota fallback | Real news with real URLs; free-tier quota is a hard constraint, so the whole scan pipeline is designed around it |
 | Data providers | Open-Meteo, CoinGecko, open.er-api.com, Vietnamese news RSS | Real numbers for free — AI is reserved for jobs that actually need AI |
 | Push | Expo Push API | One endpoint covers FCM + APNs; dead tokens are auto-pruned |
-| Quality | TypeScript everywhere, Jest (140 tests), deploy-and-probe script | Server scheduling/dedup logic is extracted into a pure module so Jest tests the exact code that runs in production |
+| Quality | TypeScript everywhere, Jest (177 tests), GitHub Actions, deploy-and-probe script | Server scheduling/dedup logic is extracted into a pure module so Jest tests the exact code that runs in production |
 
 ## How it works
 
@@ -46,6 +46,7 @@ already sent? quiet hours? → insert notification + Expo push
 - **Dedup is layered** (normalized titles + normalized links + "already sent" titles injected into the prompt + content fingerprint hash-gate), because every single layer was added after a real duplicate-notification complaint.
 - **Everything is best-effort.** A missing migration, a rate-limited model, or one broken source must never take down the whole background sweep.
 - **Deploys are probed.** tsc/Jest don't cover Deno edge functions — a syntax error once shipped "successfully" and a function was silently down for 3 days. The deploy script now boot-probes every function immediately.
+- **One command is the local/CI gate.** `npm run check` runs app typecheck, lint, all Jest suites, and Deno checks for every Edge Function; Expo Doctor separately catches native dependency drift.
 
 ## Repo map
 
@@ -57,3 +58,9 @@ already sent? quiet hours? → insert notification + Expo push
 | [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) | Architecture snapshot |
 | `supabase/functions/` | Edge Functions: generate-rule, run-monitor, transcribe, admin-api |
 | `supabase/migrations/` | Numbered SQL migrations (RLS, cron jobs, schema evolution) |
+| `supabase/config.toml` | Reproducible Supabase local-development configuration (Postgres 17) |
+| `.github/workflows/quality.yml` | Non-deploying quality gate for pushes and pull requests |
+
+## Maintainability boundary
+
+The top-level layout is intentional for Expo Router and does not need a wholesale `src/` migration. The main remaining debt is file size: `run-monitor/index.ts` is the orchestration hotspot and `app/rule-detail.tsx` is the largest UI screen. Split these incrementally behind the existing tests; do not combine that refactor with a production scheduling change.

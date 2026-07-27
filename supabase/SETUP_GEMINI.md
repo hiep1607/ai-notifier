@@ -1,6 +1,6 @@
 # Bật pipeline Gemini server-side (24/7) — các bước thủ công
 
-App giờ gọi 2 Edge Function (`generate-rule`, `run-monitor`) chạy Gemini trên Supabase.
+App dùng 4 Edge Function (`generate-rule`, `run-monitor`, `transcribe`, `admin-api`) trên Supabase.
 Key Gemini giấu trong Supabase secret, không lộ ra app. Cron quét nền 24/7.
 
 Làm các bước sau (chỉ bạn làm được — cần đăng nhập / key bí mật):
@@ -16,23 +16,36 @@ supabase link --project-ref <PROJECT_REF>   # vd idtibfiyfywcugdvlqal
 ```bash
 supabase secrets set GEMINI_API_KEY=<key_AI_Studio_cua_ban>
 # tuỳ chọn đổi model: supabase secrets set GEMINI_MODEL=gemini-2.5-flash
+# email được vào trang quản trị/quota:
+supabase secrets set ADMIN_EMAILS="a@x.com,b@y.com"
 ```
 > `SUPABASE_URL` và `SUPABASE_SERVICE_ROLE_KEY` đã có sẵn trong Edge Function runtime, không cần set.
 
-## 3. Deploy 2 function
+## 3. Áp migration và deploy functions
+
+Từ root project, sau khi `supabase link`:
+
 ```bash
-supabase functions deploy generate-rule
-supabase functions deploy run-monitor
+npm run db:push      # áp migration còn thiếu theo thứ tự 0001 → mới nhất
+npm run fn:deploy    # typecheck Deno → deploy 4 functions → boot-probe
 ```
 
+Script deploy không hardcode project ref: ưu tiên `SUPABASE_PROJECT_REF`, nếu không thì dùng project ref trong `supabase/.temp/project-ref` do `supabase link` tạo.
+
 ## 4. Bật cron quét nền (24/7)
-Mở **Supabase Dashboard → SQL Editor**, dán nội dung `migrations/0004_cron_run_monitor.sql`,
-thay `<PROJECT_REF>` và `<SERVICE_ROLE_KEY>` (Settings → API), rồi Run.
+Migration `0027_portable_cron.sql` dựng các job bằng secret trong Vault; `0033` sửa tick rule ghim giờ. Project hiện hữu tự chuyển secret từ job cũ. Với project mới, tạo một lần ba secret sau trong SQL Editor rồi chạy `npm run db:push`:
+
+```sql
+select vault.create_secret('https://<PROJECT_REF>.supabase.co', 'ai_notifier_project_url');
+select vault.create_secret('<SERVICE_ROLE_KEY>', 'ai_notifier_service_role_key');
+select vault.create_secret('<ADMIN_EMAIL>', 'ai_notifier_watchdog_email');
+```
 
 ## 5. Kiểm tra
 - App → tạo rule mới (chat AI vẫn chạy, giờ qua Gemini).
 - Rule detail → "Kiểm tra tin ngay" → phải ra thông báo tin thật kèm link.
 - Nền: `select * from cron.job_run_details order by start_time desc limit 5;`
+- Job: phải có `run-monitor`, `reminder-tick`, `watchdog`; command không được chứa URL/key thô.
 
 ---
 

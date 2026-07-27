@@ -1,5 +1,7 @@
 # Components Folder
 
+> Cập nhật 2026-07-27: thư mục hiện chứa các UI primitive dùng chung (`Card`, `FilterTabs`, `IconBadge`, `PrimaryButton`, `RulePreviewPanel`, `SettingRow`, `StatCard`, `SuggestionChip`). Component chỉ dùng bởi một route có thể colocate cạnh route; chỉ đưa vào đây khi có ranh giới hoặc khả năng tái sử dụng rõ.
+
 ## Mục đích
 
 Folder này chứa:
@@ -129,24 +131,11 @@ export default function StatsCard()
 
 ---
 
-# Những component dự kiến của app
+# Hướng tách tiếp theo
 
-## Home
-- StatsCard
-- RuleCard
-- AIInsightBox
-- PrimaryButton
-
----
-
-## Notifications
-- NotificationCard
-
----
-
-## AI Chat
-- ChatBubble
-- ChatInput
+- `app/rule-detail.tsx`: tách form sửa rule, lịch sử scan và danh sách thông báo thành component/hook theo feature.
+- `app/(tabs)/rules.tsx`: chỉ tách card/filter khi API props ổn định; không tạo wrapper một-lần-dùng chỉ để giảm số dòng.
+- Không refactor UI lớn cùng commit với thay đổi scheduler/Edge Function production.
 
 ---
 

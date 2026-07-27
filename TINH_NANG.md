@@ -6,6 +6,8 @@
 > **QUY TẮC CẬP NHẬT:** mỗi khi làm xong 1 chức năng mới hoặc đổi hành vi 1 chức năng có sẵn, cập nhật
 > đúng mục tương ứng bên dưới (thêm mục mới nếu là chức năng mới hẳn). Không cần ghi ngày/lịch sử ở đây
 > — lịch sử thay đổi đã có ở KE_HOACH.md, file này chỉ tả TRẠNG THÁI HIỆN TẠI.
+>
+> Kiểm tra lại 2026-07-27: đợt audit chỉ chuẩn hóa dependency, test, CI và deploy; không đổi hành vi tính năng mô tả trong file này.
 
 ---
 

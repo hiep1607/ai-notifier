@@ -3,7 +3,7 @@
 > File này ghi lại **mọi công nghệ đã dùng theo hướng tiến hóa**: từng vấn đề đã **thử giải pháp nào → vì sao bỏ → vì sao chốt giải pháp hiện tại**. Mọi chuyện kể ở đây đều là chuyện THẬT đã xảy ra trong dự án (đối chiếu nhật ký [KE_HOACH.md](KE_HOACH.md) và kết quả kiểm thử [KICH_BAN_TEST.md](KICH_BAN_TEST.md)).
 > Cách dùng từng tính năng: [TINH_NANG.md](TINH_NANG.md).
 
-**Stack chốt hiện tại:** React Native 0.81 + Expo SDK 54 (Expo Router 6) · Supabase (Postgres + RLS + Auth + Edge Functions Deno + pg_cron/pg_net) · Google Gemini server-side (grounding + fallback đa model) · Expo Push · EAS Update (OTA) + EAS Hosting (web) · TypeScript + Jest (140 test).
+**Stack chốt hiện tại:** React Native 0.81 + Expo SDK 54 (Expo Router 6) · Supabase (Postgres + RLS + Auth + Edge Functions Deno + pg_cron/pg_net) · Google Gemini server-side (grounding + fallback đa model) · Expo Push · EAS Update (OTA) + EAS Hosting (web) · TypeScript + Jest (13 suite / 177 test) + GitHub Actions.
 
 ---
 
@@ -184,7 +184,8 @@ Expo Push API: 1 endpoint lo cả FCM + APNs, không phải viết native. Hạ 
 ## 8. CHẤT LƯỢNG & VẬN HÀNH
 
 ### 8a. Test
-- **Đã có lúc: 8/9 suite CRASH** (thiếu mock AsyncStorage/expo-font/safe-area) — bộ test tồn tại mà vô dụng. Hồi sinh 2026-06-24: mock chuẩn trong `__tests__/setup.ts`, các test lệch UI viết lại. Hiện **11 suite / 140 test pass**.
+- **Đã có lúc: 8/9 suite CRASH** (thiếu mock AsyncStorage/expo-font/safe-area) — bộ test tồn tại mà vô dụng. Hồi sinh 2026-06-24: mock chuẩn trong `__tests__/setup.ts`, các test lệch UI viết lại. Hiện **13 suite / 177 test pass, 0 cảnh báo `act(...)`**.
+- **Audit 2026-07-27:** pin `react-test-renderer` đúng React 19.1, cập nhật patch Expo 54, thêm `npm run check`, Expo Doctor 18/18 và CI. Không chạy `npm audit fix --force`: các advisory bắc cầu còn lại chỉ được npm giải bằng cách phá tương thích (hạ Jest hoặc nâng Expo major), nên được theo dõi tới lần nâng SDK có chủ đích.
 - **Nguyên tắc ăn tiền nhất:** logic thuần của server (lịch quét `isDue/dueAt/isTickDue`, chống trùng, chọn tin, parse feed...) tách vào `_shared/monitorLogic.ts` **không import Deno API** → jest (Node) test được ĐÚNG code chạy thật trên server, không phải bản chép lại.
 - **Kiểm thử hệ AI bằng kịch bản thật:** `scripts/scenario-test.mjs` — 23 kịch bản 7 nhóm (số liệu, tin tức, phải-hỏi-lại, nhắc hẹn, bản đồ nguồn, URL, từ chối khéo) gọi generate-rule THẬT, kết quả chấm trong KICH_BAN_TEST.md. Chính bộ này lôi ra 2 bug server nặng (mục 8b) và các case "hỏi thừa".
 

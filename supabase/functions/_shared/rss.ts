@@ -9,14 +9,14 @@ export interface RssItem {
   pubDate: string; // giữ nguyên chuỗi từ feed (Date.parse được dạng RFC822)
 }
 
-// Feed theo category của rule (đã verify sống 2026-07-02). Tối đa 2 feed/category
-// để 1 lần quét không fetch quá nhiều. Feed đầu ưu tiên đúng chuyên mục.
+// Feed theo category của rule (đã verify sống 2026-07-18). Tối đa 2 feed/category,
+// luôn từ 2 tòa soạn khác nhau để một nguồn không độc chiếm ứng viên.
 export const CATEGORY_FEEDS: Record<string, string[]> = {
   finance: ["https://vnexpress.net/rss/kinh-doanh.rss", "https://cafef.vn/thi-truong.rss"],
-  tech: ["https://vnexpress.net/rss/so-hoa.rss", "https://vnexpress.net/rss/khoa-hoc.rss"],
-  news: ["https://vnexpress.net/rss/thoi-su.rss", "https://vnexpress.net/rss/tin-moi-nhat.rss"],
-  sports: ["https://vnexpress.net/rss/the-thao.rss", "https://tuoitre.vn/rss/tin-moi-nhat.rss"],
-  health: ["https://vnexpress.net/rss/suc-khoe.rss"],
+  tech: ["https://vnexpress.net/rss/so-hoa.rss", "https://tuoitre.vn/rss/nhip-song-so.rss"],
+  news: ["https://vnexpress.net/rss/thoi-su.rss", "https://thanhnien.vn/rss/thoi-su.rss"],
+  sports: ["https://vnexpress.net/rss/the-thao.rss", "https://tuoitre.vn/rss/the-thao.rss"],
+  health: ["https://vnexpress.net/rss/suc-khoe.rss", "https://tuoitre.vn/rss/suc-khoe.rss"],
   weather: [], // thời tiết đã có provider Open-Meteo; RSS không có feed riêng
   other: ["https://vnexpress.net/rss/tin-moi-nhat.rss", "https://tuoitre.vn/rss/tin-moi-nhat.rss"],
 };
@@ -100,20 +100,39 @@ export function sourceFromLink(link: string): string {
   }
 }
 
-// Gộp item nhiều feed: bỏ trùng link, mới nhất trước, cắt còn `limit`.
+// Gộp item nhiều feed: bỏ trùng link, giữ suất tối thiểu cho từng feed rồi mới sắp
+// theo thời gian. Như vậy một báo đăng dồn dập không chiếm cả danh sách ứng viên.
 export function mergeRssItems(lists: RssItem[][], limit = 30): RssItem[] {
   const seen = new Set<string>();
-  const all: RssItem[] = [];
-  for (const list of lists) {
-    for (const it of list) {
-      if (seen.has(it.link)) continue;
-      seen.add(it.link);
-      all.push(it);
-    }
-  }
+  const selected: RssItem[] = [];
+  const nonEmpty = lists.filter((list) => list.length > 0);
+  const perFeed = Math.max(1, Math.floor(limit / Math.max(1, nonEmpty.length)));
   const ts = (i: RssItem) => {
     const t = Date.parse(i.pubDate);
     return Number.isFinite(t) ? t : 0;
   };
-  return all.sort((a, b) => ts(b) - ts(a)).slice(0, limit);
+  const sorted = nonEmpty.map((list) => [...list].sort((a, b) => ts(b) - ts(a)));
+
+  for (const list of sorted) {
+    let accepted = 0;
+    for (const it of list) {
+      if (seen.has(it.link)) continue;
+      seen.add(it.link);
+      selected.push(it);
+      accepted++;
+      if (accepted >= perFeed) break;
+    }
+  }
+
+  // Feed ít bài có thể để thừa chỗ; lấp phần còn lại bằng các bài mới nhất toàn bộ nguồn.
+  if (selected.length < limit) {
+    const rest = sorted.flat().sort((a, b) => ts(b) - ts(a));
+    for (const it of rest) {
+      if (seen.has(it.link)) continue;
+      seen.add(it.link);
+      selected.push(it);
+      if (selected.length >= limit) break;
+    }
+  }
+  return selected.sort((a, b) => ts(b) - ts(a)).slice(0, limit);
 }

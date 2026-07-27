@@ -39,6 +39,11 @@ import {
   extractPageLinks,
   normalizeWatchUrl,
   looksLikeFeed,
+  topicTokens,
+  topicRelevanceScore,
+  isLikelyTopicRelevant,
+  isGitHubTrendingUrl,
+  parseGitHubTrending,
 } from "../../supabase/functions/_shared/monitorLogic";
 import { parseRss } from "../../supabase/functions/_shared/rss";
 
@@ -143,12 +148,10 @@ describe("isDue — rule ghim giờ (run_at, giờ VN)", () => {
     expect(isDue({ frequency: "1440", run_at: "17:20", last_run_at: yesterday }, now)).toBe(false); // chưa tới giờ
   });
 
-  it("CATCH-UP: lỡ lượt cron đúng giờ (quota/deadline) vẫn bắn lại trong 4 tiếng sau", () => {
-    // Giờ hẹn 16:30, giờ hiện tại 17:00 (trễ 30') — trước đây khung 15' là MẤT NGUYÊN NGÀY.
-    expect(isDue({ frequency: "1440", run_at: "16:30", last_run_at: yesterday }, now)).toBe(true);
-    // Trễ 3h59' vẫn kịp; quá 4h thì bỏ mốc hôm nay.
-    expect(isDue({ frequency: "1440", run_at: "13:01", last_run_at: yesterday }, now)).toBe(true);
-    expect(isDue({ frequency: "1440", run_at: "12:59", last_run_at: yesterday }, now)).toBe(false);
+  it("CATCH-UP: chỉ cứu một nhịp ngắn, không gửi bản tin trễ hàng giờ", () => {
+    expect(isDue({ frequency: "1440", run_at: "16:41", last_run_at: yesterday }, now)).toBe(true); // trễ 19'
+    expect(isDue({ frequency: "1440", run_at: "16:39", last_run_at: yesterday }, now)).toBe(false); // trễ 21'
+    expect(isDue({ frequency: "1440", run_at: "13:01", last_run_at: yesterday }, now)).toBe(false);
   });
 
   it("chống bắn lặp: đã quét SAU mốc hẹn hôm nay thì các lượt catch-up sau im", () => {
@@ -161,9 +164,8 @@ describe("isDue — rule ghim giờ (run_at, giờ VN)", () => {
     expect(isDue({ frequency: "10080", run_at: "17:00", last_run_at: yesterday }, now)).toBe(false);
   });
 
-  it("hôm qua bắn muộn (catch-up) không làm trượt mốc ĐÚNG GIỜ hôm nay", () => {
-    // Hôm qua bắn lúc 20:00 (muộn 3h so với hẹn 17:00) → hôm nay 17:00 elapsed 21h ≥ 24h-5h.
-    const lateYesterday = new Date(now - 21 * 3600000).toISOString();
+  it("hôm qua bắn hơi muộn không làm trượt mốc ĐÚNG GIỜ hôm nay", () => {
+    const lateYesterday = new Date(now - (23 * 60 + 45) * 60000).toISOString();
     expect(isDue({ frequency: "1440", run_at: "17:00", last_run_at: lateYesterday }, now)).toBe(true);
   });
 });
@@ -178,10 +180,10 @@ describe("dueAt — thứ tự ưu tiên quét", () => {
   // Fix "thời tiết 8h bắn lúc 10h" (2026-07-04): hôm trước bắn muộn do sự cố nền →
   // last+24h đẩy rule ghim giờ xuống cuối hàng đợi đúng lúc 8h sáng hôm sau.
   it("rule GHIM GIỜ trong khung bắn: hạn = MỐC HẸN hôm nay, không phải last+chu kỳ", () => {
-    const now9vn = Date.parse("2026-07-04T02:00:00Z"); // 09:00 VN
-    // Hôm qua bắn muộn lúc 10:00 VN (03:00Z) — nếu tính last+24h thì hạn = 10:00 hôm nay.
-    const weather = { frequency: "1440", run_at: "08:00", last_run_at: "2026-07-03T03:00:00Z" };
-    expect(dueAt(weather, now9vn)).toBe(Date.parse("2026-07-04T01:00:00Z")); // = 08:00 VN
+    const now0815vn = Date.parse("2026-07-04T01:15:00Z");
+    // Hôm qua bắn muộn lúc 08:19 VN — nếu tính last+24h thì hạn = 08:19 hôm nay.
+    const weather = { frequency: "1440", run_at: "08:00", last_run_at: "2026-07-03T01:19:00Z" };
+    expect(dueAt(weather, now0815vn)).toBe(Date.parse("2026-07-04T01:00:00Z")); // = 08:00 VN
   });
 
   it("scanTier: nhắc hẹn < rule ghim giờ < định kỳ trơn", () => {
@@ -345,10 +347,12 @@ describe("detectSourceType — router chọn nguồn dữ liệu", () => {
     expect(detectSourceType("giá Bitcoin BTC hôm nay")).toBe("crypto");
     expect(detectSourceType("giá ETH Ethereum")).toBe("crypto");
     expect(detectSourceType("tin tức bitcoin mới nhất")).toBe("search");
+    expect(detectSourceType("chuyên gia Bitcoin nhận định thị trường")).toBe("search");
   });
 
   it("tỷ giá → fx; giá vàng/xăng KHÔNG có provider → search", () => {
     expect(detectSourceType("tỷ giá USD/VND hôm nay")).toBe("fx");
+    expect(detectSourceType("tỷ giá EUR/JPY hôm nay")).toBe("search");
     expect(detectSourceType("giá vàng SJC hôm nay")).toBe("search");
     expect(detectSourceType("giá xăng dầu Việt Nam")).toBe("search");
   });
@@ -357,6 +361,24 @@ describe("detectSourceType — router chọn nguồn dữ liệu", () => {
     expect(detectSourceType("tin công nghệ AI")).toBe("search");
     expect(detectSourceType("")).toBe("search");
     expect(detectSourceType(undefined)).toBe("search");
+  });
+
+  it("dự báo dài hạn đi search; ngày mai vẫn dùng provider chính xác", () => {
+    expect(detectSourceType("thời tiết Hà Nội ngày mai")).toBe("weather");
+    expect(detectSourceType("thời tiết Hà Nội tuần này")).toBe("search");
+  });
+});
+
+describe("cổng khớp đúng chủ đề", () => {
+  it("loại từ yêu cầu chung và chặn giá vàng bị tráo thành giá xăng", () => {
+    expect(topicTokens("giá vàng SJC hôm nay")).toEqual(["vang", "sjc"]);
+    expect(topicRelevanceScore("giá vàng SJC hôm nay", "Giá vàng tăng mạnh", "SJC điều chỉnh giá bán")).toBe(100);
+    expect(isLikelyTopicRelevant("giá vàng SJC hôm nay", "Giá xăng dầu tăng từ chiều nay")).toBe(false);
+  });
+
+  it("rule chuyên mục rộng không bị cổng từ khóa máy móc chặn", () => {
+    expect(topicTokens("tin công nghệ mới nhất")).toEqual([]);
+    expect(isLikelyTopicRelevant("tin công nghệ mới nhất", "Apple ra mắt sản phẩm mới")).toBe(true);
   });
 });
 
@@ -405,6 +427,16 @@ describe("compose bản tin provider", () => {
     expect(p.source).toBe("Open-Meteo");
   });
 
+  it("thời tiết ngày mai lấy đúng ngày mai, không gắn nhiệt độ hiện tại", () => {
+    const today = { code: 0, tmax: 34, tmin: 26, rainPct: 10, windMax: 8 };
+    const tomorrow = { code: 61, tmax: 30, tmin: 23, rainPct: 90, windMax: 18 };
+    const p = composeWeatherNotif("Hà Nội", 33, 0, today, tomorrow, now, "tomorrow");
+    expect(p.title).toContain("ngày mai 03/07: Mưa, 23–30°C");
+    expect(p.content).toContain("Dự báo ngày mai");
+    expect(p.content).not.toContain("Hiện tại 33°C");
+    expect(p.value).toContain("23-30°C");
+  });
+
   it("crypto: giá USD + quy đổi VND + biến động 24h; value là số máy-đọc", () => {
     const p = composeCryptoNotif("bitcoin", "Bitcoin", 67123.45, 1700000000, -2.34);
     expect(p.title).toContain("Bitcoin");
@@ -438,6 +470,37 @@ describe("extractWatchUrl & detectSourceType 'url'", () => {
     expect(detectSourceType("giá áo https://shop.vn/ao")).toBe("url");
     expect(detectSourceType("thời tiết https://weather.example.com/hn")).toBe("url");
     expect(detectSourceType("thời tiết Hà Nội")).toBe("weather"); // không URL → như cũ
+  });
+});
+
+describe("GitHub Trending parser", () => {
+  const html = `<main>
+    <article class="Box-row"><h2><a href="/acme/alpha">acme / alpha</a></h2>
+      <p class="col-9 color-fg-muted my-1">A useful toolkit</p>
+      <span itemprop="programmingLanguage">TypeScript</span>
+      <a href="/acme/alpha/stargazers"> 12,345 </a><span>1,234 stars today</span>
+    </article>
+    <article class="Box-row"><h2><a href="/beta/project">beta/project</a></h2>
+      <p class="color-fg-muted">Second project</p>
+    </article></main>`;
+
+  it("bóc repo từ article dù nội dung nằm sâu trong HTML lớn", () => {
+    const repos = parseGitHubTrending("x".repeat(450_000) + html);
+    expect(repos).toHaveLength(2);
+    expect(repos[0]).toMatchObject({
+      name: "acme/alpha",
+      url: "https://github.com/acme/alpha",
+      description: "A useful toolkit",
+      language: "TypeScript",
+      stars: "12,345",
+      starsToday: "1,234",
+    });
+  });
+
+  it("chỉ nhận đúng URL github.com/trending", () => {
+    expect(isGitHubTrendingUrl("https://github.com/trending")).toBe(true);
+    expect(isGitHubTrendingUrl("https://github.com/trending/TypeScript")).toBe(false);
+    expect(isGitHubTrendingUrl("https://example.com/trending")).toBe(false);
   });
 });
 
@@ -656,7 +719,7 @@ describe("isTickDue — rule nào được tick mỗi phút xử lý", () => {
     expect(isTickDue({ frequency: "1440", run_at: "07:55", last_run_at: yesterday }, now)).toBe(true); // trễ 5'
   });
 
-  it("quá cửa sổ 10 phút → false (phần catch-up 4h để cron chính 15' lo như cũ)", () => {
+  it("quá cửa sổ 10 phút → false (cron chính còn một nhịp cứu ngắn)", () => {
     expect(isTickDue({ frequency: "1440", run_at: "07:45", last_run_at: yesterday }, now)).toBe(false);
     // isDue thì vẫn true (catch-up) — chứng minh tick hẹp hơn isDue có chủ đích.
     expect(isDue({ frequency: "1440", run_at: "07:45", last_run_at: yesterday }, now)).toBe(true);

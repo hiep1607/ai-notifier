@@ -1,7 +1,7 @@
 # Kế hoạch & Tiến độ — AI Notifier
 
 > File này theo dõi: kiến trúc, việc ĐÃ LÀM, việc CẦN LÀM. Cập nhật sau mỗi task.
-> Cập nhật lần cuối: 2026-07-10 (ảo hóa danh sách Alerts+Rules bằng FlatList — hết lag chuyển tab lần đầu; audit "rule báo sai giờ" → scripts/audit-sai-gio.sql)
+> Cập nhật lần cuối: 2026-07-27 (audit toàn project, làm sạch quality gate, chuẩn hóa dependency/CI/Supabase config và triển khai đa nền tảng)
 > Chi tiết CÁCH HOẠT ĐỘNG + KHẢ NĂNG của từng chức năng (loại rule, ví dụ cụ thể...): xem **[TINH_NANG.md](TINH_NANG.md)** — cập nhật file đó mỗi khi xong 1 chức năng mới.
 
 ## Mục tiêu sản phẩm
@@ -19,12 +19,15 @@ Supabase Edge Functions ──► Gemini API (Google Search grounding)
 pg_cron (mỗi 15 phút) → run-monitor (quét nền, lọc rule tới hạn theo lịch)
 ```
 - AI: **Gemini server-side** (key trong Supabase secret), KHÔNG còn Ollama local.
-- Project ref: `idtibfiyfywcugdvlqal`. Deploy: `npx supabase functions deploy <fn> --project-ref idtibfiyfywcugdvlqal`.
+- Deploy Edge Functions: `npm run fn:deploy` lấy project ref từ `SUPABASE_PROJECT_REF` hoặc Supabase project đã link, sau đó tự Deno-check và probe toàn bộ function.
 - Quy ước hội thoại: câu mở đầu `!` = toàn quyền, không hỏi lại. Việc gì tự làm được thì tự làm.
 
 ---
 
 ## ✅ ĐÃ LÀM
+- [x] **Quality gate tái lập được (2026-07-27):** Node pin bằng `.nvmrc`, `npm run check` gom typecheck + lint + Jest + Deno, Expo Doctor riêng, GitHub Actions chạy cho push/PR; Supabase local config dùng Postgres 17.
+- [x] **Dependency đúng Expo SDK 54:** `expo` 54.0.36, `expo-updates` 29.0.19, pin `react-test-renderer` 19.1.0 để không bị npm kéo lệch React; Expo Doctor 18/18.
+- [x] **Test sạch:** 13 suite / 177 test pass, sửa mock focus/FlatList và chờ async đầy đủ; 0 warning `act(...)`, 0 `console.error`.
 - [x] Pipeline tin THẬT đa nguồn bằng Gemini + Google Search grounding.
 - [x] Chuyển AI lên server (Edge Functions), bỏ Ollama; key giấu trong secret.
 - [x] Chạy nền 24/7 bằng pg_cron (mỗi 15 phút).
@@ -50,13 +53,13 @@ pg_cron (mỗi 15 phút) → run-monitor (quét nền, lọc rule tới hạn th
 - [x] **Tăng tốc mở app**: giữ splash native + spinner web (hết màn trắng), preload font icon, cache màn hình chạy song song mạng, đếm badge song song + có cache, getSession timeout 6s chống treo, auto-update web lùi 10s.
 - [x] **Giờ yên lặng (tùy chỉnh)**: trong Settings có nút bật/tắt + 2 thanh trượt chọn giờ bắt đầu/kết thúc (vắt qua nửa đêm OK). Trong khung này server `run-monitor` KHÔNG đẩy push (tin vẫn vào app). Lưu trên DB `user_settings` để server đọc (migration 0011); slider dùng `@react-native-community/slider`.
 
-## ⏳ ĐANG CHỜ NGƯỜI DÙNG (tôi không tự làm được)
+## ⚙️ VIỆC VẬN HÀNH / THỦ CÔNG
 - [x] **Chạy SQL `0009_notification_related.sql`** (cột `related_notification_id`) — user xác nhận đã chạy.
 - [x] **Chạy SQL `0010_rule_muted.sql`** (cột `muted`) — user xác nhận đã chạy.
 - [x] **Chạy SQL `0011_user_settings.sql`** (bảng `user_settings`) — đã phải DROP + tạo lại bảng sạch (bảng cũ trùng tên có FK sai → 23503); "Giờ yên lặng" đã lưu OK.
-- [ ] **Chạy SQL** gộp (`run_at` + `push_tokens`) trong Supabase SQL Editor — tôi không có mật khẩu DB.
+- [x] **Migration DB:** `npm run db:push` ngày 2026-07-27 xác nhận remote đã up-to-date đủ 0001→0033; không còn SQL chờ chạy tay.
 - [ ] **Đổi key Gemini** — key cũ đã lộ trong ảnh chụp lúc setup (bảo mật).
-- [ ] **EAS init + dev build** để nhận push thật trên điện thoại (cần tài khoản Expo + thiết bị; build cloud tính phí).
+- [x] **EAS init + native build:** project `@hiep1607/ai-notifier-new` đã cấu hình EAS Update và nhận OTA runtime 1.0.0.
 - [x] **Chạy SQL `0012_admin_logs.sql`** (bảng `usage_logs` + `cron_runs`) — user đã chạy; Quota + Lịch sử cron đã hiện số liệu.
 - [x] **Chạy SQL `0013_cron_detail.sql`** (cột `detail` cho cron_runs) — user xác nhận đã chạy 2026-07-03.
 - [x] **Chạy SQL `0015_rule_notify_mode.sql`** (cột `notify_mode`) — user xác nhận đã chạy 2026-07-03; chế độ "chỉ tin quan trọng" dùng được đầy đủ.
@@ -68,7 +71,7 @@ pg_cron (mỗi 15 phút) → run-monitor (quét nền, lọc rule tới hạn th
 - [x] **Chạy SQL `0021_notifications_user_id.sql`** (nhắc hẹn tự XÓA HẲN sau khi nhắc nhưng giữ thông báo; dọn luôn nhắc hẹn đã xong còn sót) — user xác nhận đã chạy 2026-07-03. MỌI migration đã chạy đủ.
 - [x] **Chạy SQL `0022_scheduled_tick.sql`** (tick mỗi phút xử lý cả rule GHIM GIỜ) — user chạy 2026-07-04, cron.schedule trả job id 14. Còn kiểm chứng thực tế: rule ghim giờ nổ đúng phút.
 - [x] **Chạy SQL `0023_url_hash.sql`** (cột `last_content_hash` — hash-gate rule URL) — user chạy 2026-07-04, Success.
-- [ ] **Chạy SQL `0024_usage_model.sql`** (cột `model` cho `usage_logs` — đếm quota theo TỪNG bucket model) — server đã tự chịu được khi thiếu cột (ghi dạng cũ), nhưng chạy xong màn Admin→Quota mới tách được số theo model.
+- [x] **Chạy SQL `0024_usage_model.sql`:** migration history production đã đồng bộ đủ tới 0033 theo `db push` 2026-07-27.
 
 ## 🗺 KẾ HOẠCH: Các loại theo dõi tiếp theo (lập 2026-07-02)
 > Ý tưởng xương sống: hiện MỌI rule đều đi qua Gemini + Google Search grounding — vừa tốn quota
@@ -115,7 +118,7 @@ pg_cron (mỗi 15 phút) → run-monitor (quét nền, lọc rule tới hạn th
 - [x] **Polish UI/UX**: tìm rule (header search), hiện lịch + điều kiện trên thẻ rule (Rules + Home), trạng thái rỗng theo ngữ cảnh; notifications đã có sẵn search/filter/empty/swipe-delete.
 - [x] **Lọc thông báo theo rule**: chips ngang dưới TABS (chỉ hiện khi >1 rule); bấm chip chọn/bỏ chọn; kết hợp được với tab Chưa đọc/Quan trọng và search.
 - [x] **Chia sẻ thông báo**: nút share-social trên header notification-detail → native Share sheet; nội dung = tiêu đề + tóm tắt AI (hoặc nội dung) + link bài gốc.
-- [ ] badge unread trên tab; ẩn nút "Đọc bài gốc" đã xong (chuyển thành "Xem thông báo trước").
+- [x] Badge unread trên tab; ẩn nút "Đọc bài gốc" đã xong (chuyển thành "Xem thông báo trước").
 - [x] **Trang quản trị (Admin Dashboard) — CHỈ ADMIN** — Pha 1/2/3 XONG (xem kế hoạch bên dưới). Còn chờ user chạy SQL 0012 để bật Quota/Cron.
 
 ---
@@ -175,6 +178,7 @@ Giải thích chi tiết từng lỗi (hệ thống, ảnh hưởng mọi rule) 
 ---
 
 ## Nhật ký thay đổi
+- 2026-07-27: **AUDIT + HARDEN + DEPLOY TOÀN BỘ NỀN TẢNG.** Giữ kiến trúc Expo Router/Supabase hiện tại, không refactor god-file cùng đợt scheduler production. Dependency: Expo 54.0.36 + expo-updates 29.0.19, pin react-test-renderer 19.1.0; `npm dedupe` loại React Native 0.86 bị npm 11 cài lồng, Expo Doctor **18/18**. Test: sửa mock `useFocusEffect`, mock FlatList đồng bộ và chờ load/mark-read; **13 suite / 177 test pass, 0 act warning, 0 console.error**. Tooling: `.nvmrc`, `.editorconfig`, `supabase/config.toml` Postgres 17, `npm run check/doctor/db:push`, GitHub Actions quality; deploy function bỏ hardcode project ref. DB lint sạch + db push báo up-to-date 0001→0033. Deploy 4 Edge Functions + probe boot ✅; OTA preview Android+iOS runtime 1.0.0, group **54c0d40a-ec0a-4449-a481-507c727dbd40**; web production **https://ai-notifier-new.expo.app** HTTP 200, deployment **ai-notifier-new--51c9l6lipb.expo.app**. npm audit còn advisory bắc cầu Expo tooling; không `--force` vì npm chỉ đề xuất Expo 57/hạ Jest (breaking).
 - 2026-07-10 (đợt 3): **Thêm [CONG_NGHE.md](CONG_NGHE.md)** (user yêu cầu), rồi **viết lại chi tiết theo mạch tiến hóa**, và thêm **[ARCHITECTURE.md](ARCHITECTURE.md)** (English one-pager cho repo public: stack + how it works + design decisions born from real failures, trỏ về CONG_NGHE.md; README thêm 3 dòng tài liệu) (user muốn "đã từng thử → vì sao bỏ → vì sao chọn hiện tại", lục từ nhật ký thật): 9 phần — tầng AI (Ollama→Gemini, 1 model→tách task→fallback đa bucket, vụ thẻ Visa ảo, 2 loại 429), tìm tin & link thật (AI bịa URL→grounding metadata→feed), lịch quét 3 đời (quét hết→cap cứng→isDue+deadline; last_run_at→dueAt→scanTier; khung 15'→catch-up 4h→tick mỗi phút+claim), chống trùng/rác 7 lần vá, URL watch (khảo sát MXH bằng fetch thật, bảng quyết định), backend Supabase (FK 3 đời, vụ cron 401 legacy JWT), frontend (bảng 6 cú sập thật theo nền tảng, 4 đợt tối ưu tốc độ), chất lượng & vận hành (test hồi sinh, probe deploy, public repo), bảng phương án đã bỏ.
 - 2026-07-10 (đợt 2): **FIX "rule đặt giờ mấy hôm liền gửi cùng 1 thông báo" + xác nhận vụ 10:30**. User chạy audit-sai-gio.sql khối 5: rule "GitHub trending mỗi sáng" (url, 08:00) quét lúc **10:30** — đúng chẩn đoán catch-up: 8h sáng là lúc quota cạn nhất (reset 14h VN, cron nền đốt từ chiều hôm trước), mốc 08:00 dính 429 → thử lại mỗi 15' tới 10:30 mới lọt (rule 21:00 và thời tiết/BTC 08:00 ít/không cần AI đều đúng giờ — khớp). Vụ TRÙNG: rule ghim giờ cố tình BỎ QUA cổng chống trùng ("bản tin đúng hẹn luôn giao") → trang trending giữ nguyên top vài ngày → AI viết y một tiêu đề → gửi lại nguyên văn mỗi sáng. Fix 2 lớp trong run-monitor: (1) `extractUrlAI` nhận `avoidTitles` (recentRealTitles) — trang CÓ tin mới thì nêu điểm MỚI + đặt title KHÁC; trang y như cũ thì GIỮ NGUYÊN title cũ (cấm diễn đạt lại để lách dedup); (2) rule đặt giờ mà nội dung trùng (title đã gửi + value không đổi) → thay vì lặp nguyên văn, gửi bản tin **"Chưa có thay đổi mới: [chủ đề]"** trỏ `related_notification_id` về thông báo THẬT gần nhất (bỏ qua filler bằng isFillerTitle), vẫn push đúng hẹn. Deploy run-monitor + probe 4 function ✅ (commit 1608006). Kiểm chứng sáng mai: trending có repo mới → bản tin nêu repo mới; không có gì mới → "Chưa có thay đổi mới" thay vì bản sao.
 - 2026-07-10: **HẾT LAG CHUYỂN TAB LẦN ĐẦU — ảo hóa 2 danh sách nặng** (user: "mỗi lần đầu vào app chuyển giữa các trang lag vài giây, sau đó thì mượt"). Nguyên nhân: tab mount LƯỜI (bấm lần đầu mới dựng màn) và 2 màn Alerts/Rules vẽ TOÀN BỘ danh sách một lượt trong ScrollView+map — tới 100 thông báo, mỗi cái bọc `ReanimatedSwipeable` (component đắt) → lần đầu bấm sang tab React phải dựng cả trăm card trong 1 khung hình = đứng vài giây; tab đã mount thì lần sau chuyển ngay (đúng triệu chứng). Trớ trêu: prefetch 07-07 làm nặng thêm — cache RAM đầy sẵn nên khung hình đầu render đủ 100 item luôn. Fix: cả 2 màn chuyển sang **FlatList ảo hóa** (`initialNumToRender=8`, `maxToRenderPerBatch=10`, `windowSize=7`) — chỉ dựng ~10 dòng quanh khung nhìn, cuộn tới đâu vẽ tới đó; Alerts: nhóm theo ngày làm phẳng thành dãy dòng (nhãn ngày + card) cho FlatList, empty/loading → `ListEmptyComponent`; Rules: banner lọc rác → `ListHeaderComponent`, mục "Nhắc hẹn đã xong" → `ListFooterComponent`. Giữ nguyên giao diện/hành vi. tsc + eslint + 140 test pass. OTA 112b31c6 (branch preview) đã phát; **CẦN USER: chạy `npx eas-cli deploy --prod` để lên web** (dist/ đã export sẵn sau OTA — đúng thứ tự chống 404; deploy production bị chặn quyền tự động). KIỂM RULE "BÁO SAI GIỜ": rà lại toàn bộ logic lịch (isDue/tick/claim/catch-up) — không thấy bug mới; nghi phạm chính là **catch-up 4h khi mốc hẹn dính hết quota** (bắn muộn 15'-4h thay vì nuốt — quota flash-lite free chỉ 20 lượt/ngày nên dễ dính) + 2 cấu hình dễ hiểu lầm (run_at + frequency='change' → run_at bị BỎ QUA; run_at + frequency<1440 → thành 1 lần/ngày dù nhãn ghi "Mỗi giờ"). Thêm **`scripts/audit-sai-gio.sql`** (5 khối, dán vào Supabase SQL Editor): soi từng thông báo lệch bao nhiêu phút so run_at, khung giờ nào kẹt quota, tick còn sống không, rule nào cấu hình dễ hiểu lầm, last_error từng rule.

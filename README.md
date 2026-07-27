@@ -33,6 +33,13 @@ npm install
 npx expo start          # mở web (localhost:8081) hoặc quét QR bằng Expo Go
 ```
 
+Yêu cầu Node `>=20.19.4 <25` (repo pin Node 24 trong `.nvmrc`). Trước khi commit/deploy:
+
+```bash
+npm run check           # typecheck + lint + 177 test + Deno check 4 Edge Functions
+npm run doctor          # kiểm tra tương thích Expo SDK/native dependencies
+```
+
 Cần file `.env` (đã gitignore):
 
 ```
@@ -43,6 +50,21 @@ EXPO_PUBLIC_SUPABASE_ANON_KEY=eyJ...
 > Anon key là **khóa công khai** (nhúng vào bản build, ai cũng thấy) — an toàn dữ liệu KHÔNG dựa vào việc giấu nó mà dựa vào **RLS + xác thực JWT**.
 
 Thiết lập phần server (Gemini secret, deploy function, bật cron): xem [supabase/SETUP_GEMINI.md](supabase/SETUP_GEMINI.md).
+
+## Deploy
+
+Thứ tự chuẩn để không đưa bản chưa kiểm tra lên production:
+
+```bash
+npm run check
+npm run db:push         # áp migration còn thiếu lên Supabase đã link
+npm run fn:deploy       # Deno check → deploy toàn bộ Edge Functions → probe boot
+npx eas-cli update --branch preview --message "<mo-ta>"  # OTA Android + iOS
+npx expo export --platform web                           # OTA có thể ghi lại dist/
+npx eas-cli deploy --prod                               # EAS Hosting production
+```
+
+GitHub Actions chạy lại `npm run check` và Expo Doctor cho mọi push/PR. CI không tự deploy và không giữ production credentials.
 
 ---
 
