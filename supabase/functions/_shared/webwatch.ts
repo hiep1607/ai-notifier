@@ -25,7 +25,9 @@ interface FetchPublicOptions {
   maxRedirects?: number;
 }
 
-const MAX_PAGE_BYTES = 400_000;
+// Nhiều trang hiện đại đặt nội dung chính sau bundle/menu rất lớn (GitHub Trending
+// từng bắt đầu sau mốc 400 KB). Giới hạn 1 MB vẫn hữu hạn nhưng không cắt mất phần chính.
+const MAX_PAGE_BYTES = 1_000_000;
 const DEFAULT_MAX_BYTES = 1_000_000;
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 

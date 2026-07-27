@@ -3,12 +3,10 @@
 --
 -- Cách đọc kết quả khối 1 (quan trọng nhất):
 --   lech_phut ~ 0-2   : tick mỗi phút (0022) hoạt động tốt — đúng giờ.
---   lech_phut 3-15    : tick lỡ (function bận/lỗi lượt đó) → cron chính 15' bắt lại. Bình thường.
---   lech_phut 15-240  : mốc hẹn dính HẾT QUOTA Gemini / hàng đợi dài → cơ chế "bắn muộn
---                       còn hơn nuốt" (catch-up 4h) đẩy thông báo tới muộn. Đây thường là
---                       thứ nhìn thấy là "sai giờ". Đối chiếu khối 2: nếu cùng khung giờ đó
---                       quota_hit=true nhiều thì đúng nguyên nhân quota.
---   không có dòng nào trong ngày cho 1 rule: cả 4h catch-up đều kẹt → mất mốc hôm đó.
+--   lech_phut 3-20    : tick lỡ (function bận/lỗi lượt đó) → cron chính cứu thêm một nhịp.
+--   lech_phut > 20    : bất thường; pipeline hiện không còn chủ động bắn bù hàng giờ.
+--                       Đối chiếu khối 2 để kiểm tra quota hoặc cron bị kẹt.
+--   không có dòng nào trong ngày cho 1 rule: tick và một nhịp cứu đều lỗi → mất mốc hôm đó.
 
 -- ============ 1) Rule ghim giờ: từng thông báo lệch bao nhiêu phút so với run_at ============
 select

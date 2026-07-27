@@ -3,6 +3,8 @@
 > Chạy lần đầu 2026-07-03 bằng `node scripts/scenario-test.mjs` (gọi generate-rule THẬT trên server).
 > Mục đích: soi cách hệ thống phân loại & phản hồi trước các yêu cầu đa dạng của người dùng,
 > để đánh giá "xử lý đã hợp lý nhất chưa". Chấm: ✅ đúng kỳ vọng · ❌ sai · ⏳ chưa chạy được (AI hết lượt).
+>
+> **Regression tự động gần nhất (2026-07-27):** 13 suite / 177 test pass; TypeScript, ESLint và Deno check đều sạch; test output có 0 warning `act(...)`. Các bảng dưới đây vẫn là lịch sử test tích hợp gọi Gemini thật, không bị thay thế bởi unit test.
 
 ## Kết quả theo nhóm
 

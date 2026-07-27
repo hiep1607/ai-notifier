@@ -62,6 +62,7 @@ export async function fetchWeatherNotif(keyword: string): Promise<ProviderNotif>
     windMax: d.wind_speed_10m_max?.[i] ?? 0,
   });
   const tomorrow = (d.temperature_2m_max?.length ?? 0) > 1 ? day(1) : null;
+  const wantsTomorrow = /ngày mai|ngay mai|tomorrow/i.test(keyword);
 
   return composeWeatherNotif(
     place.name,
@@ -69,6 +70,8 @@ export async function fetchWeatherNotif(keyword: string): Promise<ProviderNotif>
     fc.current?.weather_code ?? day(0).code,
     day(0),
     tomorrow,
+    Date.now(),
+    wantsTomorrow ? "tomorrow" : "today",
   );
 }
 

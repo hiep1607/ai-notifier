@@ -10,8 +10,18 @@
 // Nhắc: nếu vừa sửa _shared/*, hãy deploy LẠI mọi function dùng nó (xem KE_HOACH.md).
 
 import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 
-const PROJECT_REF = "idtibfiyfywcugdvlqal";
+const linkedRefFile = new URL("../supabase/.temp/project-ref", import.meta.url);
+const PROJECT_REF = process.env.SUPABASE_PROJECT_REF?.trim()
+  || (existsSync(linkedRefFile) ? readFileSync(linkedRefFile, "utf8").trim() : "");
+if (!PROJECT_REF) {
+  console.error(
+    "Thiếu Supabase project ref. Chạy `supabase link --project-ref <ref>` "
+      + "hoặc đặt SUPABASE_PROJECT_REF trước khi deploy.",
+  );
+  process.exit(2);
+}
 const ALL = ["generate-rule", "transcribe", "run-monitor", "admin-api"];
 
 const args = process.argv.slice(2).filter(Boolean);
@@ -22,6 +32,15 @@ if (bad.length) {
   process.exit(2);
 }
 const toDeploy = args.length ? args : ALL;
+
+// Edge Functions không nằm trong tsconfig của app. Check bằng chính Deno trước deploy
+// để chặn lỗi runtime kiểu sai số tham số/biến ngoài scope mà tsc phía app không thấy.
+console.log("\n▶ Kiểm tra type của toàn bộ Edge Functions trước deploy\n");
+const check = spawnSync("npm run check:edge", { stdio: "inherit", shell: true });
+if (check.status !== 0) {
+  console.error("\n⛔ Edge type-check lỗi — dừng trước khi deploy.");
+  process.exit(check.status ?? 1);
+}
 
 // CLI 2.109.1 deploy vẫn ổn; pin 2.109.0 chỉ là cẩn thận (đã kiểm 2026-07-08, không
 // phải thủ phạm BOOT_ERROR — thủ phạm là lỗi code). Dùng bản cài sẵn cho nhanh.

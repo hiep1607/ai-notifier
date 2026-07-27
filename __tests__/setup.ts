@@ -88,6 +88,36 @@ jest.mock(
   () => require("@react-native-async-storage/async-storage/jest/async-storage-mock")
 );
 
+// FlatList thật lên lịch đo/cửa sổ render ở tick sau, phù hợp trên thiết bị nhưng
+// tạo state update muộn sau khi test đã assert xong. Unit test màn hình chỉ cần
+// kiểm tra dữ liệu/render/action, nên render toàn bộ item đồng bộ bằng Fragment.
+jest.mock("react-native/Libraries/Lists/FlatList", () => {
+  const React = require("react");
+  const renderSlot = (slot: any) =>
+    typeof slot === "function" ? React.createElement(slot) : slot ?? null;
+
+  const MockFlatList = React.forwardRef(function MockFlatList(props: any, _ref: any) {
+    const data = props.data ?? [];
+    const rows = data.map((item: any, index: number) =>
+      React.createElement(
+        React.Fragment,
+        { key: props.keyExtractor?.(item, index) ?? String(index) },
+        props.renderItem({ item, index, separators: {} })
+      )
+    );
+
+    return React.createElement(
+      React.Fragment,
+      null,
+      renderSlot(props.ListHeaderComponent),
+      data.length ? rows : renderSlot(props.ListEmptyComponent),
+      renderSlot(props.ListFooterComponent)
+    );
+  });
+
+  return { __esModule: true, default: MockFlatList };
+});
+
 // Swipeable phụ thuộc worklet/UI thread thật; Jest chỉ cần kiểm tra nội dung và
 // hành động trong card. Mock wrapper tránh cảnh báo "mixed worklet callbacks"
 // giả do môi trường test không chạy Reanimated UI runtime.

@@ -1,6 +1,6 @@
 # PROJECT_CONTEXT.md — AI Notifier
 
-> Phân tích kiến trúc & trạng thái phát triển (cập nhật 2026-06-19)
+> Phân tích kiến trúc & trạng thái phát triển (cập nhật 2026-07-27)
 > Theo dõi tiến độ/backlog chi tiết ở [KE_HOACH.md](KE_HOACH.md).
 
 ---
@@ -11,7 +11,7 @@
 
 **Stack:** React Native + Expo Router + Supabase (Postgres + Edge Functions + pg_cron) + Google Gemini (server-side).
 
-**Nền tảng hỗ trợ:** Web (browser) + Mobile (Expo Go) — mọi thay đổi phải tương thích cả hai.
+**Nền tảng hỗ trợ:** Web (EAS Hosting) + Android/iOS (EAS build và OTA; Expo Go dùng khi dev) — mọi thay đổi JS phải tương thích cả ba nền.
 
 ---
 
@@ -45,6 +45,9 @@
 | `rules` | Rule theo dõi của user |
 | `notifications` | Thông báo do hệ thống sinh ra |
 | `push_tokens` | Expo push token theo thiết bị/user |
+| `user_settings` | Quiet hours và tùy chọn push của user |
+| `rule_scan_logs` | Lịch sử/quyết định của từng lượt quét |
+| `usage_logs`, `cron_logs`, `admin_logs` | Quan sát quota, cron và thao tác quản trị |
 | `auth.users` | Supabase built-in auth |
 
 **rules:** `id, user_id, title, description, keyword, category, sources, frequency, run_at, condition, is_active, last_run_at, last_value, created_at`
@@ -56,7 +59,7 @@
 **notifications:** `id, rule_id, title, content, details, ai_summary, source, source_url, category, sentiment, is_important, is_read, created_at`
 
 **RLS:** đã bật cho `rules` + `notifications` — mỗi user chỉ đọc/ghi dữ liệu của mình.
-Migrations: `supabase/migrations/0001`→`0008`.
+Migrations: `supabase/migrations/0001`→`0033`; cấu hình local tái lập ở `supabase/config.toml` (Postgres 17, cùng major với production).
 
 ### 2c. AI Layer — Gemini server-side
 - **Edge Functions (Deno):**
@@ -67,8 +70,8 @@ Migrations: `supabase/migrations/0001`→`0008`.
 - Ollama local (`lib/news.ts`) đã **gỡ bỏ hoàn toàn**.
 
 ### 2d. Quét nền 24/7
-- `pg_cron` chạy **mỗi 15 phút** → `net.http_post` gọi `run-monitor` (kèm `service_role` key) với body `{}`.
-- `run-monitor` tự lọc rule **tới hạn** (`isDue`) theo `frequency` + `run_at` + `last_run_at`; rule "change" quét sát 15', rule định kỳ giãn theo cài đặt, rule ghim giờ bắn trong khung [giờ hẹn, +15').
+- `pg_cron` chạy sweep **mỗi 15 phút** và tick rẻ mỗi phút → `net.http_post` gọi `run-monitor` bằng secret trong Vault.
+- `run-monitor` tự lọc rule **tới hạn** (`isDue`) theo `frequency` + `run_at` + `last_run_at`; rule ghim giờ có happy path chính xác tới phút và cửa sổ catch-up tối đa 4 giờ khi lượt đúng giờ gặp quota/lỗi tạm.
 - Cron là **bộ lập lịch DUY NHẤT** — client không tự quét trùng (tiết kiệm quota); Home chỉ đọc tin, refresh thủ công throttle 5'.
 
 ### 2e. Auth & Phân quyền
@@ -137,11 +140,10 @@ Migrations: `supabase/migrations/0001`→`0008`.
 
 ---
 
-## 5. Đang chờ người dùng / Backlog
+## 5. Quality gate & backlog kiến trúc
 
-**Chờ người dùng (tôi không tự làm được):**
-- Đổi key Gemini (key cũ từng lộ trong ảnh chụp lúc setup).
-- EAS init + dev build để nhận push thật trên điện thoại.
-
-**Backlog:**
-- Polish UI/UX: lọc/tìm thông báo, trạng thái rỗng, hiển thị điều kiện/lịch rõ hơn, ẩn nút "Đọc bài gốc" khi `source_url` rỗng (tb fallback).
+- Local/CI gate: `npm run check` (TypeScript, ESLint, 177 Jest tests, Deno check 4 Edge Functions) + `npm run doctor`.
+- Deploy DB/Functions: `npm run db:push` rồi `npm run fn:deploy`; deploy function luôn probe boot sau khi lên server.
+- Backlog ưu tiên: tách dần `run-monitor/index.ts` theo monitor/provider và tách `rule-detail.tsx` theo section/hook. Làm từng phần sau lớp test hiện có, không trộn refactor với thay đổi lịch production.
+- Advisory npm còn lại nằm trong chuỗi build/tooling của Expo SDK 54; không dùng `npm audit fix --force` vì npm đề xuất nâng Expo major/hạ Jest gây breaking change.
+- Production xác nhận 2026-07-27: DB up-to-date tới migration 0033, 4 Edge Functions boot-probe OK, OTA preview group `54c0d40a-ec0a-4449-a481-507c727dbd40`, web `https://ai-notifier-new.expo.app` trả HTTP 200.

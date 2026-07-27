@@ -61,10 +61,10 @@ export function isScheduled(rule: SchedulableRule): boolean {
     Boolean(rule.run_at && /^\d{1,2}:\d{2}$/.test(rule.run_at));
 }
 
-// Cho phép BẮN MUỘN tối đa 4 tiếng sau giờ hẹn nếu các lượt trước lỡ (quota 429 /
-// deadline 70s cắt). Trước đây khung chỉ [target, +15'): lượt cron 8:00 mà hỏng là
-// MẤT NGUYÊN NGÀY — đây chính là lỗi "rule 8h mấy hôm liền không báo".
-export const SCHEDULED_CATCHUP_MIN = 240;
+// Chỉ cho phép bù một nhịp cron chính sau giờ hẹn. Tick mỗi phút vẫn xử lý trong 10 phút
+// đầu; cửa sổ 20 phút giúp cứu một lỗi mạng ngắn nhưng không còn gửi bản tin trễ hàng giờ.
+export const SCHEDULED_CATCHUP_MIN = 20;
+const SCHEDULED_GUARD_SLACK_MIN = SCHEDULED_CATCHUP_MIN + 60;
 
 // Rule đã tới hạn quét chưa? (cron chạy mỗi 15 phút gọi hàm này cho từng rule)
 export function isDue(rule: SchedulableRule, nowMs = Date.now()): boolean {
@@ -80,7 +80,7 @@ export function isDue(rule: SchedulableRule, nowMs = Date.now()): boolean {
   }
 
   // Ghim giờ cụ thể: gửi TỪ giờ hẹn (không sớm), lỡ nhịp thì THỬ LẠI các lượt cron sau
-  // trong khung catch-up [target, target+4h) cho tới khi quét thành công.
+  // trong cửa sổ catch-up ngắn cho tới khi quét thành công.
   // Chống bắn lặp: so last_run_at với MỐC HẸN gần nhất (đã quét sau mốc = xong hôm nay).
   if (isScheduled(rule)) {
     const [h, m] = String(rule.run_at).split(":").map(Number);
@@ -92,9 +92,9 @@ export function isDue(rule: SchedulableRule, nowMs = Date.now()): boolean {
     // Thời điểm mốc hẹn gần nhất (xấp xỉ theo phút — đệm 1' khi so để bỏ jitter giây).
     const targetMs = nowMs - diff * 60000;
     if (last >= targetMs - 60000) return false; // mốc này đã quét rồi → thôi
-    // Guard chu kỳ (rule hằng tuần không bắn mỗi ngày). Trừ hao 5h (4h catch-up + 1h)
-    // để hôm qua bắn muộn không làm trượt mốc đúng giờ của hôm nay.
-    return elapsed >= interval - 5 * 3600000;
+    // Guard chu kỳ (rule hằng tuần không bắn mỗi ngày). Trừ hao cửa sổ catch-up + 1h
+    // để hôm qua bắn hơi muộn không làm trượt mốc đúng giờ của hôm nay.
+    return elapsed >= interval - SCHEDULED_GUARD_SLACK_MIN * 60000;
   }
 
   // Không ghim giờ: theo chu kỳ thuần (KHÔNG quét sớm — quét sớm sẽ làm trôi tần suất).
@@ -137,7 +137,7 @@ export function nextDueAt(rule: SchedulableRule, nowMs = Date.now()): number {
     );
     const last = rule.last_run_at ? Date.parse(rule.last_run_at) : 0;
     const interval = intervalMs(rule.frequency);
-    while (candidate <= nowMs || (last > 0 && candidate - last < interval - 5 * 3600000)) {
+    while (candidate <= nowMs || (last > 0 && candidate - last < interval - SCHEDULED_GUARD_SLACK_MIN * 60000)) {
       candidate += 24 * 3600000;
     }
     return candidate;
@@ -156,8 +156,8 @@ export function scanTier(rule: SchedulableRule): number {
 }
 
 // Cửa sổ của TICK mỗi phút với rule GHIM GIỜ: chỉ nhận trong [mốc hẹn, +10').
-// Hẹp có chủ đích — lượt tick lỗi (quota/mạng) sẽ KHÔNG retry mỗi phút suốt 4 tiếng;
-// quá 10' thì cron chính 15' lo phần catch-up như cũ (SCHEDULED_CATCHUP_MIN).
+// Hẹp có chủ đích — lượt tick lỗi (quota/mạng) sẽ KHÔNG retry mỗi phút kéo dài;
+// quá 10' thì cron chính 15' còn đúng một nhịp cứu trong SCHEDULED_CATCHUP_MIN.
 export const TICK_WINDOW_MIN = 10;
 
 // Rule thuộc diện TICK mỗi phút xử lý? (nhắc hẹn tới hạn / rule ghim giờ vừa tới mốc).
@@ -176,6 +176,52 @@ export function isTickDue(rule: SchedulableRule, nowMs = Date.now()): boolean {
 
 export function normTitle(t: string): string {
   return t.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+// Cổng khớp chủ đề độc lập với AI. Nó chỉ dùng các từ mang nghĩa riêng của rule và
+// bỏ những từ yêu cầu chung ("hôm nay", "mới nhất", "giá"...). Nhờ vậy "giá vàng"
+// không thể lọt sang "giá xăng", còn chủ đề quá ngắn/mơ hồ sẽ được để AI quyết định.
+const TOPIC_STOP_WORDS = new Set([
+  "bao", "bai", "cap", "cho", "cua", "du", "gan", "gia", "hang", "hom", "khi",
+  "luc", "moi", "mot", "nay", "nhan", "nhung", "qua", "theo", "thong",
+  "tin", "toi", "trong", "tu", "ty", "ve", "viet", "nam", "va", "voi", "website", "web",
+  "cong", "nghe", "kinh", "doanh", "thoi", "su", "the", "thao", "suc", "khoe", "trang", "doi",
+  "bong", "da", "chung", "khoan", "bat", "dong", "san", "giao", "duc", "du", "lich",
+  "update", "capnhat", "latest", "today", "news", "price",
+]);
+
+export function asciiWords(text: string): string[] {
+  return String(text ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D")
+    .toLowerCase()
+    .match(/[a-z0-9]+/g) ?? [];
+}
+
+export function topicTokens(keyword: string): string[] {
+  const withoutUrl = String(keyword ?? "")
+    .replace(/https?:\/\/\S+/gi, " ")
+    .replace(/mới nhất|moi nhat/gi, " ");
+  return [...new Set(asciiWords(withoutUrl).filter((w) => w.length >= 2 && !TOPIC_STOP_WORDS.has(w)))];
+}
+
+export function topicRelevanceScore(keyword: string, title: string, description = ""): number {
+  const wanted = topicTokens(keyword);
+  if (wanted.length === 0) return 100;
+  const haystack = new Set(asciiWords(`${title} ${description}`));
+  const matched = wanted.filter((w) => haystack.has(w)).length;
+  return Math.round((matched / wanted.length) * 100);
+}
+
+export function isLikelyTopicRelevant(keyword: string, title: string, description = ""): boolean {
+  const wanted = topicTokens(keyword);
+  if (wanted.length === 0) return true;
+  const minimumMatches = wanted.length >= 4 ? 2 : 1;
+  const haystack = new Set(asciiWords(`${title} ${description}`));
+  const matched = wanted.filter((w) => haystack.has(w)).length;
+  return matched >= minimumMatches && topicRelevanceScore(keyword, title, description) >= 50;
 }
 
 export interface FeedbackRow {
@@ -419,11 +465,20 @@ export function detectSourceType(keyword?: string): SourceType {
   if (!k.trim()) return "search";
   // Có URL cụ thể trong keyword → theo dõi TRANG đó (ưu tiên trước mọi heuristic khác).
   if (extractWatchUrl(k)) return "url";
+  const plain = asciiWords(k).join(" ");
+  // Provider hiện trả chính xác hôm nay/ngày mai. Yêu cầu dài hạn phải tìm nguồn dự báo
+  // phù hợp thay vì lấy nhầm bản tin hôm nay rồi gắn cho cả tuần.
+  if (/\b(tuan|week|7 ngay|10 ngay|dai han)\b/.test(plain)) return "search";
   if (/thời tiết|thoi tiet|dự báo thời tiết|nhiệt độ|nhiet do|weather/.test(k)) return "weather";
   // crypto/fx: phải có ý "giá/tỷ giá" — "tin tức bitcoin" vẫn là rule TIN TỨC (search).
-  const priceIntent = /giá|gia\b|price|tỷ giá|ty gia/.test(k);
+  const intentText = plain.replace(/\bchuyen gia\b/g, " ");
+  const priceIntent = /\b(gia|price|ty gia)\b/.test(intentText);
   if (priceIntent && matchCoin(k)) return "crypto";
-  if (/tỷ giá|ty gia|usd\/vnd|đô la mỹ|do la my|exchange rate/.test(k)) return "fx";
+  // Provider FX chỉ có cặp USD/VND. Các cặp EUR/JPY/... phải đi search để không bị
+  // trả tráo thành USD/VND như trước.
+  const asksUsd = /\b(usd|do la my|us dollar)\b/.test(plain) || /usd\s*\/\s*vnd/i.test(k);
+  const asksOtherCurrency = /\b(eur|euro|jpy|yen|gbp|pound|aud|cad|cny|yuan|won|krw)\b/.test(plain);
+  if (asksUsd && !asksOtherCurrency && /\b(ty gia|exchange rate|usd|do la my)\b/.test(plain)) return "fx";
   return "search";
 }
 
@@ -500,7 +555,23 @@ export function composeWeatherNotif(
   today: WeatherDaily,
   tomorrow: WeatherDaily | null,
   nowMs = Date.now(),
+  target: "today" | "tomorrow" = "today",
 ): ProviderNotif {
+  if (target === "tomorrow" && tomorrow) {
+    const desc = wmoDesc(tomorrow.code);
+    const range = `${fmtNum(tomorrow.tmin)}–${fmtNum(tomorrow.tmax)}°C`;
+    const line = (d: WeatherDaily) =>
+      `${wmoDesc(d.code)}, ${fmtNum(d.tmin)}–${fmtNum(d.tmax)}°C, xác suất mưa ${fmtNum(d.rainPct)}%, gió tối đa ${fmtNum(d.windMax)} km/h`;
+    return {
+      title: `Thời tiết ${place} ngày mai ${vnDateStr(nowMs + 24 * 3600000)}: ${desc}, ${range}`,
+      content: `Dự báo ngày mai: ${line(tomorrow)}.`,
+      details: `Hôm nay: ${line(today)}.`,
+      ai_summary: `${place} ngày mai: ${desc}, ${range}, mưa ${fmtNum(tomorrow.rainPct)}%.`,
+      source: "Open-Meteo",
+      source_url: "https://open-meteo.com/",
+      value: `${tomorrow.tmin}-${tomorrow.tmax}°C; mưa ${tomorrow.rainPct}%; ${desc}`,
+    };
+  }
   const desc = wmoDesc(today.code);
   const range = `${fmtNum(today.tmin)}–${fmtNum(today.tmax)}°C`;
   const line = (d: WeatherDaily) =>
@@ -684,6 +755,8 @@ export function stripHtml(html: string, maxChars = 12000): string {
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
     .replace(/<style[\s\S]*?<\/style>/gi, " ")
     .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ")
+    .replace(/<svg[\s\S]*?<\/svg>/gi, " ")
+    .replace(/<(header|nav)\b[^>]*>[\s\S]*?<\/\1>/gi, " ")
     .replace(/<!--[\s\S]*?-->/g, " ")
     .replace(/<(br|\/p|\/div|\/li|\/tr|\/h[1-6])[^>]*>/gi, "\n")
     .replace(/<[^>]+>/g, " ")
@@ -744,6 +817,62 @@ export function looksLikeFeed(body: string): boolean {
   const head = String(body ?? "").slice(0, 1000).toLowerCase();
   if (head.includes("<html")) return false;
   return /<rss[\s>]|<feed[\s>]|<rdf:rdf/.test(head);
+}
+
+export interface GitHubTrendingRepo {
+  name: string;
+  url: string;
+  description: string;
+  language: string;
+  stars: string;
+  starsToday: string;
+}
+
+export function isGitHubTrendingUrl(rawUrl: string): boolean {
+  try {
+    const u = new URL(rawUrl);
+    return u.hostname.toLowerCase() === "github.com" && /^\/trending\/?$/i.test(u.pathname);
+  } catch {
+    return false;
+  }
+}
+
+function htmlText(fragment: string): string {
+  return fragment
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// GitHub Trending là trang HTML rất lớn; danh sách repo thường nằm sau hàng trăm KB
+// menu. Parser cấu trúc này không phụ thuộc vị trí/cửa sổ text và không cần AI/quota.
+export function parseGitHubTrending(html: string, limit = 10): GitHubTrendingRepo[] {
+  const articles = String(html ?? "").match(/<article\b[^>]*class=["'][^"']*Box-row[^"']*["'][^>]*>[\s\S]*?<\/article>/gi) ?? [];
+  const out: GitHubTrendingRepo[] = [];
+  for (const article of articles) {
+    const repo = article.match(/<h2\b[\s\S]*?<a\b[^>]*href=["']\/([^"'?#]+\/[^"'/?#]+)["'][^>]*>/i)?.[1]?.trim();
+    if (!repo || out.some((x) => x.name.toLowerCase() === repo.toLowerCase())) continue;
+    const descriptionBlock = article.match(/<p\b[^>]*class=["'][^"']*color-fg-muted[^"']*["'][^>]*>([\s\S]*?)<\/p>/i)?.[1] ?? "";
+    const languageBlock = article.match(/itemprop=["']programmingLanguage["'][^>]*>([\s\S]*?)<\//i)?.[1] ?? "";
+    const starsBlock = article.match(new RegExp(`href=["']\/${repo.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\/stargazers["'][^>]*>([\\s\\S]*?)<\\/a>`, "i"))?.[1] ?? "";
+    const todayBlock = article.match(/([\d,.]+)\s+stars?\s+today/i)?.[1] ?? "";
+    out.push({
+      name: repo,
+      url: `https://github.com/${repo}`,
+      description: htmlText(descriptionBlock),
+      language: htmlText(languageBlock),
+      stars: htmlText(starsBlock),
+      starsToday: todayBlock.trim(),
+    });
+    if (out.length >= limit) break;
+  }
+  return out;
 }
 
 // Feed RSS/Atom mà TRANG TỰ KHAI BÁO trong <head> (rel="alternate" type="application/rss+xml").

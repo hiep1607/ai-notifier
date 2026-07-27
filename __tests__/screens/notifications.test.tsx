@@ -16,8 +16,12 @@ jest.mock("expo-router", () => ({
 jest.mock("@expo/vector-icons", () => ({ Ionicons: "Ionicons" }));
 
 jest.mock("@react-navigation/native", () => ({
-  // Defer cb để body component chạy xong trước khi fetch dữ liệu.
-  useFocusEffect: jest.fn((cb) => { Promise.resolve().then(cb); }),
+  // Mô phỏng đúng một focus lifecycle. Gọi Promise.resolve(cb) ở mỗi render khiến
+  // callback fetch lại vô hạn và tạo cảnh báo state update ngoài act(...).
+  useFocusEffect: (cb: () => void | (() => void)) => {
+    const React = require("react");
+    React.useEffect(() => cb(), [cb]);
+  },
 }));
 
 jest.mock("../../lib/supabase", () => ({

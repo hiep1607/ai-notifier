@@ -47,6 +47,10 @@ import {
   isWatchableUrl,
   normalizeWatchUrl,
   looksLikeFeed,
+  isLikelyTopicRelevant,
+  isGitHubTrendingUrl,
+  parseGitHubTrending,
+  vnDateStr,
   type PageLink,
   type SourceType,
   type ProviderNotif,
@@ -72,7 +76,7 @@ function isQuotaErr(e: unknown): boolean {
 // quota giữa lượt quét, các rule này vẫn quét tiếp được — không chết chùm.
 function isAiFreeRule(r: Rule): boolean {
   if (isReminder(r)) return true;
-  if (ruleWatchUrl(r)) return false;
+  if (ruleWatchUrl(r)) return isGitHubTrendingUrl(ruleWatchUrl(r)) && !r.condition?.trim();
   if (r.condition && r.condition.trim()) return false;
   const t = detectSourceType(r.keyword);
   return t === "weather" || t === "crypto" || t === "fx";
@@ -134,6 +138,9 @@ const SEARCH_SYSTEM =
   `Bạn là AI giám sát tin tức tiếng Việt. Bạn DÙNG Google Search để tìm tin THẬT, MỚI NHẤT.
 TUYỆT ĐỐI KHÔNG bịa tin, không bịa số liệu, không bịa URL. Chỉ dùng thông tin từ kết quả tìm được.
 Ưu tiên nguồn uy tín (VnExpress, Tuổi Trẻ, Thanh Niên, Dân Trí, CafeF, VietnamNet...).
+Kết quả phải CÙNG ĐÚNG CHỦ THỂ người dùng yêu cầu, không chỉ cùng chuyên mục rộng. Ví dụ:
+"giá vàng" KHÔNG phải "giá xăng"; "EUR/JPY" KHÔNG phải "USD/VND"; tin về chuyên gia
+Bitcoin KHÔNG phải giá Bitcoin. Không có kết quả đúng thì trả mảng rỗng.
 
 QUY TẮC TRÌNH BÀY (áp dụng cho MỌI thông báo):
 - Khi có thay đổi số liệu (giá, lãi suất, %, mức độ...): LUÔN nêu RÕ "từ [mức CŨ] → [mức MỚI]" kèm mức chênh, KHÔNG chỉ nói "giảm/tăng bao nhiêu" chung chung. Nếu được cung cấp giá trị lần trước thì dùng nó làm mốc cũ.
@@ -141,7 +148,12 @@ QUY TẮC TRÌNH BÀY (áp dụng cho MỌI thông báo):
 
 // avoidTitles: tiêu đề các bài ĐÃ GỬI trước đó — bảo Gemini né, sửa gốc vòng lặp chết
 // "Gemini luôn trả đúng 1 bài nổi nhất → trùng tiêu đề → chặn mãi → toàn filler".
-function buildPrompt(rule: Rule, avoidTitles: string[] = [], rejectedTitles: string[] = []): string {
+function buildPrompt(
+  rule: Rule,
+  avoidTitles: string[] = [],
+  rejectedTitles: string[] = [],
+  recentSources: string[] = [],
+): string {
   const hasCond = Boolean(rule.condition && rule.condition.trim());
   const prev = rule.last_value && rule.last_value.trim() ? rule.last_value.trim() : "";
   const avoid = avoidTitles.length
@@ -150,11 +162,14 @@ function buildPrompt(rule: Rule, avoidTitles: string[] = [], rejectedTitles: str
   const rejected = rejectedTitles.length
     ? `\nCÁC KẾT QUẢ NGƯỜI DÙNG ĐÃ ĐÁNH DẤU "KHÔNG LIÊN QUAN" (KHÔNG chọn lại bài giống hoặc cùng nội dung):\n${rejectedTitles.map((t) => `- ${t}`).join("\n")}\n`
     : "";
+  const diversify = recentSources.length
+    ? `\nNGUỒN ĐÃ DÙNG GẦN ĐÂY: ${recentSources.join(", ")}. Nếu có kết quả đúng chủ đề và chất lượng tương đương, ưu tiên một nguồn KHÁC; không hy sinh độ liên quan chỉ để đổi nguồn.\n`
+    : "";
   return `Hãy tìm trên web tin tức MỚI NHẤT (trong vài ngày gần đây) về chủ đề: "${rule.keyword}".
 ${rule.sources ? `Ưu tiên các nguồn: ${rule.sources}.` : ""}
 ${hasCond ? `Điều kiện người dùng quan tâm: "${rule.condition}".` : "Người dùng muốn nhận tin mới liên quan."}
-${prev ? `Số liệu/giá trị GHI NHẬN LẦN TRƯỚC của chủ đề này: "${prev}". Hãy so sánh với giá trị mới tìm được.` : ""}${avoid}${rejected}
-Chọn TỐI ĐA 3 bài MỚI và đáng chú ý nhất (khác nhau, sắp theo mức đáng chú ý GIẢM DẦN). Trả về JSON THUẦN (không markdown) là MẢNG 1-3 phần tử, mỗi phần tử:
+${prev ? `Số liệu/giá trị GHI NHẬN LẦN TRƯỚC của chủ đề này: "${prev}". Hãy so sánh với giá trị mới tìm được.` : ""}${avoid}${rejected}${diversify}
+Chọn TỐI ĐA 3 bài MỚI, ĐÚNG CHỦ THỂ và đáng chú ý nhất; ưu tiên các nguồn khác nhau (sắp theo mức đáng chú ý GIẢM DẦN). Trả về JSON THUẦN (không markdown) là MẢNG 1-3 phần tử, mỗi phần tử:
 {
   "title": "tiêu đề bài báo thật",
   "content": "3-5 câu tóm tắt ĐẦY ĐỦ: chuyện gì xảy ra, số liệu cụ thể. Nếu có thay đổi/biến động: ghi RÕ 'từ [mức cũ] → [mức mới]' (vd 'giảm từ 76 triệu xuống 74,5 triệu đồng/lượng'), không chỉ nói chênh lệch. Đơn vị/tiền tệ ưu tiên kiểu Việt Nam; số liệu nước ngoài thì kèm quy đổi trong ngoặc. Chỉ dùng dữ liệu CÓ THẬT trong bài.",
@@ -169,7 +184,7 @@ Chọn TỐI ĐA 3 bài MỚI và đáng chú ý nhất (khác nhau, sắp theo 
   "changed": ${prev ? `true nếu "value" mới KHÁC ĐÁNG KỂ so với "${prev}" (đổi giá/đổi mức theo hướng người dùng quan tâm), false nếu gần như không đổi` : "true"},
   "matches_condition": ${hasCond ? `true nếu bài THẬT SỰ cho thấy điều kiện "${rule.condition}" đã xảy ra (xét cả mức thay đổi so với lần trước nếu điều kiện nói về tăng/giảm), ngược lại false` : "true"}
 }
-QUAN TRỌNG: Nếu KHÔNG có bài khớp hoàn toàn yêu cầu/điều kiện, VẪN trả về bài LIÊN QUAN nhất và MỚI NHẤT (ngày phát hành gần nhất) tìm được, và đặt "matches_condition": false (đừng tự ý đặt true). Chỉ trả về mảng rỗng [] khi hoàn toàn không có bất kỳ thông tin nào về chủ đề. Chỉ trả JSON, không giải thích.`;
+QUAN TRỌNG: Chỉ trả bài CÙNG ĐÚNG CHỦ THỂ. Nếu có bài đúng chủ đề nhưng chưa thỏa điều kiện thì trả bài đó và đặt "matches_condition": false. Nếu chỉ có bài cùng chuyên mục rộng nhưng khác chủ thể thì trả mảng rỗng []. Chỉ trả JSON, không giải thích.`;
 }
 
 function normSentiment(v: unknown): string {
@@ -481,11 +496,14 @@ async function maybeAlertQuota(supabase: any, callsThisRun: number) {
     const { data: usersList } = await supabase.auth.admin.listUsers({ page: 1, perPage: 1000 });
     for (const u of usersList?.users ?? []) {
       if (u.email && adminEmails.includes(u.email.toLowerCase())) {
+        const settings = await loadUserPushSettings(supabase, u.id);
         await sendPush(
           supabase, u.id,
           "⚠️ Quota Gemini sắp hết",
           `Hôm nay đã dùng ${total}/${QUOTA_LIMIT} lượt (ngưỡng cảnh báo ${QUOTA_ALERT_AT}). Cân nhắc giãn nhịp hoặc tạm dừng bớt rule.`,
           "",
+          true,
+          settings,
         );
       }
     }
@@ -791,7 +809,7 @@ async function monitorFeedItems(
   } catch {
     return null;
   }
-  const chosen = pick.index >= 0 ? unseen[pick.index] : undefined;
+  const chosen = pick.index >= 0 && pick.relevance_score >= 70 ? unseen[pick.index] : undefined;
   if (!chosen) return null; // bài mới nhưng không liên quan chủ đề → đọc trang như thường
 
   const value = pick.value.trim() ? pick.value.trim().slice(0, 200) : undefined;
@@ -848,6 +866,52 @@ async function monitorUrlViaFeed(
   return await monitorFeedItems(supabase, rule, items, seenTitles, seenLinks, g, feedback);
 }
 
+// Trang bảng xếp hạng có cấu trúc và rất lớn: đọc trực tiếp các <article> thay vì cắt
+// 12.000 ký tự đầu rồi nhờ AI đoán. Đường này không tốn quota nên rule đặt giờ ổn định hơn.
+// deno-lint-ignore no-explicit-any
+async function monitorGitHubTrending(
+  supabase: any,
+  rule: Rule,
+  url: string,
+  manual: boolean,
+): Promise<MonitorRuleResult> {
+  const resource = await fetchPublicResource(url, {
+    maxBytes: 1_500_000,
+    headers: {
+      "User-Agent": "Mozilla/5.0 (compatible; AI-Notifier/1.0)",
+      "Accept": "text/html,application/xhtml+xml",
+      "Accept-Language": "en,vi;q=0.8",
+    },
+  });
+  if (resource.status >= 400) throw new Error(`GitHub Trending trả HTTP ${resource.status}`);
+  const repos = parseGitHubTrending(resource.body, 8);
+  if (repos.length === 0) throw new Error("Không bóc được danh sách GitHub Trending");
+
+  const value = repos.map((repo) => repo.name).join("|").slice(0, 200);
+  const unchanged = normVal(value) === normVal(String(rule.last_value ?? ""));
+  if (unchanged && !isScheduled(rule) && !manual) {
+    return { inserted: 0, value, contentHash: contentFingerprint(value), note: { title: "", kind: "skipped" } };
+  }
+
+  const lines = repos.map((repo, index) => {
+    const facts = [repo.language, repo.stars ? `⭐ ${repo.stars}` : "", repo.starsToday ? `+${repo.starsToday} sao hôm nay` : ""]
+      .filter(Boolean).join(" · ");
+    return `${index + 1}. ${repo.name}${repo.description ? ` — ${repo.description}` : ""}${facts ? ` (${facts})` : ""}`;
+  });
+  const title = `GitHub Trending ${vnDateStr()}: ${repos[0].name} dẫn đầu`;
+  const inserted = await insertNotif(supabase, rule, {
+    title,
+    content: lines.join("\n"),
+    details: `Danh sách được đọc trực tiếp từ GitHub Trending tại thời điểm quét; gồm ${repos.length} repository dẫn đầu.`,
+    ai_summary: `${repos[0].name} dẫn đầu GitHub Trending; theo sau là ${repos.slice(1, 3).map((r) => r.name).join(", ")}.`,
+    source: "GitHub Trending",
+    source_url: resource.finalUrl,
+    sentiment: "neutral",
+    is_important: false,
+  });
+  return { inserted, value, contentHash: contentFingerprint(value), note: { title, kind: "real" } };
+}
+
 // Quét 1 rule THEO DÕI TRANG WEB: fetch URL (kèm quyền đăng nhập nếu người dùng đã cấp)
 // → ưu tiên FEED trang khai báo (tin tức) → không thì flash-lite đọc HTML. Cổng gửi:
 //  - có condition   → chỉ gửi khi thỏa; chống lặp = cooldown 6h + bỏ cooldown khi đổi ≥3%.
@@ -858,6 +922,9 @@ async function monitorUrlViaFeed(
 async function monitorUrl(supabase: any, rule: Rule, manual = false): Promise<MonitorRuleResult> {
   const url = ruleWatchUrl(rule);
   if (!url) throw new Error("Rule url không có watch_url");
+  if (isGitHubTrendingUrl(url) && !rule.condition?.trim()) {
+    return await monitorGitHubTrending(supabase, rule, url, manual);
+  }
   const host = new URL(url).hostname;
   const hasAuth = Boolean(rule.watch_auth && rule.watch_auth.trim());
 
@@ -1104,6 +1171,7 @@ async function fetchRssItems(category?: string | null, cache?: RssCache): Promis
 
 interface RssPick {
   index: number; // -1 = không bài nào thực sự liên quan
+  relevance_score: number;
   content: string;
   ai_summary: string;
   sentiment: string;
@@ -1128,12 +1196,14 @@ async function pickRssItemAI(supabase: any, rule: Rule, items: RssItem[]): Promi
       user: `Chủ đề người dùng theo dõi: "${rule.keyword}".
 ${hasCond ? `Điều kiện người dùng quan tâm: "${rule.condition}".` : ""}
 ${prevVal ? `Số liệu ghi nhận lần trước: "${prevVal}".` : ""}
+${rule.sources ? `Nguồn người dùng ưu tiên: "${rule.sources}".` : ""}
 Danh sách bài MỚI trên báo (đánh số):
 ${list}
 
 Chọn 1 bài PHÙ HỢP NHẤT với chủ đề. Trả JSON:
 {
   "index": số thứ tự bài chọn (0-${items.length - 1}), hoặc -1 nếu KHÔNG bài nào thật sự liên quan chủ đề,
+  "relevance_score": mức khớp CHÍNH XÁC chủ thể 0-100. Khác chủ thể dù cùng chuyên mục = dưới 50 (ví dụ giá vàng khác giá xăng),
   "content": "3-5 câu tóm tắt từ tiêu đề + mô tả của bài đã chọn (không bịa số liệu)",
   "ai_summary": "1 câu ngắn ~15 từ điểm mấu chốt",
   "sentiment": "positive | neutral | negative",
@@ -1151,6 +1221,7 @@ Chọn 1 bài PHÙ HỢP NHẤT với chủ đề. Trả JSON:
     const d = parseJsonLoose<Partial<RssPick>>(text);
     return {
       index: Number.isFinite(Number(d?.index)) ? Number(d?.index) : -1,
+      relevance_score: Number.isFinite(Number(d?.relevance_score)) ? Number(d?.relevance_score) : 0,
       content: String(d?.content ?? ""),
       ai_summary: String(d?.ai_summary ?? ""),
       sentiment: String(d?.sentiment ?? "neutral"),
@@ -1185,6 +1256,7 @@ async function monitorRssPath(
   // (2 lớp: tiêu đề + link chuẩn hóa — báo sửa tít nhẹ thì link vẫn bắt được).
   const unseen = items
     .filter((it) => {
+      if (!isLikelyTopicRelevant(rule.keyword, it.title, it.description)) return false;
       if (feedback && rejectedByFeedback({ title: it.title, source_url: it.link }, feedback)) return false;
       if (seenTitles.has(normTitle(it.title))) return false;
       const l = normLink(it.link);
@@ -1192,8 +1264,8 @@ async function monitorRssPath(
     })
     .slice(0, 25);
   if (unseen.length === 0) {
-    // Feed không có gì mới → filler theo luật chung, khỏi tốn grounding.
-    return await sendFallback(supabase, rule, ctx, prev, null);
+    // Feed chuyên mục không có bài đúng chủ đề/nguồn mới → tiếp tục search đa nguồn.
+    return null;
   }
 
   let pick: RssPick;
@@ -1203,11 +1275,8 @@ async function monitorRssPath(
     return null; // flash-lite lỗi → thử đường grounding (lỗi khác nhau, đáng thử)
   }
 
-  const chosen = pick.index >= 0 ? unseen[pick.index] : undefined;
-  if (!chosen) {
-    // Không bài nào liên quan chủ đề → filler, không đốt grounding.
-    return await sendFallback(supabase, rule, ctx, prev, null);
-  }
+  const chosen = pick.index >= 0 && pick.relevance_score >= 70 ? unseen[pick.index] : undefined;
+  if (!chosen || !isLikelyTopicRelevant(rule.keyword, chosen.title, chosen.description)) return null;
 
   const v = pick.value.trim();
   const value = v ? v.slice(0, 200) : undefined;
@@ -1227,7 +1296,7 @@ async function monitorRssPath(
       source: sourceFromLink(chosen.link),
       source_url: chosen.link, // link THẬT từ feed — hết cảnh link bịa/sai bài
       sentiment: normSentiment(pick.sentiment),
-      is_important: pick.is_important,
+      is_important: ctx.hasCond ? true : pick.is_important,
     });
     return { inserted, value, note: { title: chosen.title, kind: "real" } };
   }
@@ -1357,6 +1426,9 @@ async function monitorRule(supabase: any, rule: Rule, manual = false, rssCache?:
     (existing ?? []).map((n: { source_url?: string }) => normLink(String(n.source_url ?? ""))).filter(Boolean)
   );
   const avoidTitles = recentRealTitles((existing ?? []).map((n: { title: string }) => n.title));
+  const recentSources: string[] = Array.from(new Set<string>(
+    (existing ?? []).map((n: { source?: string }) => String(n.source ?? "").trim()).filter(Boolean),
+  )).slice(0, 5);
   const feedback = buildFeedbackProfile(existing ?? []);
   const prev = (existing ?? [])[0] as PrevNotif | undefined;
 
@@ -1374,7 +1446,7 @@ async function monitorRule(supabase: any, rule: Rule, manual = false, rssCache?:
   try {
     const gen = await geminiGenerate({
       system: SEARCH_SYSTEM,
-      user: buildPrompt(rule, avoidTitles, feedback.rejectedTitles),
+      user: buildPrompt(rule, avoidTitles, feedback.rejectedTitles, recentSources),
       grounding: true,
       temperature: 0.2,
     });
@@ -1394,14 +1466,15 @@ async function monitorRule(supabase: any, rule: Rule, manual = false, rssCache?:
 
   // Chọn ứng viên: Gemini trả tối đa 3 bài — lấy bài ĐẦU TIÊN chưa trùng tiêu đề đã gửi
   // (bỏ bài quá cũ theo published_date). Tất cả trùng → giữ bài đầu cho nhánh fallback.
-  const feedbackFilteredItems = items.filter((item) => !rejectedByFeedback({
-    title: item.title,
-    source_url: item.source_url,
-  }, feedback));
+  const feedbackFilteredItems = items.filter((item) =>
+    isLikelyTopicRelevant(rule.keyword, String(item.title ?? ""), `${item.content ?? ""} ${item.ai_summary ?? ""}`) &&
+    !rejectedByFeedback({ title: item.title, source_url: item.source_url }, feedback)
+  );
   const { top, fresh } = pickFreshItem(feedbackFilteredItems, seenTitles, lastValNorm);
   let value: string | undefined;
   let inserted = 0;
   let note: { title: string; kind: NotifKind } | undefined;
+  let selectedUrl = "";
 
   // 1) Có tin và VƯỢT các cổng (điều kiện / thay đổi / chống trùng) → gửi tin THẬT.
   if (top) {
@@ -1412,7 +1485,7 @@ async function monitorRule(supabase: any, rule: Rule, manual = false, rssCache?:
     const changeOk = !changeGate || toBool(top.changed);
     // Chế độ "chỉ tin quan trọng": tin phải ĐÁNG CHÚ Ý (is_important) hoặc thỏa điều kiện rule mới qua.
     const importantOk = !importantOnly || toBool(top.is_important) || (hasCond && toBool(top.matches_condition));
-    const url = pickGroundedSourceUrl(
+    selectedUrl = pickGroundedSourceUrl(
       String(top.title ?? ""),
       String(top.source ?? ""),
       String(top.source_url ?? ""),
@@ -1426,9 +1499,9 @@ async function monitorRule(supabase: any, rule: Rule, manual = false, rssCache?:
         details: String(top.details ?? ""),
         ai_summary: String(top.ai_summary ?? ""),
         source: String(top.source ?? "Web"),
-        source_url: url,
+        source_url: selectedUrl,
         sentiment: normSentiment(top.sentiment),
-        is_important: toBool(top.is_important),
+        is_important: hasCond ? true : toBool(top.is_important),
       });
       note = { title: String(top.title ?? ""), kind: "real" };
     }
@@ -1444,7 +1517,7 @@ async function monitorRule(supabase: any, rule: Rule, manual = false, rssCache?:
           details: String(top.details ?? ""),
           ai_summary: String(top.ai_summary ?? "Thông tin liên quan gần nhất."),
           source: String(top.source ?? "Web"),
-          source_url: url,
+          source_url: selectedUrl,
           sentiment: normSentiment(top.sentiment),
           is_important: false,
         }
@@ -1519,6 +1592,24 @@ async function previewGate(supabase: any, rule: Rule): Promise<GatePreview> {
     try {
       const url = ruleWatchUrl(rule);
       const host = new URL(url).hostname;
+      if (isGitHubTrendingUrl(url) && !rule.condition?.trim()) {
+        const resource = await fetchPublicResource(url, {
+          maxBytes: 1_500_000,
+          headers: { "User-Agent": "Mozilla/5.0 (compatible; AI-Notifier/1.0)", "Accept": "text/html" },
+        });
+        const repos = parseGitHubTrending(resource.body, 8);
+        base.provider = "github";
+        base.found = repos.length > 0;
+        base.candidateTitle = repos.length ? `GitHub Trending: ${repos[0].name} dẫn đầu` : "";
+        base.value = repos.map((repo) => repo.name).join("|").slice(0, 200);
+        base.fresh = normVal(base.value) !== normVal(String(rule.last_value ?? ""));
+        base.changed = base.fresh;
+        base.matchesCondition = true;
+        base.allKind = base.found ? "real" : "none";
+        base.importantPushed = base.found && (scheduled || base.changed);
+        base.importantReason = base.found ? "" : "Không bóc được danh sách GitHub Trending.";
+        return base;
+      }
       const page = await fetchWatchPage(url, rule.watch_auth);
       if (page.status === 401 || page.status === 403) {
         base.importantReason = `Trang ${host} đòi đăng nhập (HTTP ${page.status}) — cần cấp quyền (dán Cookie) trong chi tiết rule.`;
@@ -1604,48 +1695,38 @@ async function previewGate(supabase: any, rule: Rule): Promise<GatePreview> {
   try {
     const rssItems = await fetchRssItems(rule.category);
     if (rssItems && rssItems.length > 0) {
-      const unseen = rssItems.filter((it) => !seenTitles.has(normTitle(it.title))).slice(0, 25);
+      const unseen = rssItems.filter((it) =>
+        isLikelyTopicRelevant(rule.keyword, it.title, it.description) && !seenTitles.has(normTitle(it.title))
+      ).slice(0, 25);
       base.provider = "rss";
-      if (unseen.length === 0) {
-        base.allKind = forceSend ? (hasPrev ? "nochange" : "none") : "skipped";
-        base.importantPushed = scheduled && forceSend;
-        base.importantReason = base.importantPushed
-          ? "Rule đặt giờ: vẫn gửi bản tin fallback tại giờ hẹn."
-          : "Feed không có bài mới (tất cả đã gửi trước đó).";
-        return base;
+      if (unseen.length > 0) {
+        const pick = await pickRssItemAI(supabase, rule, unseen);
+        const chosen = pick.index >= 0 && pick.relevance_score >= 70 ? unseen[pick.index] : undefined;
+        if (chosen) {
+          base.found = true;
+          base.candidateTitle = chosen.title;
+          base.value = pick.value;
+          base.fresh = true; // đã lọc unseen từ trước
+          base.isImportant = hasCond ? true : pick.is_important;
+          base.matchesCondition = pick.matches_condition;
+          base.changed = pick.changed;
+          const condOk = !hasCond || pick.matches_condition;
+          const changeOk = !changeGate || pick.changed;
+          const importantOk = pick.is_important || (hasCond && pick.matches_condition);
+          const realPasses = condOk && changeOk;
+          base.allKind = realPasses ? "real" : (forceSend ? (hasPrev ? "nochange" : "related") : "skipped");
+          base.importantPushed = scheduled ? (realPasses || forceSend) : (realPasses && importantOk);
+          if (!base.importantPushed) {
+            if (!condOk) base.importantReason = "Chưa thỏa điều kiện của rule.";
+            else if (!changeOk) base.importantReason = "Số liệu chưa thay đổi so với lần trước.";
+            else if (!importantOk) base.importantReason = "Tin không quan trọng và không thỏa điều kiện → bị lọc.";
+            else base.importantReason = "Bị lọc.";
+          } else if (scheduled && !realPasses) {
+            base.importantReason = "Rule đặt giờ: gửi fallback (kèm push) tại giờ hẹn dù chưa có tin mới.";
+          }
+          return base;
+        }
       }
-      const pick = await pickRssItemAI(supabase, rule, unseen);
-      const chosen = pick.index >= 0 ? unseen[pick.index] : undefined;
-      if (!chosen) {
-        base.allKind = forceSend ? (hasPrev ? "nochange" : "none") : "skipped";
-        base.importantPushed = scheduled && forceSend;
-        base.importantReason = base.importantPushed
-          ? "Rule đặt giờ: vẫn gửi bản tin fallback tại giờ hẹn."
-          : "Không bài nào trên feed liên quan chủ đề.";
-        return base;
-      }
-      base.found = true;
-      base.candidateTitle = chosen.title;
-      base.value = pick.value;
-      base.fresh = true; // đã lọc unseen từ trước
-      base.isImportant = pick.is_important;
-      base.matchesCondition = pick.matches_condition;
-      base.changed = pick.changed;
-      const condOk = !hasCond || pick.matches_condition;
-      const changeOk = !changeGate || pick.changed;
-      const importantOk = pick.is_important || (hasCond && pick.matches_condition);
-      const realPasses = condOk && changeOk;
-      base.allKind = realPasses ? "real" : (forceSend ? (hasPrev ? "nochange" : "related") : "skipped");
-      base.importantPushed = scheduled ? (realPasses || forceSend) : (realPasses && importantOk);
-      if (!base.importantPushed) {
-        if (!condOk) base.importantReason = "Chưa thỏa điều kiện của rule.";
-        else if (!changeOk) base.importantReason = "Số liệu chưa thay đổi so với lần trước.";
-        else if (!importantOk) base.importantReason = "Tin không quan trọng và không thỏa điều kiện → bị lọc.";
-        else base.importantReason = "Bị lọc.";
-      } else if (scheduled && !realPasses) {
-        base.importantReason = "Rule đặt giờ: gửi fallback (kèm push) tại giờ hẹn dù chưa có tin mới.";
-      }
-      return base;
     }
   } catch { /* RSS/AI lỗi → rơi xuống đường grounding bên dưới */ }
   base.provider = undefined;
@@ -1666,7 +1747,10 @@ async function previewGate(supabase: any, rule: Rule): Promise<GatePreview> {
   } catch { /* không JSON → coi như không tìm thấy */ }
 
   // Chọn ứng viên GIỐNG HỆT monitorRule: bài đầu tiên chưa trùng (bỏ bài quá cũ).
-  const { top, fresh } = pickFreshItem(items, seenTitles, lastValNorm);
+  const relevantItems = items.filter((item) =>
+    isLikelyTopicRelevant(rule.keyword, String(item.title ?? ""), `${item.content ?? ""} ${item.ai_summary ?? ""}`)
+  );
+  const { top, fresh } = pickFreshItem(relevantItems, seenTitles, lastValNorm);
 
   if (!top) {
     // Không có tin: chế độ Đầy đủ vẫn gửi filler (nếu rule định kỳ); Chỉ-quan-trọng thì bỏ.
@@ -1995,7 +2079,7 @@ Deno.serve(async (req) => {
           quotaHit = true;
           checked--;
           // Rule ghim giờ đã CLAIM (last_run_at bị đẩy lên now) mà chưa quét xong →
-          // trả lại mốc cũ, để khung catch-up 4h của cron chính còn cứu được hôm nay.
+          // trả lại mốc cũ để tick/cron còn cứu được trong cửa sổ catch-up ngắn.
           if (!manual && isScheduled(rule)) {
             await supabase.from("rules").update({ last_run_at: prevRunAt }).eq("id", rule.id);
           }
@@ -2012,6 +2096,26 @@ Deno.serve(async (req) => {
           continue;
         }
         scanError = String((e as Error).message ?? e).slice(0, 300);
+        // Rule ghim giờ gặp lỗi mạng/parser cũng phải được thử lại trong cửa sổ ngắn;
+        // trước đây chỉ quota mới được trả claim, còn lỗi HTTP làm mất luôn mốc hôm đó.
+        if (!manual && isScheduled(rule)) {
+          const retryUpdate = { last_run_at: prevRunAt, last_error: scanError };
+          const { error: retryErr } = await supabase.from("rules").update(retryUpdate).eq("id", rule.id);
+          if (retryErr) {
+            await supabase.from("rules").update({ last_run_at: prevRunAt }).eq("id", rule.id);
+          }
+          await logRuleScan(
+            supabase,
+            rule,
+            trigger,
+            "error",
+            `${scanError} Hệ thống sẽ thử lại trong cửa sổ lịch hiện tại.`,
+            "",
+            0,
+            scanStartedAt,
+          );
+          continue;
+        }
       }
       // Đánh dấu đã quét (kể cả khi không có tin mới) để tính lịch lần sau;
       // cập nhật baseline số liệu nếu lần này tìm được giá trị mới (trigger "thay đổi").

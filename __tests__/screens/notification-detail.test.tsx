@@ -68,6 +68,11 @@ describe("Notification Detail Screen", () => {
     render(<NotificationDetailScreen />);
 
     expect(mockUseLocalSearchParams).toHaveBeenCalled();
+    // Chờ cả load + mark-read hoàn tất để không để state update rơi sang test sau.
+    await waitFor(() => {
+      expect(chain.single).toHaveBeenCalled();
+      expect(updateChain.eq).toHaveBeenCalledWith("id", "notif-detail-1");
+    });
   });
 
   it("fetch notification theo id đúng", async () => {
