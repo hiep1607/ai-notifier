@@ -12,8 +12,7 @@ import {
 
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
-import { router } from "expo-router";
-import { useFocusEffect } from "@react-navigation/native";
+import { router, useFocusEffect } from "expo-router";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 import { supabase } from "../../lib/supabase";
@@ -47,14 +46,6 @@ export default function HomeScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [createMenuVisible, setCreateMenuVisible] = useState(false);
-
-  // Pull-to-refresh: ép quét tin mới ngay (bỏ qua throttle).
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await fetchData();
-    await runMonitor();
-    setRefreshing(false);
-  };
 
   useFocusEffect(
     React.useCallback(() => {
@@ -95,7 +86,7 @@ export default function HomeScreen() {
     setLatestNotif(c.latestNotif);
   };
 
-  const fetchData = async () => {
+  async function fetchData() {
     if (!user) return;
 
     // (1) Lần vào đầu (state trống): vẽ NGAY từ cache — chạy SONG SONG với mạng
@@ -131,6 +122,14 @@ export default function HomeScreen() {
     } catch (error) {
       console.log("Không thể làm mới Home, giữ cache cũ:", error);
     }
+  };
+
+  // Pull-to-refresh: ép quét tin mới ngay (bỏ qua throttle).
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await fetchData();
+    await runMonitor();
+    setRefreshing(false);
   };
 
   const activeRules = rules.filter((r) => r.is_active);

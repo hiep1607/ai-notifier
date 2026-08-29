@@ -41,13 +41,7 @@ export default function ProfileScreen() {
   const [rulesCount, setRulesCount] = useState(0);
   const [notificationsCount, setNotificationsCount] = useState(0);
 
-  useEffect(() => {
-    if (user) fetchStats();
-    // fetchStats chỉ đọc `user` (đã có trong deps) → không thêm vào deps để tránh tạo lại mỗi render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user]);
-
-  const fetchStats = async () => {
+  async function fetchStats() {
     const { count: rc } = await supabase
       .from("rules")
       .select("*", { count: "exact", head: true })
@@ -59,6 +53,13 @@ export default function ProfileScreen() {
     // qua rule_id khi 0021 chưa chạy nên không cần query rules phụ ở đây.
     setNotificationsCount(await countNotificationsFor(user!.id));
   };
+
+  useEffect(() => {
+    const timer = user ? setTimeout(() => { void fetchStats(); }, 0) : null;
+    // fetchStats chỉ đọc `user` (đã có trong deps) → không thêm vào deps để tránh tạo lại mỗi render.
+    return () => { if (timer) clearTimeout(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
 
   // Avatar: 1-2 chữ cái đầu của họ tên, fallback là chữ cái đầu email
   const initials = fullName.trim()

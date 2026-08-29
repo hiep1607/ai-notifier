@@ -43,9 +43,9 @@ const SCAN_STATUS_UI: Record<RuleScanStatus, { label: string; icon: keyof typeof
 };
 
 // "x phút/giờ/ngày trước" cho dòng "Quét lần cuối" — người dùng thấy ngay rule còn sống không.
-function timeAgoVi(iso?: string | null): string {
+function timeAgoVi(iso: string | null | undefined, nowMs: number): string {
   if (!iso) return "Chưa quét lần nào";
-  const diffMs = Date.now() - Date.parse(iso);
+  const diffMs = nowMs - Date.parse(iso);
   if (!Number.isFinite(diffMs)) return "Chưa quét lần nào";
   const m = Math.floor(diffMs / 60000);
   if (m < 1) return "Vừa xong";
@@ -79,6 +79,7 @@ export default function RuleDetailScreen() {
   const [scanLogs, setScanLogs] = useState<RuleScanLog[]>([]);
   const [showAllNotifs, setShowAllNotifs] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
   const [isEditing, setIsEditing] = useState(false);
   const [editTitle, setEditTitle] = useState("");
@@ -110,10 +111,17 @@ export default function RuleDetailScreen() {
   }, [id]);
 
   useEffect(() => {
+    // Preview phụ thuộc toàn bộ bản nháp chỉnh sửa; thay đổi form làm kết quả cũ hết hiệu lực.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setEditPreview(null);
   }, [editTitle, editDescription, editKeyword, editCategory, editSources, editFrequency, editCondition]);
 
-  const fetchData = async () => {
+  useEffect(() => {
+    const timer = setInterval(() => setNowMs(Date.now()), 60000);
+    return () => clearInterval(timer);
+  }, []);
+
+  async function fetchData() {
     setLoading(true);
 
     const [ruleRes, notifRes, scanRes] = await Promise.all([
@@ -482,7 +490,7 @@ export default function RuleDetailScreen() {
   const nextScanMs = nextDueAt(rule);
   const nextScanText = !rule.is_active
     ? "Đang tạm dừng"
-    : Number.isFinite(nextScanMs) && nextScanMs <= Date.now() + 60000
+    : Number.isFinite(nextScanMs) && nextScanMs <= nowMs + 60000
       ? "Đang chờ lượt quét gần nhất"
       : Number.isFinite(nextScanMs)
         ? new Date(nextScanMs).toLocaleString("vi-VN", { dateStyle: "short", timeStyle: "short" })
@@ -721,7 +729,7 @@ export default function RuleDetailScreen() {
         {!isEditing && rule.source_type !== "reminder" && (
           <View style={styles.infoRow}>
             <Text style={styles.label}>Quét lần cuối</Text>
-            <Text style={styles.value}>{timeAgoVi(rule.last_run_at)}</Text>
+            <Text style={styles.value}>{timeAgoVi(rule.last_run_at, nowMs)}</Text>
           </View>
         )}
         {!isEditing && rule.source_type !== "reminder" && (

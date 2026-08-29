@@ -21,23 +21,7 @@ export default function TabLayout() {
   // Đã có số liệu thật từ mạng chưa — cache về muộn thì không được ghi đè.
   const badgeNetDone = useRef(false);
 
-  useEffect(() => {
-    if (!user) return;
-    // Mở app: vẽ badge NGAY từ cache lần trước, mạng về sau thì thay số mới.
-    if (!badgeNetDone.current) {
-      loadCache<BadgesCache>(badgesCacheKey(user.id)).then((c) => {
-        if (c && !badgeNetDone.current) {
-          setUnreadCount(c.unread);
-          setActiveRulesCount(c.active);
-        }
-      });
-    }
-    fetchBadges();
-    // Chỉ chạy lại khi đổi user/route — không đưa fetch* vào deps để khỏi tạo lại mỗi render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, pathname]);
-
-  const fetchBadges = async () => {
+  async function fetchBadges() {
     // Đếm theo user_id (0021) — tính cả thông báo "mồ côi rule"; helper tự fallback
     // qua rule_id khi 0021 chưa chạy nên KHÔNG cần query rules trước ở đây nữa.
     try {
@@ -59,6 +43,23 @@ export default function TabLayout() {
       console.log("Không thể làm mới badge, giữ cache cũ:", error);
     }
   };
+
+  useEffect(() => {
+    if (!user) return;
+    // Mở app: vẽ badge NGAY từ cache lần trước, mạng về sau thì thay số mới.
+    if (!badgeNetDone.current) {
+      loadCache<BadgesCache>(badgesCacheKey(user.id)).then((c) => {
+        if (c && !badgeNetDone.current) {
+          setUnreadCount(c.unread);
+          setActiveRulesCount(c.active);
+        }
+      });
+    }
+    const timer = setTimeout(() => { void fetchBadges(); }, 0);
+    // Chỉ chạy lại khi đổi user/route — không đưa fetch* vào deps để khỏi tạo lại mỗi render.
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, pathname]);
 
   return (
     <Tabs

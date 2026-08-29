@@ -42,6 +42,8 @@ export default function ManualRuleScreen() {
   const [previewResult, setPreviewResult] = useState<RulePreviewResult | null>(null);
 
   useEffect(() => {
+    // Preview phụ thuộc toàn bộ form; đổi bất kỳ trường nào thì kết quả cũ hết hiệu lực.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setPreviewResult(null);
   }, [title, description, keyword, category, sources, frequency, condition, isActive]);
 

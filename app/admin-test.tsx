@@ -151,7 +151,9 @@ export default function AdminTestScreen() {
   }, []);
 
   useEffect(() => {
-    if (allowed) load();
+    if (!allowed) return;
+    const timer = setTimeout(() => { void load(); }, 0);
+    return () => clearTimeout(timer);
   }, [allowed, load]);
 
   const shownRules = useMemo(() => {

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
 import {
   ActivityIndicator,
@@ -15,8 +15,7 @@ import {
 
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { router } from "expo-router";
-import { useFocusEffect } from "@react-navigation/native";
+import { router, useFocusEffect } from "expo-router";
 import ReanimatedSwipeable from "react-native-gesture-handler/ReanimatedSwipeable";
 
 import { supabase } from "../../lib/supabase";
@@ -64,6 +63,12 @@ export default function NotificationsScreen() {
   const [hasMore, setHasMore] = useState((initialCache?.notifs.length ?? 0) >= NOTIFICATIONS_PAGE_SIZE);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = setInterval(() => setNowMs(Date.now()), 60000);
+    return () => clearInterval(timer);
+  }, []);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -87,7 +92,7 @@ export default function NotificationsScreen() {
     }, [user])
   );
 
-  const fetchNotifications = async (reset: boolean) => {
+  async function fetchNotifications(reset: boolean) {
     if (!user) return;
 
     if (!reset) {
@@ -228,7 +233,7 @@ export default function NotificationsScreen() {
 
   const timeAgo = (iso?: string) => {
     if (!iso) return "";
-    const diff = Date.now() - new Date(iso).getTime();
+    const diff = nowMs - new Date(iso).getTime();
     const mins = Math.floor(diff / 60000);
     if (mins < 1) return "Vừa xong";
     if (mins < 60) return `${mins} phút trước`;

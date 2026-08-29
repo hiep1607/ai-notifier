@@ -1,4 +1,3 @@
-import { useFocusEffect } from "@react-navigation/native";
 import React, { useEffect, useMemo, useState } from "react";
 import {
   FlatList,
@@ -14,7 +13,7 @@ import {
 
 import { Ionicons } from "@expo/vector-icons";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { router } from "expo-router";
+import { router, useFocusEffect } from "expo-router";
 import ReanimatedSwipeable from "react-native-gesture-handler/ReanimatedSwipeable";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import Animated, {
@@ -133,12 +132,6 @@ export default function RulesScreen() {
     transform: [{ translateX: fabX.value }, { translateY: fabY.value }],
   }));
 
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await fetchRules();
-    setRefreshing(false);
-  };
-
   useFocusEffect(
     React.useCallback(() => {
       if (user) fetchRules();
@@ -147,7 +140,7 @@ export default function RulesScreen() {
     }, [user])
   );
 
-  const fetchRules = async () => {
+  async function fetchRules() {
     if (!user) return;
 
     // Lần vào đầu: vẽ NGAY từ cache lần trước — chạy SONG SONG với mạng
@@ -211,6 +204,12 @@ export default function RulesScreen() {
     });
     setUnreadCounts(counts);
     saveCache(rulesCacheKey(user.id), { rules: data, counts });
+  };
+
+  const onRefresh = async () => {
+    setRefreshing(true);
+    await fetchRules();
+    setRefreshing(false);
   };
 
   const handleDeleteRule = async (id: string) => {

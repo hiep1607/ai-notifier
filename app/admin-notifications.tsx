@@ -68,8 +68,9 @@ export default function AdminNotificationsScreen() {
   }, []);
 
   useEffect(() => {
-    if (allowed) load(sentiment);
-    else setLoading(false);
+    if (!allowed) return;
+    const timer = setTimeout(() => { void load(sentiment); }, 0);
+    return () => clearTimeout(timer);
   }, [allowed, sentiment, load]);
 
   if (!allowed) {

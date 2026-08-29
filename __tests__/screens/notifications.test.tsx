@@ -11,11 +11,6 @@ const mockFrom = jest.fn();
 
 jest.mock("expo-router", () => ({
   router: { push: jest.fn(), replace: jest.fn(), back: jest.fn() },
-}));
-
-jest.mock("@expo/vector-icons", () => ({ Ionicons: "Ionicons" }));
-
-jest.mock("@react-navigation/native", () => ({
   // Mô phỏng đúng một focus lifecycle. Gọi Promise.resolve(cb) ở mỗi render khiến
   // callback fetch lại vô hạn và tạo cảnh báo state update ngoài act(...).
   useFocusEffect: (cb: () => void | (() => void)) => {
@@ -23,6 +18,8 @@ jest.mock("@react-navigation/native", () => ({
     React.useEffect(() => cb(), [cb]);
   },
 }));
+
+jest.mock("@expo/vector-icons", () => ({ Ionicons: "Ionicons" }));
 
 jest.mock("../../lib/supabase", () => ({
   supabase: { from: (...args: any[]) => mockFrom(...args) },
