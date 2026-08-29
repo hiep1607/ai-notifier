@@ -29,6 +29,7 @@ import { Notification } from "../types/Notification";
 import { RuleScanLog, RuleScanStatus } from "../types/RuleScanLog";
 import { nextDueAt } from "../supabase/functions/_shared/monitorLogic";
 import { RADIUS, type AppColors } from "../lib/theme";
+import { setRuleWatchAuth } from "../lib/watchAuth";
 import RulePreviewPanel from "../components/RulePreviewPanel";
 
 const SCAN_STATUS_UI: Record<RuleScanStatus, { label: string; icon: keyof typeof Ionicons.glyphMap }> = {
@@ -93,7 +94,7 @@ export default function RuleDetailScreen() {
   const [editPreview, setEditPreview] = useState<RulePreviewResult | null>(null);
 
   // "Cấp quyền đăng nhập" cho rule theo dõi trang web (source_type 'url'): người dùng
-  // dán Cookie/headers → server fetch trang kèm các header này. Lưu ở cột watch_auth.
+  // dán Cookie/headers → RPC mã hóa trong DB; client chỉ giữ trạng thái đã cấp/chưa cấp.
   const [authDraft, setAuthDraft] = useState("");
   const [savingAuth, setSavingAuth] = useState(false);
 
@@ -125,7 +126,8 @@ export default function RuleDetailScreen() {
 
     if (ruleRes.data) {
       setRule(ruleRes.data as Rule);
-      setAuthDraft((ruleRes.data as Rule).watch_auth ?? "");
+      // Secret đã lưu không bao giờ được đọc ngược về client; cập nhật = nhập bản mới.
+      setAuthDraft("");
     }
     if (notifRes.data) {
       setNotifications(notifRes.data as Notification[]);
@@ -196,19 +198,22 @@ export default function RuleDetailScreen() {
     if (!rule) return;
     setSavingAuth(true);
 
-    const value = raw.trim() || null;
-    const { error } = await supabase
-      .from("rules")
-      .update({ watch_auth: value })
-      .eq("id", rule.id);
+    const value = raw.trim();
+    let error: Error | null = null;
+    try {
+      const saved = await setRuleWatchAuth(rule.id, value);
+      if (!saved) error = new Error("Không tìm thấy rule hoặc bạn không có quyền.");
+    } catch (err) {
+      error = err as Error;
+    }
 
     setSavingAuth(false);
 
     if (error) {
-      alertMessage("Chưa lưu được", "Cần chạy migration 0018 (cột watch_url/watch_auth) trong Supabase trước.");
+      alertMessage("Chưa lưu được", error.message);
       return;
     }
-    setRule({ ...rule, watch_auth: value ?? undefined });
+    setRule({ ...rule, watch_auth: undefined, has_watch_auth: Boolean(value) });
     alertMessage(
       value ? "Đã cho phép" : "Đã thu hồi quyền",
       value
@@ -305,7 +310,13 @@ export default function RuleDetailScreen() {
         alertMessage("Chưa lưu được", error.message);
         return;
       }
-      setRule({ ...rule, ...upd });
+      setRule({
+        ...rule,
+        ...upd,
+        ...(upd.watch_url !== undefined
+          ? { watch_auth: undefined, has_watch_auth: false }
+          : {}),
+      });
       setAiDraft("");
       alertMessage("Đã cập nhật rule", res.message);
     } catch (err) {
@@ -813,15 +824,15 @@ export default function RuleDetailScreen() {
             <View style={[styles.authCard, grant === "1" && styles.authCardFocused]}>
               <View style={styles.authHeader}>
                 <Ionicons
-                  name={rule.watch_auth ? "lock-open-outline" : "lock-closed-outline"}
+                  name={rule.has_watch_auth || rule.watch_auth ? "lock-open-outline" : "lock-closed-outline"}
                   size={18}
-                  color={rule.watch_auth ? colors.success : colors.warning}
+                  color={rule.has_watch_auth || rule.watch_auth ? colors.success : colors.warning}
                 />
                 <Text style={styles.authTitle}>Cấp quyền truy cập trang</Text>
-                {rule.watch_auth ? <Text style={styles.authGranted}>Đã cho phép</Text> : null}
+                {rule.has_watch_auth || rule.watch_auth ? <Text style={styles.authGranted}>Đã cho phép</Text> : null}
               </View>
               <Text style={styles.authHint}>
-                {rule.watch_auth
+                {rule.has_watch_auth || rule.watch_auth
                   ? "Hệ thống đang đọc trang bằng phiên đăng nhập bạn đã cấp. Hết hạn thì app sẽ tự báo để bạn cấp lại."
                   : "Trang này cần đăng nhập mới xem được. Cho phép app đọc bằng tài khoản của bạn: (1) bấm “Mở trang” và đăng nhập; (2) copy Cookie của trang (trên máy tính: F12 → Network → chọn request đầu → copy dòng Cookie); (3) dán vào ô dưới rồi bấm Cho phép. Cookie chỉ mình bạn và hệ thống quét đọc được."}
               </Text>
@@ -858,7 +869,7 @@ export default function RuleDetailScreen() {
                 autoCorrect={false}
               />
               <View style={styles.authActions}>
-                {rule.watch_auth ? (
+                {rule.has_watch_auth || rule.watch_auth ? (
                   // Đã cấp: cho thu hồi (xóa cookie đã lưu) hoặc cập nhật cookie mới.
                   <TouchableOpacity
                     style={styles.authClearBtn}
@@ -883,7 +894,7 @@ export default function RuleDetailScreen() {
                   disabled={savingAuth || !authDraft.trim()}
                 >
                   <Text style={styles.authSaveText}>
-                    {savingAuth ? "Đang lưu..." : rule.watch_auth ? "Cập nhật" : "Cho phép"}
+                    {savingAuth ? "Đang lưu..." : rule.has_watch_auth || rule.watch_auth ? "Cập nhật" : "Cho phép"}
                   </Text>
                 </TouchableOpacity>
               </View>

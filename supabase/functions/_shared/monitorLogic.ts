@@ -27,8 +27,17 @@ export interface SchedulableRule {
   frequency?: string;
   run_at?: string | null;
   last_run_at?: string | null;
+  last_scheduled_at?: string | null;
   source_type?: string | null;  // 'reminder' = rule nhắc hẹn (migration 0016)
   remind_at?: string | null;    // thời điểm nhắc (ISO timestamptz)
+}
+
+// Rule ghim giờ dùng mốc lịch riêng để một lượt quét tay không làm trôi/nuốt lịch.
+// Object cũ/test chưa có field thì fallback last_run_at; field có mặt nhưng null nghĩa là
+// rule chưa từng chạy LỊCH và tuyệt đối không được fallback sang một lượt quét tay.
+function scheduledLastMs(rule: SchedulableRule): number {
+  const raw = rule.last_scheduled_at === undefined ? rule.last_run_at : rule.last_scheduled_at;
+  return raw ? Date.parse(raw) : 0;
 }
 
 // Rule nhắc hẹn hợp lệ? (source_type='reminder' + có remind_at parse được)
@@ -81,8 +90,9 @@ export function isDue(rule: SchedulableRule, nowMs = Date.now()): boolean {
 
   // Ghim giờ cụ thể: gửi TỪ giờ hẹn (không sớm), lỡ nhịp thì THỬ LẠI các lượt cron sau
   // trong cửa sổ catch-up ngắn cho tới khi quét thành công.
-  // Chống bắn lặp: so last_run_at với MỐC HẸN gần nhất (đã quét sau mốc = xong hôm nay).
+  // Chống bắn lặp: so last_scheduled_at với MỐC HẸN gần nhất.
   if (isScheduled(rule)) {
+    const lastScheduled = scheduledLastMs(rule);
     const [h, m] = String(rule.run_at).split(":").map(Number);
     const target = h * 60 + m;
     const now = vnMinutesOfDay(nowMs);
@@ -91,10 +101,10 @@ export function isDue(rule: SchedulableRule, nowMs = Date.now()): boolean {
     if (diff >= SCHEDULED_CATCHUP_MIN) return false; // chưa tới giờ / quá muộn (bỏ mốc này)
     // Thời điểm mốc hẹn gần nhất (xấp xỉ theo phút — đệm 1' khi so để bỏ jitter giây).
     const targetMs = nowMs - diff * 60000;
-    if (last >= targetMs - 60000) return false; // mốc này đã quét rồi → thôi
+    if (lastScheduled >= targetMs - 60000) return false; // mốc này đã quét rồi → thôi
     // Guard chu kỳ (rule hằng tuần không bắn mỗi ngày). Trừ hao cửa sổ catch-up + 1h
     // để hôm qua bắn hơi muộn không làm trượt mốc đúng giờ của hôm nay.
-    return elapsed >= interval - SCHEDULED_GUARD_SLACK_MIN * 60000;
+    return nowMs - lastScheduled >= interval - SCHEDULED_GUARD_SLACK_MIN * 60000;
   }
 
   // Không ghim giờ: theo chu kỳ thuần (KHÔNG quét sớm — quét sớm sẽ làm trôi tần suất).
@@ -116,7 +126,8 @@ export function dueAt(rule: SchedulableRule, nowMs = Date.now()): number {
     const diff = (vnMinutesOfDay(nowMs) - (h * 60 + m) + 1440) % 1440;
     if (diff < SCHEDULED_CATCHUP_MIN) return nowMs - diff * 60000;
   }
-  return (rule.last_run_at ? Date.parse(rule.last_run_at) : 0) + intervalMs(rule.frequency);
+  const last = isScheduled(rule) ? scheduledLastMs(rule) : (rule.last_run_at ? Date.parse(rule.last_run_at) : 0);
+  return last + intervalMs(rule.frequency);
 }
 
 // Mốc chạy tiếp theo để hiển thị cho người dùng. Khi rule đang tới hạn thì trả `now`
@@ -135,7 +146,7 @@ export function nextDueAt(rule: SchedulableRule, nowMs = Date.now()): number {
       h - 7,
       m,
     );
-    const last = rule.last_run_at ? Date.parse(rule.last_run_at) : 0;
+    const last = scheduledLastMs(rule);
     const interval = intervalMs(rule.frequency);
     while (candidate <= nowMs || (last > 0 && candidate - last < interval - SCHEDULED_GUARD_SLACK_MIN * 60000)) {
       candidate += 24 * 3600000;

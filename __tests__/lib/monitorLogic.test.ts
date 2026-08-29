@@ -168,6 +168,33 @@ describe("isDue — rule ghim giờ (run_at, giờ VN)", () => {
     const lateYesterday = new Date(now - (23 * 60 + 45) * 60000).toISOString();
     expect(isDue({ frequency: "1440", run_at: "17:00", last_run_at: lateYesterday }, now)).toBe(true);
   });
+
+  it("quét tay trước giờ hẹn không làm mất mốc tự động khi có last_scheduled_at", () => {
+    const manualOneHourAgo = new Date(now - 60 * 60000).toISOString();
+    expect(isDue({
+      frequency: "1440",
+      run_at: "17:00",
+      last_run_at: manualOneHourAgo,
+      last_scheduled_at: yesterday,
+    }, now)).toBe(true);
+    expect(isTickDue({
+      frequency: "1440",
+      run_at: "17:00",
+      last_run_at: manualOneHourAgo,
+      last_scheduled_at: yesterday,
+    }, now)).toBe(true);
+  });
+
+  it("mốc lịch hôm nay vẫn chống bắn lặp dù last_run_at là lượt quét tay", () => {
+    const scheduledNow = new Date(now).toISOString();
+    const manualOneHourAgo = new Date(now - 60 * 60000).toISOString();
+    expect(isDue({
+      frequency: "1440",
+      run_at: "17:00",
+      last_run_at: manualOneHourAgo,
+      last_scheduled_at: scheduledNow,
+    }, now)).toBe(false);
+  });
 });
 
 describe("dueAt — thứ tự ưu tiên quét", () => {

@@ -123,7 +123,10 @@ jest.mock("react-native/Libraries/Lists/FlatList", () => {
 // giả do môi trường test không chạy Reanimated UI runtime.
 jest.mock("react-native-gesture-handler/ReanimatedSwipeable", () => {
   const React = require("react");
-  return ({ children }: { children: unknown }) => React.createElement(React.Fragment, null, children);
+  function MockSwipeable({ children }: { children: unknown }) {
+    return React.createElement(React.Fragment, null, children);
+  }
+  return MockSwipeable;
 });
 
 // Silence console.log in tests (remove if you want to see logs)

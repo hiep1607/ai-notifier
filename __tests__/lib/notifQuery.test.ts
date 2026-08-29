@@ -6,6 +6,8 @@ jest.mock("../../lib/supabase", () => ({
   supabase: { from: (...args: unknown[]) => mockFrom(...args) },
 }));
 
+// Mock phải được khai báo trước module đang kiểm thử.
+// eslint-disable-next-line import/first
 import { countNotificationsFor, fetchNotificationsFor } from "../../lib/notifQuery";
 
 describe("notifQuery", () => {

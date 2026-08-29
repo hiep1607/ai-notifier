@@ -15,7 +15,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { router, useLocalSearchParams } from "expo-router";
 
-import { supabase } from "../lib/supabase";
+import { setRuleWatchAuth } from "../lib/watchAuth";
 import { alertMessage } from "../lib/dialog";
 import { useTheme } from "../contexts/ThemeContext";
 import { RADIUS, type AppColors } from "../lib/theme";
@@ -50,14 +50,17 @@ export default function GrantLoginScreen() {
   const save = async () => {
     if (!id || !cookie.trim()) return;
     setSaving(true);
-    const { error } = await supabase
-      .from("rules")
-      .update({ watch_auth: cookie.trim() })
-      .eq("id", id);
+    let error: Error | null = null;
+    try {
+      const saved = await setRuleWatchAuth(String(id), cookie);
+      if (!saved) error = new Error("Không tìm thấy rule hoặc bạn không có quyền.");
+    } catch (err) {
+      error = err as Error;
+    }
     setSaving(false);
 
     if (error) {
-      alertMessage("Chưa lưu được", "Cần chạy migration 0018 (cột watch_url/watch_auth) trong Supabase trước.");
+      alertMessage("Chưa lưu được", error.message);
       return;
     }
     alertMessage(
