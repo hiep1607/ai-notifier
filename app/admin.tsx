@@ -148,8 +148,9 @@ export default function AdminScreen() {
   }, []);
 
   useEffect(() => {
-    if (allowed) load();
-    else setLoading(false);
+    if (!allowed) return;
+    const timer = setTimeout(() => { void load(); }, 0);
+    return () => clearTimeout(timer);
   }, [allowed, load]);
 
   const onRunRule = async (r: AdminRule) => {
@@ -177,23 +178,27 @@ export default function AdminScreen() {
     );
   }
 
-  const goUsers = () => router.push("/admin-users" as never);
-  const goNotifs = () => router.push("/admin-notifications" as never);
+  type StatAction = "users" | "rules" | "notifications";
+  const handleStatPress = (action?: StatAction) => {
+    if (action === "users") router.push("/admin-users" as never);
+    else if (action === "notifications") router.push("/admin-notifications" as never);
+    else if (action === "rules") scrollToRules();
+  };
 
   const stats: {
     label: string;
     value: number;
     icon: keyof typeof Ionicons.glyphMap;
     color: string;
-    onPress?: () => void;
+    action?: StatAction;
   }[] = overview
     ? [
-        { label: "Người dùng", value: overview.users, icon: "people-outline", color: colors.primary, onPress: goUsers },
-        { label: "Rule (tổng)", value: overview.rulesTotal, icon: "list-outline", color: colors.accent, onPress: scrollToRules },
-        { label: "Rule đang bật", value: overview.rulesActive, icon: "flash-outline", color: colors.success, onPress: scrollToRules },
-        { label: "Rule để êm", value: overview.rulesMuted, icon: "notifications-off-outline", color: colors.warning, onPress: scrollToRules },
-        { label: "Thông báo (tổng)", value: overview.notifTotal, icon: "mail-outline", color: colors.primary, onPress: goNotifs },
-        { label: "Thông báo hôm nay", value: overview.notifToday, icon: "today-outline", color: colors.success, onPress: goNotifs },
+        { label: "Người dùng", value: overview.users, icon: "people-outline", color: colors.primary, action: "users" },
+        { label: "Rule (tổng)", value: overview.rulesTotal, icon: "list-outline", color: colors.accent, action: "rules" },
+        { label: "Rule đang bật", value: overview.rulesActive, icon: "flash-outline", color: colors.success, action: "rules" },
+        { label: "Rule để êm", value: overview.rulesMuted, icon: "notifications-off-outline", color: colors.warning, action: "rules" },
+        { label: "Thông báo (tổng)", value: overview.notifTotal, icon: "mail-outline", color: colors.primary, action: "notifications" },
+        { label: "Thông báo hôm nay", value: overview.notifToday, icon: "today-outline", color: colors.success, action: "notifications" },
         { label: "Push token", value: overview.pushTokens, icon: "phone-portrait-outline", color: colors.accent },
       ]
     : [];
@@ -245,12 +250,12 @@ export default function AdminScreen() {
               <Pressable
                 key={s.label}
                 style={[styles.statCard, { width: statW }]}
-                onPress={s.onPress}
-                disabled={!s.onPress}
+                onPress={() => handleStatPress(s.action)}
+                disabled={!s.action}
               >
                 <View style={styles.statTop}>
                   <Ionicons name={s.icon} size={20} color={s.color} />
-                  {!!s.onPress && <Ionicons name="chevron-forward" size={15} color={colors.muted} />}
+                  {!!s.action && <Ionicons name="chevron-forward" size={15} color={colors.muted} />}
                 </View>
                 <Text style={styles.statValue}>{s.value}</Text>
                 <Text style={styles.statLabel}>{s.label}</Text>

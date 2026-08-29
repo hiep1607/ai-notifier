@@ -35,21 +35,7 @@ export default function NotificationDetailScreen() {
   const [aiSummaryEnabled, setAiSummaryEnabled] = useState(true);
   const [savingFeedback, setSavingFeedback] = useState(false);
 
-  useEffect(() => {
-    AsyncStorage.getItem("@settings").then((raw) => {
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (typeof parsed.aiSummaryEnabled === "boolean") {
-          setAiSummaryEnabled(parsed.aiSummaryEnabled);
-        }
-      }
-    });
-    if (id) fetchNotification();
-    // Chỉ fetch lại khi đổi id — không đưa fetchNotification vào deps để khỏi tạo lại mỗi render.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
-
-  const fetchNotification = async () => {
+  async function fetchNotification() {
     setLoading(true);
 
     const { data, error } = await supabase
@@ -74,6 +60,21 @@ export default function NotificationDetailScreen() {
 
     setLoading(false);
   };
+
+  useEffect(() => {
+    AsyncStorage.getItem("@settings").then((raw) => {
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (typeof parsed.aiSummaryEnabled === "boolean") {
+          setAiSummaryEnabled(parsed.aiSummaryEnabled);
+        }
+      }
+    });
+    const timer = id ? setTimeout(() => { void fetchNotification(); }, 0) : null;
+    // Chỉ fetch lại khi đổi id — không đưa fetchNotification vào deps để khỏi tạo lại mỗi render.
+    return () => { if (timer) clearTimeout(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
 
   if (loading) {
     return (

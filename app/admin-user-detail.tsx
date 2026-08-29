@@ -44,8 +44,9 @@ export default function AdminUserDetailScreen() {
   }, [id]);
 
   useEffect(() => {
-    if (allowed) load();
-    else setLoading(false);
+    if (!allowed) return;
+    const timer = setTimeout(() => { void load(); }, 0);
+    return () => clearTimeout(timer);
   }, [allowed, load]);
 
   const onPushTest = async () => {

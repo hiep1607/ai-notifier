@@ -7,11 +7,11 @@ import {
   DarkTheme,
   DefaultTheme,
   ThemeProvider,
-} from "@react-navigation/native";
+} from "expo-router/react-navigation";
 
 import { Ionicons } from "@expo/vector-icons";
 import { useFonts } from "expo-font";
-import * as NavigationBar from "expo-navigation-bar";
+import { NavigationBar } from "expo-navigation-bar";
 import * as Notifications from "expo-notifications";
 import * as SplashScreen from "expo-splash-screen";
 
@@ -78,8 +78,7 @@ function RootNavigator() {
 
   useEffect(() => {
     if (Platform.OS === "android") {
-      NavigationBar.setBehaviorAsync("overlay-swipe");
-      NavigationBar.setVisibilityAsync("hidden");
+      NavigationBar.setHidden(true);
     }
   }, []);
 

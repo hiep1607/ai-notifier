@@ -12,7 +12,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Platform } from "react-native";
-import { requireOptionalNativeModule } from "expo-modules-core";
+import { requireOptionalNativeModule } from "expo";
 import { supabase } from "./supabase";
 
 import type { VoiceInputState } from "./voiceInput.types";

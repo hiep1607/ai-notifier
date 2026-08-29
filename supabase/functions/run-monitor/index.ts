@@ -92,31 +92,19 @@ interface Rule {
   frequency?: string;
   run_at?: string | null;   // "HH:MM" giờ VN, ghim giờ báo cụ thể
   last_run_at?: string | null;
+  last_scheduled_at?: string | null; // mốc cron/tick gần nhất; quét tay không thay đổi
   last_value?: string | null; // số liệu chính lần quét trước (trigger "thay đổi")
   muted?: boolean;          // true = vẫn tạo notification nhưng KHÔNG đẩy push (để êm)
   notify_mode?: string;     // "important" = bỏ fallback + chỉ báo tin quan trọng/thỏa điều kiện; mặc định "all"
   source_type?: string | null; // 'reminder' = rule nhắc hẹn (migration 0016); mặc định 'search'
   remind_at?: string | null;   // thời điểm nhắc (ISO) — chỉ dùng với reminder
   watch_url?: string | null;   // URL trang cần theo dõi (migration 0018, source_type='url')
-  watch_auth?: string | null;  // cookie/headers người dùng cấp cho trang cần đăng nhập
+  watch_auth?: string | null;  // plaintext schema cũ; migration 0036 luôn để null
+  has_watch_auth?: boolean;    // credential đã được mã hóa trong DB
   last_content_hash?: string | null; // vân tay nội dung trang lần trước (0023) — trang y nguyên thì khỏi gọi AI
   title?: string;           // tên rule (reminder dùng làm nội dung nhắc)
   description?: string;     // mô tả rule (reminder dùng làm ghi chú)
   is_active: boolean;
-}
-
-// Đọc field "role" trong payload JWT (không verify chữ ký — chỉ để phân loại; quyền
-// thật vẫn do platform verify_jwt + auth.getUser bên dưới đảm bảo).
-function decodeJwtRole(token: string): string | null {
-  try {
-    const payload = token.split(".")[1];
-    if (!payload) return null;
-    const norm = payload.replace(/-/g, "+").replace(/_/g, "/");
-    const obj = JSON.parse(atob(norm)) as { role?: unknown };
-    return typeof obj.role === "string" ? obj.role : null;
-  } catch {
-    return null;
-  }
 }
 
 interface NewsItem {
@@ -594,6 +582,19 @@ function ruleWatchUrl(rule: Rule): string {
   return raw ? normalizeWatchUrl(raw) : "";
 }
 
+// 0036: chỉ service_role được gọi RPC giải mã. Plaintext chỉ là fallback trong lúc
+// nâng cấp; sau migration cột watch_auth luôn null.
+// deno-lint-ignore no-explicit-any
+async function loadRuleWatchAuth(supabase: any, rule: Rule): Promise<string | null> {
+  const legacy = rule.watch_auth?.trim();
+  if (legacy) return legacy;
+  if (!rule.has_watch_auth) return null;
+  const { data, error } = await supabase.rpc("read_rule_watch_auth", { p_rule_id: rule.id });
+  if (error) throw new Error(`Không giải mã được quyền truy cập trang: ${error.message}`);
+  const value = typeof data === "string" ? data.trim() : "";
+  return value || null;
+}
+
 interface UrlExtract {
   found: boolean;           // trang có chứa thông tin người dùng cần không
   login_required: boolean;  // trang đang đòi đăng nhập (nội dung chính bị che)
@@ -926,9 +927,10 @@ async function monitorUrl(supabase: any, rule: Rule, manual = false): Promise<Mo
     return await monitorGitHubTrending(supabase, rule, url, manual);
   }
   const host = new URL(url).hostname;
-  const hasAuth = Boolean(rule.watch_auth && rule.watch_auth.trim());
+  const watchAuth = await loadRuleWatchAuth(supabase, rule);
+  const hasAuth = Boolean(watchAuth);
 
-  const page = await fetchWatchPage(url, rule.watch_auth);
+  const page = await fetchWatchPage(url, watchAuth);
 
   // Trang đòi đăng nhập rõ ràng (HTTP 401/403) → nhắc người dùng cấp/cấp lại quyền.
   if (page.status === 401 || page.status === 403) {
@@ -1610,7 +1612,8 @@ async function previewGate(supabase: any, rule: Rule): Promise<GatePreview> {
         base.importantReason = base.found ? "" : "Không bóc được danh sách GitHub Trending.";
         return base;
       }
-      const page = await fetchWatchPage(url, rule.watch_auth);
+      const watchAuth = await loadRuleWatchAuth(supabase, rule);
+      const page = await fetchWatchPage(url, watchAuth);
       if (page.status === 401 || page.status === 403) {
         base.importantReason = `Trang ${host} đòi đăng nhập (HTTP ${page.status}) — cần cấp quyền (dán Cookie) trong chi tiết rule.`;
         return base;
@@ -1809,13 +1812,14 @@ Deno.serve(async (req) => {
     // --- PHÂN QUYỀN ---
     // Lấy token từ header Authorization. Cron gửi service_role (admin); app gửi JWT user.
     const token = (req.headers.get("Authorization") ?? "").replace(/^Bearer\s+/i, "").trim();
-    const role = decodeJwtRole(token);
-    const isAdmin = token === serviceKey || role === "service_role";
+    // Chỉ đúng secret server mới có quyền cron/admin. Không tin field role trong payload
+    // JWT chưa verify; user token luôn phải qua auth.getUser bên dưới.
+    const isAdmin = Boolean(token) && token === serviceKey;
 
     let authUserId: string | null = null;
     if (!isAdmin) {
       // Chỉ có anon key (chưa đăng nhập) hoặc không token → từ chối.
-      if (!token || role === "anon" || !role) {
+      if (!token) {
         return json({ error: "Cần đăng nhập để chạy giám sát." }, 401);
       }
       // Xác thực JWT thật sự, lấy userId TỪ TOKEN (không tin userId trong body).
@@ -1905,6 +1909,7 @@ Deno.serve(async (req) => {
         remind_at: draft.remind_at || null,
         watch_url: draft.watch_url || null,
         watch_auth: sameWatchUrl ? saved?.watch_auth ?? null : null,
+        has_watch_auth: sameWatchUrl ? saved?.has_watch_auth ?? false : false,
         notify_mode: raw.notify_mode === "important" ? "important" : "all",
         is_active: false,
       };
@@ -2014,6 +2019,7 @@ Deno.serve(async (req) => {
         frequency: r.frequency ?? null,
         run_at: r.run_at ?? null,
         last_run_at: r.last_run_at ?? null,
+        last_scheduled_at: r.last_scheduled_at ?? null,
         due_at: new Date(dueAt(r)).toISOString(),
         overdue_ms: nowMs - dueAt(r), // >0 = đã trễ hạn; <0 = còn phải chờ
       });
@@ -2039,18 +2045,20 @@ Deno.serve(async (req) => {
 
       // CLAIM chống bắn TRÙNG rule GHIM GIỜ: cron tick mỗi phút + cron chính 15' có thể
       // chạy CHỒNG, cả hai cùng thấy "tới mốc, chưa quét" thì bắn đúp. UPDATE có điều
-      // kiện là nguyên tử ở Postgres: chỉ lượt ĐẦU (last_run_at còn TRƯỚC mốc hẹn) nhận
+      // kiện là nguyên tử ở Postgres: chỉ lượt ĐẦU (last_scheduled_at còn TRƯỚC mốc) nhận
       // được row; lượt sau khớp 0 row → bỏ qua. (Nhắc hẹn đã có claim riêng trong
       // monitorReminder; manual thì người dùng chủ động bấm, không chặn.)
-      const prevRunAt = rule.last_run_at ?? null;
+      const prevScheduledAt = rule.last_scheduled_at === undefined
+        ? rule.last_run_at ?? null
+        : rule.last_scheduled_at;
       if (!manual && isScheduled(rule)) {
         const targetIso = new Date(dueAt(rule) - 60000).toISOString();
         const { data: claimed, error: claimErr } = await supabase
           .from("rules")
-          .update({ last_run_at: new Date().toISOString() })
+          .update({ last_scheduled_at: new Date().toISOString() })
           .eq("id", rule.id)
           .eq("is_active", true)
-          .or(`last_run_at.is.null,last_run_at.lt."${targetIso}"`)
+          .or(`last_scheduled_at.is.null,last_scheduled_at.lt."${targetIso}"`)
           .select("id");
         if (claimErr || !claimed || claimed.length === 0) continue; // lượt khác đã nhận mốc này
       }
@@ -2078,10 +2086,10 @@ Deno.serve(async (req) => {
         if (isQuotaErr(e)) {
           quotaHit = true;
           checked--;
-          // Rule ghim giờ đã CLAIM (last_run_at bị đẩy lên now) mà chưa quét xong →
+          // Rule ghim giờ đã CLAIM (last_scheduled_at bị đẩy lên now) mà chưa quét xong →
           // trả lại mốc cũ để tick/cron còn cứu được trong cửa sổ catch-up ngắn.
           if (!manual && isScheduled(rule)) {
-            await supabase.from("rules").update({ last_run_at: prevRunAt }).eq("id", rule.id);
+            await supabase.from("rules").update({ last_scheduled_at: prevScheduledAt }).eq("id", rule.id);
           }
           await logRuleScan(
             supabase,
@@ -2099,10 +2107,10 @@ Deno.serve(async (req) => {
         // Rule ghim giờ gặp lỗi mạng/parser cũng phải được thử lại trong cửa sổ ngắn;
         // trước đây chỉ quota mới được trả claim, còn lỗi HTTP làm mất luôn mốc hôm đó.
         if (!manual && isScheduled(rule)) {
-          const retryUpdate = { last_run_at: prevRunAt, last_error: scanError };
+          const retryUpdate = { last_scheduled_at: prevScheduledAt, last_error: scanError };
           const { error: retryErr } = await supabase.from("rules").update(retryUpdate).eq("id", rule.id);
           if (retryErr) {
-            await supabase.from("rules").update({ last_run_at: prevRunAt }).eq("id", rule.id);
+            await supabase.from("rules").update({ last_scheduled_at: prevScheduledAt }).eq("id", rule.id);
           }
           await logRuleScan(
             supabase,

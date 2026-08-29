@@ -48,8 +48,9 @@ export default function AdminUsersScreen() {
   }, []);
 
   useEffect(() => {
-    if (allowed) load();
-    else setLoading(false);
+    if (!allowed) return;
+    const timer = setTimeout(() => { void load(); }, 0);
+    return () => clearTimeout(timer);
   }, [allowed, load]);
 
   if (!allowed) {

@@ -35,7 +35,7 @@ yarn-error.*
 .env*.local
 
 # FCM service account private key (bí mật — KHÔNG commit; nạp lên EAS credentials)
-fcm-service-account.json
+fcm-service-account*.json
 google-service-account*.json
 
 # typescript

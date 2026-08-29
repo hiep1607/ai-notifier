@@ -11,6 +11,8 @@ const mockFrom = jest.fn();
 
 jest.mock("expo-router", () => ({
   router: { push: jest.fn(), replace: jest.fn(), back: jest.fn() },
+  // Defer cb so the component body finishes executing before fetchData is called.
+  useFocusEffect: jest.fn((cb) => { Promise.resolve().then(cb); }),
 }));
 
 jest.mock("expo-linear-gradient", () => ({
@@ -19,11 +21,6 @@ jest.mock("expo-linear-gradient", () => ({
 
 jest.mock("@expo/vector-icons", () => ({
   Ionicons: "Ionicons",
-}));
-
-jest.mock("@react-navigation/native", () => ({
-  // Defer cb so the component body finishes executing before fetchData is called
-  useFocusEffect: jest.fn((cb) => { Promise.resolve().then(cb); }),
 }));
 
 jest.mock("../../lib/supabase", () => ({

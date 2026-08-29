@@ -1,7 +1,6 @@
 // Mock expo-navigation-bar (native module)
 jest.mock("expo-navigation-bar", () => ({
-  setBehaviorAsync: jest.fn().mockResolvedValue(undefined),
-  setVisibilityAsync: jest.fn().mockResolvedValue(undefined),
+  NavigationBar: { setHidden: jest.fn(), setStyle: jest.fn() },
 }));
 
 // Mock expo-status-bar
@@ -23,10 +22,11 @@ jest.mock("expo-font", () => ({
   isLoading: jest.fn(() => false),
 }));
 
-// Mock react-native-reanimated
-jest.mock("react-native-reanimated", () =>
-  require("react-native-reanimated/mock")
+// Worklets/Reanimated 4.5: dùng mock chính thức trước khi khởi tạo test helpers.
+jest.mock("react-native-worklets", () =>
+  require("react-native-worklets/src/mock")
 );
+require("react-native-reanimated").setUpTests();
 
 // Mock react-native-safe-area-context — màn hình dùng useSafeAreaInsets, nếu không
 // có SafeAreaProvider sẽ throw "No safe area value available". (Mock inline vì file
@@ -123,7 +123,10 @@ jest.mock("react-native/Libraries/Lists/FlatList", () => {
 // giả do môi trường test không chạy Reanimated UI runtime.
 jest.mock("react-native-gesture-handler/ReanimatedSwipeable", () => {
   const React = require("react");
-  return ({ children }: { children: unknown }) => React.createElement(React.Fragment, null, children);
+  function MockSwipeable({ children }: { children: unknown }) {
+    return React.createElement(React.Fragment, null, children);
+  }
+  return MockSwipeable;
 });
 
 // Silence console.log in tests (remove if you want to see logs)

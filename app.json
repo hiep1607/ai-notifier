@@ -3,12 +3,11 @@
     "name": "Nofy",
     "slug": "ai-notifier-new",
     "owner": "hiep1607",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "ainotifiernew",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.hiep1607.ainotifiernew"
@@ -17,7 +16,6 @@
       "package": "com.hiep1607.ainotifiernew",
       "googleServicesFile": "./google-services.json",
       "softwareKeyboardLayoutMode": "resize",
-      "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "adaptiveIcon": {
         "backgroundColor": "#FEFEFE",
@@ -49,7 +47,11 @@
           "microphonePermission": "Cho phép $(PRODUCT_NAME) dùng micro để bạn mô tả rule bằng giọng nói."
         }
       ],
-      "expo-asset"
+      "expo-asset",
+      "expo-font",
+      "expo-image",
+      "expo-status-bar",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true,
